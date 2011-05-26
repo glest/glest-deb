@@ -1,5 +1,3 @@
 debian/tmp/usr/bin/megaglest usr/games
-debian/tmp/usr/bin/megaglest_editor usr/games
-debian/tmp/usr/bin/megaglest_g3dviewer usr/games
-debian/tmp/usr/bin/megaglest_configurator usr/games
+debian/tmp/usr/bin/megaglest_* usr/games
 

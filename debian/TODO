@@ -1,17 +1,12 @@
 - make the game big endian friendly (post started on glest
   forum: http://www.glest.org/board2/viewtopic.php?t=1426)
-- change configuration.xml creation method: do not symlink to
-  the package one, but copy it and change it
 - glest.ini should not contain references to a specific font,
   but should autodetect fonts present on the system and create
   the ugly '-*-fixed-bold-r-normal--*-*-*-*-*-*-*-*' things
+  NOTE: If specific fonts don't exist megaglest falls back to fixed
   (BTW, why don't they just kill this retareded way of
-  specifying fonts?)
+  specifying fonts? This is planned for the next release, that is using a
+  proper font library)
 - see what patches were added by other distros:
-   http://download.opensuse.org/distribution/SL-OSS-factory/inst-source/suse/src/
-   http://download.opensuse.org/distribution/10.2/repo/src-oss/suse/src/
-   http://cvs.fedoraproject.org/viewcvs/rpms/glest
-   http://cvs.fedoraproject.org/viewcvs/rpms/glest-data
-   http://rpms.mandrivaclub.com/rpms/mandriva/devel//cooker/x86_64/media/contrib/release/glest-2.0.0-2mdv2007.1.x86_64.html
 - update debian/glest.6 to add information about the new options
   added for multiplayer games

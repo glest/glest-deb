@@ -1,15 +1,8 @@
 #!/usr/bin/make -f
 # -*- makefile -*-
-# Sample debian/rules that uses debhelper.
-# GNU copyright 1997 to 1999 by Joey Hess.
-
-# Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
 
 override_dh_auto_configure:
 	dh_auto_configure -- -DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/
-
 %:
-#	dh --with quilt $@
 	dh $@ --parallel
 
