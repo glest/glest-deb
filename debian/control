@@ -1,0 +1,43 @@
+Source: megaglest
+Section: contrib/games
+Priority: optional
+Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
+Uploaders: Giuseppe Borzi <gborzi@ieee.org>, Eddy Petrișor <eddy.petrisor@gmail.com>, Siegfried-Angel Gevatter Pujals <rainct@ubuntu.com>, Alexander Reichle-Schmehl <tolimar@debian.org>, Mark Vejvoda <mark_vejvoda@hotmail.com>
+Build-Depends: debhelper (>= 7.0.50~),
+  cmake,
+  libsdl1.2-dev, 
+  libxerces-c2-dev,
+  libvorbis-dev, 
+  libogg-dev, 
+  libopenal-dev, 
+  liblua5.1-dev, 
+  libpng12-dev,
+  libjpeg-dev,
+  libz-dev,
+  libcurl-dev,
+  libwxgtk2.8-dev,
+  quilt
+Standards-Version: 3.8.0
+Vcs-Svn: svn://svn.debian.org/svn/pkg-games/packages/trunk/megaglest/
+Vcs-Browser: http://svn.debian.org/wsvn/pkg-games/packages/trunk/megaglest/?op=log
+Homepage: http://www.megaglest.org/
+
+Package: glest
+ Depends: megaglest, ${misc:Depends}
+ Architecture: all
+ Section: oldlibs
+ Description: transitional dummy package
+
+Package: megaglest
+Replaces: glest (<< 3.5.2-1~)
+Conflicts: glest (<< 3.5.2-1~)
+Architecture: i386 amd64 ia64 mipsel arm alpha kfreebsd-i386 kfreebsd-amd64 armel lpia
+Depends: ${shlibs:Depends}, ${misc:Depends}, p7zip-full, megaglest-data (= ${binary:Version})
+Description: a free 3D real-time customizable strategy game
+ Glest takes place in a context which could be compared to that of the
+ pre-renaissance Europe, with the licence that magic forces exist in the
+ environment and can be controlled.
+ .
+ The current version is fully playable and supports both single player
+ games against CPU controlled players and multiplayer matches over the
+ Internet or a LAN.

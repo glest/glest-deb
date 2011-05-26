@@ -1,0 +1,6 @@
+?package(megaglest): \
+	needs="X11" \
+	section="Games/Strategy" \
+	title="MegaGlest" \
+	command="/usr/games/megaglest" \
+	icon="/usr/share/pixmaps/megaglest.png"

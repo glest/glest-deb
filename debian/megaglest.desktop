@@ -1,0 +1,11 @@
+
+[Desktop Entry]
+Type=Application
+Name=MegaGlest
+Comment=Play a real-time strategy game with 3D graphics
+Exec=megaglest
+Icon=megaglest
+Terminal=false
+Categories=Game;StrategyGame;
+StartupNotify=true
+Name[en_CA]=megaglest.desktop
