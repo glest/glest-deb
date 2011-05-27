@@ -19,6 +19,8 @@ Build-Depends: debhelper (>= 7.0.50~),
   libjpeg-dev,
   libz-dev,
   libcurl4-dev,
+  libminiupnpc-dev,
+  libircclient-dev,
   libwxgtk2.8-dev,
   libxml2
 Standards-Version: 3.9.1
