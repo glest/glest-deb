@@ -1,2 +1,2 @@
 version=3
-http://sf.net/megaglest/megaglest[?:\-_]source[?:\-_]([\d.]+)\.(?:zip|tar\.gz|tar\.bz2|tar\.xz)
+http://sf.net/megaglest/megaglest-source-([\d.]+)\.(?:zip|tar\.gz|tar\.bz2|tar\.xz)
