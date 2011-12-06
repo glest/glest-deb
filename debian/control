@@ -25,24 +25,31 @@ Build-Depends: debhelper (>= 7.0.50~),
   libxml2,
   libftgl-dev,
   libglew-dev
-Standards-Version: 3.9.1
+Standards-Version: 3.9.2
 Vcs-Svn: svn://svn.debian.org/svn/pkg-games/packages/trunk/megaglest/
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-games/packages/trunk/megaglest/?op=log
 Homepage: http://megaglest.org/
 
 Package: glest
-Depends: megaglest, ${misc:Depends}
+Depends: megaglest (>= ${source:Version}), ${misc:Depends}
 Architecture: all
 Section: oldlibs
-Description: transitional dummy package
+Description: Dummy transition package for megaglest
+ This is a dummy package to ease the transition to megaglest, the fork of
+ glest.
 
 Package: megaglest
 Replaces: glest (<< 3.5.2.3-1~)
 Breaks: glest (<< 3.5.2.3-1~)
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, p7zip-full, megaglest-data (>= ${source:Version})
-Description: a free 3D real-time customizable strategy game
- Glest takes place in a context which could be compared to that of the
+Depends: ${shlibs:Depends}, 
+ ${misc:Depends}, 
+ p7zip-full, 
+ megaglest-data (>= ${source:Upstream-Version}), 
+ megaglest-data (<= ${source:Version})
+Description: 3D multi-player real time strategy game
+ MegaGlest is a free 3D real-time customizable strategy game
+ which takes place in a context which could be compared to that of the
  pre-renaissance Europe, with the licence that magic forces exist in the
  environment and can be controlled. To play this game you must also install
  the package: megaglest-data
