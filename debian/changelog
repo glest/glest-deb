@@ -1,3 +1,9 @@
+megaglest (3.6.0.1-1) UNRELEASED; urgency=low
+
+  [ Mark Vejvoda ]
+  * updated for 3.6.0 release
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Mon, 5 Dec 2011 21:19:21 -0700
+
 megaglest (3.5.2.3-1) UNRELEASED; urgency=low
 
   [ Alexander Reichle-Schmehl ]

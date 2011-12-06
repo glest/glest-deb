@@ -22,22 +22,23 @@ Build-Depends: debhelper (>= 7.0.50~),
   libminiupnpc-dev,
   libircclient-dev,
   libwxgtk2.8-dev,
-  libxml2
+  libxml2,
+  libftgl-dev,
+  libglew-dev
 Standards-Version: 3.9.1
 Vcs-Svn: svn://svn.debian.org/svn/pkg-games/packages/trunk/megaglest/
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-games/packages/trunk/megaglest/?op=log
-Homepage: http://www.megaglest.org/
+Homepage: http://megaglest.org/
 
 Package: glest
- Depends: megaglest
- Architecture: all
- Depends: ${misc:Depends}
- Section: oldlibs
- Description: transitional dummy package
+Depends: megaglest, ${misc:Depends}
+Architecture: all
+Section: oldlibs
+Description: transitional dummy package
 
 Package: megaglest
-Replaces: glest (<< 3.5.2-1~)
-Breaks: glest (<< 3.5.2-1~)
+Replaces: glest (<< 3.5.2.3-1~)
+Breaks: glest (<< 3.5.2.3-1~)
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, p7zip-full, megaglest-data (>= ${source:Version})
 Description: a free 3D real-time customizable strategy game

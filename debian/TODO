@@ -1,12 +1,5 @@
 - make the game big endian friendly (post started on glest
   forum: http://www.glest.org/board2/viewtopic.php?t=1426)
-- glest.ini should not contain references to a specific font,
-  but should autodetect fonts present on the system and create
-  the ugly '-*-fixed-bold-r-normal--*-*-*-*-*-*-*-*' things
-  NOTE: If specific fonts don't exist megaglest falls back to fixed
-  (BTW, why don't they just kill this retareded way of
-  specifying fonts? This is planned for the next release, that is using a
-  proper font library)
 - see what patches were added by other distros:
 - update debian/glest.6 to add information about the new options
   added for multiplayer games
