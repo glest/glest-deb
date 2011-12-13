@@ -2,7 +2,11 @@ megaglest (3.6.0.1-1) UNRELEASED; urgency=low
 
   [ Mark Vejvoda ]
   * updated for 3.6.0 release
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Mon, 5 Dec 2011 21:19:21 -0700
+
+  [ Alexander Reichle-Schmehl ]
+  * Remove myself from uploaders due to time constraints
+
+ -- Alexander Reichle-Schmehl <tolimar@debian.org>  Tue, 13 Dec 2011 15:54:50 +0100
 
 megaglest (3.5.2.3-1) UNRELEASED; urgency=low
 
