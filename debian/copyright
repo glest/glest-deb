@@ -13,11 +13,62 @@ Original Glest:
     Martiño Figueroa <contact@glest.org>
     Matthias Braun <matze@braunis.de>
 
-Copyright:
+Copyright(s):
 
     Copyright (C) 2010-2011 
     Titus Tscharntke (info@titusgames.de)
     Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
+
+Contributions:
+
+    James McCulloch (silnarm@gmail.com) --> Some pathfinder logic
+    Frank Tetzel --> Map Editor Icon
+    Andreas Martin (andreas.martin@linuxmail.org) --> feathery FTP server
+    Bryan L Blackburn --> Mac OSX legacy fonts
+    Matthew Wilson and Synesis Software --> win32 port of glob
+    David Henry --> MD5 models
+    Roland BROCHAR --> string utilities
+    Alexander Chemeris --> data types for win32
+    Nemanja Trifunovic --> utf8 code
+
+Embedded libs:
+
+    libircclient:
+    Nathan Ollerenshaw chrome@stupendous.net / 2004-2009 Georgy Yunaev gyunaev@ulduzsoft.com
+    Dave Dribin
+    Toxic Software
+    Georgy Yunaev gyunaev@ulduzsoft.com
+   
+    libminiupnpc:
+    Thomas Bernard
+    Reuben Hawkins
+
+    freetype-gl:
+    Nicolas P. Rougier
+    Stefan Gustavson (stefan.gustavson@gmail.com)
+
+    streflop:
+    Makoto Matsumoto and Takuji Nishimura / Mutsuo Saito
+    Sun Microsystems
+    Free Software Foundation, Inc
+    Stephen L. Moshier <moshier@na-net.ornl.gov>
+    Tobi Vollebregt
+
+MojoSetup Installer:
+
+    Julian Seward <jseward@bzip.org>
+    Mark Adler
+    Jean-loup Gailly
+    Dag-Erling Coïdan Smørgrav
+    Massachusetts Institute of Technology
+    Lua.org, PUC-Rio
+
+Scripts:
+
+    nixCraft (nixcraft.com)
+    Vincent Gadoury
+    Jonathan Merritt
+    Andreas Becker (seltsamuel@yahoo.de)
 
 Original Glest:
 

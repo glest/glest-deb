@@ -22,7 +22,7 @@ Build-Depends: debhelper (>= 7.0.50~),
   libminiupnpc-dev,
   libircclient-dev,
   libwxgtk2.8-dev,
-  libxml2,
+  libxml2-dev,
   libftgl-dev,
   libglew-dev
 Standards-Version: 3.9.2
@@ -51,8 +51,7 @@ Description: 3D multi-player real time strategy game
  MegaGlest is a free 3D real-time customizable strategy game
  which takes place in a context which could be compared to that of the
  pre-renaissance Europe, with the licence that magic forces exist in the
- environment and can be controlled. To play this game you must also install
- the package: megaglest-data
+ environment and can be controlled.
  .
  The current version is fully playable and supports both single player
  games against CPU controlled players and multiplayer matches over the
