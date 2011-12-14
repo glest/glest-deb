@@ -44,6 +44,7 @@ Architecture: any
 Depends: ${shlibs:Depends}, 
  ${misc:Depends}, 
  p7zip-full, 
+ famfamfam-flag-png, 
  megaglest-data (>= ${source:Upstream-Version}), 
  megaglest-data (<= ${source:Version})
 Description: 3D multi-player real time strategy game
