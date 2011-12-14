@@ -1,35 +1,29 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: MegaGlest
+Upstream-Contact: Mark Vejvoda <mark_vejvoda@hotmail.com>
+Source: http://sourceforge.net/projects/megaglest/files/
+
+Files: *
+License: GPL-3+
+Copyright: 2008-2011, Titus Tscharntke (info@titusgames.de)
+           2008-2011, Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
+           2001-2008, Martiño Figueroa <contact@glest.org>
+           2005,      Matthias Braun <matze@braunis.de>
+           2010,      James McCulloch (silnarm@gmail.com) --> Some pathfinder logic
+           2008,      Frank Tetzel --> Map Editor Icon
+           2010,      Andreas Martin (andreas.martin@linuxmail.org) --> feathery FTP server
+           2008,      Bryan L Blackburn --> Mac OSX legacy fonts
+           2002-2010, Matthew Wilson and Synesis Software --> win32 port of glob
+           2007,      David Henry --> MD5 models
+           2005,      Roland BROCHAR --> string utilities
+           2006-2008, Alexander Chemeris --> data types for win32
+           2006,      Nemanja Trifunovic --> utf8 code
+
 This package was debianized by Giuseppe Borzi <gborzi@ieee.org> 
 and Mark Vejvoda <mark_vejvoda@hotmail.com>
 on Wed, 25 May 2011 Wed, 25 May 2011 23:31:21 -0700.
 
 It was downloaded from http://sourceforge.net/projects/megaglest
-
-Authors:
-
-    Titus Tscharntke (info@titusgames.de)
-    Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
-
-Original Glest:
-    Martiño Figueroa <contact@glest.org>
-    Matthias Braun <matze@braunis.de>
-
-Copyright(s):
-
-    Copyright (C) 2010-2011 
-    Titus Tscharntke (info@titusgames.de)
-    Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
-
-Contributions:
-
-    James McCulloch (silnarm@gmail.com) --> Some pathfinder logic
-    Frank Tetzel --> Map Editor Icon
-    Andreas Martin (andreas.martin@linuxmail.org) --> feathery FTP server
-    Bryan L Blackburn --> Mac OSX legacy fonts
-    Matthew Wilson and Synesis Software --> win32 port of glob
-    David Henry --> MD5 models
-    Roland BROCHAR --> string utilities
-    Alexander Chemeris --> data types for win32
-    Nemanja Trifunovic --> utf8 code
 
 Embedded libs:
 
