@@ -2,6 +2,6 @@
 	needs="X11" \
 	section="Games/Strategy" \
 	title="MegaGlest" \
-	longtitle="A real time strategy game." \
+	longtitle="A 3D real time strategy game." \
 	command="/usr/games/megaglest" \
-	icon="/usr/share/pixmaps/megaglest.png"
+	icon="/usr/share/pixmaps/megaglest.xpm"
