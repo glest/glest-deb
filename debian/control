@@ -22,6 +22,7 @@ Build-Depends: debhelper (>= 7.0.50~),
   libminiupnpc-dev,
   libircclient-dev,
   libwxgtk2.8-dev,
+  libfontconfig1-dev,
   libxml2-dev,
   libftgl-dev,
   libglew-dev
