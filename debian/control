@@ -67,7 +67,7 @@ Package: megaglest-dbg
 Priority: extra
 Section: debug
 Architecture: any
-Depends: megaglest (= ${binary:Version})
+Depends: megaglest (= ${binary:Version}), ${misc:Depends}
 Description: debug files for MegaGlest
  This package contains debug information for the MegaGlest game.
  .
