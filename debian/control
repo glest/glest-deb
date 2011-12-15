@@ -8,6 +8,7 @@ Uploaders: Giuseppe Borzi <gborzi@ieee.org>,
  Mark Vejvoda <mark_vejvoda@hotmail.com>
 Build-Depends: debhelper (>= 7.0.50~),
   cmake,
+  help2man,
   libsdl1.2-dev, 
   libxerces-c2-dev,
   libvorbis-dev, 
