@@ -2,32 +2,34 @@ Source: megaglest
 Section: games
 Priority: optional
 Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
-Uploaders: Giuseppe Borzi <gborzi@ieee.org>, 
- Eddy Petrișor <eddy.petrisor@gmail.com>, 
- Siegfried-Angel Gevatter Pujals <rainct@ubuntu.com>, 
+Uploaders:
+ Giuseppe Borzi <gborzi@ieee.org>,
+ Eddy Petrișor <eddy.petrisor@gmail.com>,
+ Siegfried-Angel Gevatter Pujals <rainct@ubuntu.com>,
  Mark Vejvoda <mark_vejvoda@hotmail.com>
-Build-Depends: debhelper (>= 7.0.50~),
-  cmake,
-  help2man,
-  xvfb,
-  xauth,
-  libsdl1.2-dev, 
-  libxerces-c2-dev,
-  libvorbis-dev, 
-  libogg-dev, 
-  libopenal-dev, 
-  liblua5.1-dev, 
-  libpng12-dev,
-  libjpeg-dev,
-  libz-dev,
-  libcurl4-gnutls-dev | libcurl4-nss-dev,
-  libminiupnpc-dev,
-  libircclient-dev,
-  libwxgtk2.8-dev,
-  libfontconfig1-dev,
-  libxml2-dev,
-  libftgl-dev,
-  libglew-dev
+Build-Depends:
+ cmake,
+ debhelper (>= 7.0.50~),
+ help2man,
+ libcurl4-gnutls-dev | libcurl4-nss-dev,
+ libfontconfig1-dev,
+ libftgl-dev,
+ libglew-dev,
+ libircclient-dev,
+ libjpeg-dev,
+ liblua5.1-dev,
+ libminiupnpc-dev,
+ libogg-dev,
+ libopenal-dev,
+ libpng12-dev,
+ libsdl1.2-dev,
+ libvorbis-dev,
+ libwxgtk2.8-dev,
+ libxerces-c2-dev,
+ libxml2-dev,
+ libz-dev,
+ xauth,
+ xvfb
 Standards-Version: 3.9.2
 Vcs-Svn: svn://svn.debian.org/svn/pkg-games/packages/trunk/megaglest/
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-games/packages/trunk/megaglest/?op=log
@@ -45,16 +47,17 @@ Package: megaglest
 Replaces: glest (<< 3.5.2.3-1~)
 Breaks: glest (<< 3.5.2.3-1~)
 Architecture: any
-Depends: ${shlibs:Depends}, 
- ${misc:Depends}, 
- p7zip-full, 
- famfamfam-flag-png, 
- ttf-dejavu-core,
- fonts-uralic,
+Depends:
+ famfamfam-flag-png,
  fonts-liberation,
+ fonts-uralic,
+ megaglest-data (<= ${source:Version}),
+ megaglest-data (>= ${source:Upstream-Version}),
+ p7zip-full,
+ ttf-dejavu-core,
  ttf-wqy-zenhei,
- megaglest-data (>= ${source:Upstream-Version}), 
- megaglest-data (<= ${source:Version})
+ ${misc:Depends},
+ ${shlibs:Depends}
 Description: 3D multi-player real time strategy game
  MegaGlest is a free 3D real-time customizable strategy game
  which takes place in a context which could be compared to that of the

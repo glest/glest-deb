@@ -19,7 +19,7 @@ Copyright: 2008-2011, Titus Tscharntke (info@titusgames.de)
            2006-2008, Alexander Chemeris --> data types for win32
            2006,      Nemanja Trifunovic --> utf8 code
 
-This package was debianized by Giuseppe Borzi <gborzi@ieee.org> 
+This package was debianized by Giuseppe Borzi <gborzi@ieee.org>
 and Mark Vejvoda <mark_vejvoda@hotmail.com>
 on Wed, 25 May 2011 Wed, 25 May 2011 23:31:21 -0700.
 
@@ -32,7 +32,7 @@ Embedded libs:
     Dave Dribin
     Toxic Software
     Georgy Yunaev gyunaev@ulduzsoft.com
-   
+
     libminiupnpc:
     Thomas Bernard
     Reuben Hawkins
@@ -69,7 +69,7 @@ Original Glest:
     Copyright (C) 2001-2008 Martiño Figueroa
      - Everything except the files inside the directories listed below,
        which belong to Matthias Braun.
-    
+
     Copyright (C) 2005 Matthias Braun <matze@braunis.de>
      - source/shared_lib/*/platform/posix/
      - source/shared_lib/*/platform/sdl/
