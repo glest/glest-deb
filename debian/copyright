@@ -17,10 +17,6 @@ Copyright: 2008-2011 Titus Tscharntke (info@titusgames.de)
            2006-2008 Alexander Chemeris --> data types for win32
            2006      Nemanja Trifunovic --> utf8 code
 
-Files: source/shared_lib/sources/libircclient/* source/shared_lib/include/libircclient/*
-Copyright: Copyright 2004-2009 Georgy Yunaev gyunaev@ulduzsoft.com
-License: LGPL-2.1+
-
 Files: source/shared_lib/sources/feathery_ftp/* source/shared_lib/include/feathery_ftp/*
 Copyright: Copyright 2005-2010 Andreas Martin (andreas.martin@linuxmail.org)
 License: GPL-3+
@@ -79,32 +75,6 @@ License: BSD-3-clause
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-Files: source/shared_lib/sources/platform/miniupnpc/minixml.c source/shared_lib/include/platform/miniupnpc/bsdqueue.h
-Copyright: Copyright 2005-2011 Thomas BERNARD
-License: BSD-3-clause
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice,
-      this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-    * The name of the author may not be used to endorse or promote products
-	  derived from this software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- POSSIBILITY OF SUCH DAMAGE.
 
 Files: source/shared_lib/sources/platform/win32/glob.cpp source/shared_lib/include/platform/win32/glob.h
 Copyright: Copyright 2002-2010 Matthew Wilson and Synesis Software
@@ -199,16 +169,6 @@ on Wed, 25 May 2011 Wed, 25 May 2011 23:31:21 -0700.
 It was downloaded from http://sourceforge.net/projects/megaglest
 
 Embedded libs:
-
-    libircclient:
-    Nathan Ollerenshaw chrome@stupendous.net / 2004-2009 Georgy Yunaev gyunaev@ulduzsoft.com
-    Dave Dribin
-    Toxic Software
-    Georgy Yunaev gyunaev@ulduzsoft.com
-
-    libminiupnpc:
-    Thomas Bernard
-    Reuben Hawkins
 
     freetype-gl:
     Nicolas P. Rougier
