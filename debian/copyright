@@ -56,7 +56,7 @@ License: MIT
 
 Files: mk/linux/mojosetup/libfetch/*
 Copyright: Copyright 1998-2004 Dag-Erling Coïdan Smørgrav
-License: BSD-3
+License: BSD-3-clause
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -82,7 +82,7 @@ License: BSD-3
 
 Files: source/shared_lib/sources/platform/miniupnpc/minixml.c source/shared_lib/include/platform/miniupnpc/bsdqueue.h
 Copyright: Copyright 2005-2011 Thomas BERNARD
-License: BSD-3
+License: BSD-3-clause
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions are met:
 
@@ -108,7 +108,7 @@ License: BSD-3
 
 Files: source/shared_lib/sources/platform/win32/glob.cpp source/shared_lib/include/platform/win32/glob.h
 Copyright: Copyright 2002-2010 Matthew Wilson and Synesis Software
-License: BSD-2
+License: BSD-2-clause
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
  *
@@ -135,7 +135,7 @@ License: BSD-2
 
 Files: source/shared_lib/sources/graphics/freetype-gl/* source/shared_lib/include/graphics/freetype-gl/*
 Copyright: Copyright 2011 Nicolas P. Rougier
-License: BSD-2
+License: BSD-2-clause
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -163,7 +163,7 @@ License: BSD-2
 
 Files: source/shared_lib/sources/streflop/Random.cpp
 Copyright: Copyright 1997-2002 Makoto Matsumoto and Takuji Nishimura / OWNER OR / 2005, Mutsuo Saito
-License: BSD-2
+License: BSD-2-clause
    Redistribution and use in source and binary forms, with or without
    modification, are permitted provided that the following conditions
    are met:
