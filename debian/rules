@@ -2,10 +2,6 @@
 # -*- makefile -*-
 
 override_dh_auto_configure:
-	rm -rf source/shared_lib/include/libircclient
-	rm -rf source/shared_lib/sources/libircclient	
-	rm -rf source/shared_lib/include/platform/miniupnpc
-	rm -rf source/shared_lib/sources/platform/miniupnpc
 	dh_auto_configure -- -DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/ -DMINIUPNPC_VERSION_PRE1_6=On
 
 override_dh_strip:
