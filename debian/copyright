@@ -5,19 +5,17 @@ Source: http://sourceforge.net/projects/megaglest/files/
 
 Files: *
 License: GPL-2+
-Copyright: 2008-2011, Titus Tscharntke (info@titusgames.de)
-           2008-2011, Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
-           2001-2008, Martiño Figueroa <contact@glest.org>
-           2005,      Matthias Braun <matze@braunis.de>
-           2010,      James McCulloch (silnarm@gmail.com) --> Some pathfinder logic
-           2008,      Frank Tetzel --> Map Editor Icon
-           2010,      Andreas Martin (andreas.martin@linuxmail.org) --> feathery FTP server
-           2008,      Bryan L Blackburn --> Mac OSX legacy fonts
-           2002-2010, Matthew Wilson and Synesis Software --> win32 port of glob
-           2007,      David Henry --> MD5 models
-           2005,      Roland BROCHAR --> string utilities
-           2006-2008, Alexander Chemeris --> data types for win32
-           2006,      Nemanja Trifunovic --> utf8 code
+Copyright: 2008-2011 Titus Tscharntke (info@titusgames.de)
+           2008-2011 Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
+           2001-2008 Martiño Figueroa <contact@glest.org>
+           2005      Matthias Braun <matze@braunis.de>
+           2010      James McCulloch (silnarm@gmail.com) --> Some pathfinder logic
+           2008      Frank Tetzel --> Map Editor Icon
+           2010      Andreas Martin (andreas.martin@linuxmail.org) --> feathery FTP server
+           2008      Bryan L Blackburn --> Mac OSX legacy fonts
+           2005      Roland BROCHAR --> string utilities
+           2006-2008 Alexander Chemeris --> data types for win32
+           2006      Nemanja Trifunovic --> utf8 code
 
 Files: source/shared_lib/sources/libircclient/* source/shared_lib/include/libircclient/*
 Copyright: Copyright 2004-2009 Georgy Yunaev gyunaev@ulduzsoft.com
@@ -28,9 +26,30 @@ Copyright: Copyright 2005-2010 Andreas Martin (andreas.martin@linuxmail.org)
 License: GPL-3+
 
 Files: source/shared_lib/sources/graphics/md5/* source/shared_lib/include/graphics/md5/*
-Copyright: Copyright 2006 David Henry
+Copyright: Copyright 2006-2007 David Henry
 License: MIT
 http://www.opensource.org/licenses/mit-license.php
+
+Files: mk/linux/mojosetup/libfetch/*
+Copyright: Copyright 1998-2004 Dag-Erling Coïdan Smørgrav
+License: BSD-3
+
+Files: source/shared_lib/sources/platform/miniupnpc/minixml.c source/shared_lib/include/platform/miniupnpc/bsdqueue.h
+Copyright: Copyright 2005-2011 Thomas BERNARD
+License: BSD-3
+
+Files: source/shared_lib/sources/platform/win32/glob.cpp source/shared_lib/include/platform/win32/glob.h
+Copyright: Copyright 2002-2010 Matthew Wilson and Synesis Software
+License: BSD-2
+
+Files: source/shared_lib/sources/graphics/freetype-gl/* source/shared_lib/include/graphics/freetype-gl/*
+Copyright: Copyright 2011 Nicolas P. Rougier
+License: BSD-2
+
+Files: source/shared_lib/sources/streflop/Random.cpp
+Copyright: Copyright 1997-2002 Makoto Matsumoto and Takuji Nishimura / OWNER OR / 2005, Mutsuo Saito
+License: BSD-2
+
 
 This package was debianized by Giuseppe Borzi <gborzi@ieee.org>
 and Mark Vejvoda <mark_vejvoda@hotmail.com>
