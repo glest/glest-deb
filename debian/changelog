@@ -1,4 +1,4 @@
-megaglest (3.6.0.2-1) UNRELEASED; urgency=low
+megaglest (3.6.0.2-1) unstable; urgency=low
 
   [ Alexander Reichle-Schmehl ]
   * Remove myself from uploaders due to time constraints
@@ -10,7 +10,10 @@ megaglest (3.6.0.2-1) UNRELEASED; urgency=low
   * updated for 3.6.0 release
   * renamed from glest to megaglest and changed build system to cmake
 
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Tue, 13 Dec 2011 15:54:50 +0100
+  [ Paul Wise ]
+  * Lots of cleanup and improvements
+
+ -- Paul Wise <pabs@debian.org>  Tue, 20 Dec 2011 15:46:18 +0800
 
 glest (3.2.2-2) unstable; urgency=low
 
