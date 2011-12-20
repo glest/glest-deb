@@ -4,7 +4,7 @@ Upstream-Contact: Mark Vejvoda <mark_vejvoda@hotmail.com>
 Source: http://sourceforge.net/projects/megaglest/files/
 
 Files: *
-License: GPL-3+
+License: GPL-2+
 Copyright: 2008-2011, Titus Tscharntke (info@titusgames.de)
            2008-2011, Mark Vejvoda (www.soft-haus.com - mark_vejvoda@hotmail.com)
            2001-2008, Martiño Figueroa <contact@glest.org>
@@ -18,6 +18,19 @@ Copyright: 2008-2011, Titus Tscharntke (info@titusgames.de)
            2005,      Roland BROCHAR --> string utilities
            2006-2008, Alexander Chemeris --> data types for win32
            2006,      Nemanja Trifunovic --> utf8 code
+
+Files: source/shared_lib/sources/libircclient/* source/shared_lib/include/libircclient/*
+Copyright: Copyright 2004-2009 Georgy Yunaev gyunaev@ulduzsoft.com
+License: LGPL-2.1+
+
+Files: source/shared_lib/sources/feathery_ftp/* source/shared_lib/include/feathery_ftp/*
+Copyright: Copyright 2005-2010 Andreas Martin (andreas.martin@linuxmail.org)
+License: GPL-3+
+
+Files: source/shared_lib/sources/graphics/md5/* source/shared_lib/include/graphics/md5/*
+Copyright: Copyright 2006 David Henry
+License: MIT
+http://www.opensource.org/licenses/mit-license.php
 
 This package was debianized by Giuseppe Borzi <gborzi@ieee.org>
 and Mark Vejvoda <mark_vejvoda@hotmail.com>
