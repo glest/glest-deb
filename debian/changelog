@@ -13,7 +13,7 @@ megaglest (3.6.0.2-1) unstable; urgency=low
   [ Paul Wise ]
   * Lots of cleanup and improvements
 
- -- Paul Wise <pabs@debian.org>  Tue, 20 Dec 2011 15:46:18 +0800
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Tue, 20 Dec 2011 15:46:18 +0800
 
 glest (3.2.2-2) unstable; urgency=low
 
