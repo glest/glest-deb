@@ -1,7 +1,7 @@
 Description: fix FTBFS on Debian GNU/kFreeBSD architectures
 Author: Paul Wise <pabs@debian.org>
 Forwarded: yes, <softcoder> will apply to svn shortly
-Applied-Upstream: not yet
+Applied-Upstream: http://megaglest.svn.sourceforge.net/viewvc/megaglest?view=revision&revision=3022
 --- a/source/shared_lib/sources/platform/posix/socket.cpp
 +++ b/source/shared_lib/sources/platform/posix/socket.cpp
 @@ -313,7 +313,7 @@
