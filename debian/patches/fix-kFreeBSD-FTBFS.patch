@@ -1,3 +1,7 @@
+Description: fix FTBFS on Debian GNU/kFreeBSD architectures
+Author: Paul Wise <pabs@debian.org>
+Forwarded: yes, <softcoder> will apply to svn shortly
+Applied-Upstream: not yet
 --- a/source/shared_lib/sources/platform/posix/socket.cpp
 +++ b/source/shared_lib/sources/platform/posix/socket.cpp
 @@ -313,7 +313,7 @@
@@ -9,3 +13,14 @@
  # define USE_GETIFADDRS 1
  # include <ifaddrs.h>
  #endif
+--- a/source/glest_map_editor/CMakeLists.txt
++++ b/source/glest_map_editor/CMakeLists.txt
+@@ -19,7 +19,7 @@
+ 		# It was noticed that when using MinGW gcc it is essential that 'core' is mentioned before 'base'.
+ 	
+ 		IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+-		       SET(wxWidgets_CONFIG_OPTIONS --prefix=/usr/local)
++		       SET(wxWidgets_CONFIG_OPTIONS)
+ 		       MESSAGE(STATUS "Detected FreeBSD.....")
+ 	       ENDIF()
+ 
