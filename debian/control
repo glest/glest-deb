@@ -46,7 +46,7 @@ Description: Dummy transition package for megaglest
 Package: megaglest
 Replaces: glest (<< 3.5.2.3-1~)
 Breaks: glest (<< 3.5.2.3-1~)
-Architecture: any-amd64 any-i386
+Architecture: any-amd64 any-i386 alpha arm armel armhf ia64 mipsel sh4
 Depends:
  famfamfam-flag-png,
  fonts-liberation,

@@ -1,11 +1,12 @@
 megaglest (3.6.0.2-2) UNRELEASED; urgency=low
 
   * Team upload.
-  * MegaGlest is not portable to non-x86 architectures, drop them
-    The embedded code copy of streflop requires SSE.
   * Fix the upstream check for networking so it matches kFreeBSD
   * Disable the wx-config --prefix=/usr/local since that is the
     wrong path on Debian GNU/kFreeBSD
+  * Drop the SSE flags since they are redundant on amd64, cause
+    Illegal instruction errors on i386 and cause FBTS on other arches
+  * Add more little-endian architectures
 
  -- Paul Wise <pabs@debian.org>  Fri, 23 Dec 2011 08:08:50 +0800
 
