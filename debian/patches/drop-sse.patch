@@ -1,0 +1,17 @@
+Description: drop SSE related flags since they prevent building on non-x86
+Origin: http://megaglest.svn.sourceforge.net/viewvc/megaglest?view=revision&revision=3023
+Forwarded: not-needed
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -74,9 +76,11 @@
+ 	# For gcc warning options see: http://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
+ 	IF(NOT MINGW)
+ 		# For tons of verbose warnings add: -Wall
+-		ADD_DEFINITIONS("-Wreturn-type -fno-strict-aliasing -frounding-math  -fsignaling-nans -mfpmath=sse -msse -rdynamic")
++		ADD_DEFINITIONS("-Wreturn-type -fno-strict-aliasing -frounding-math  -fsignaling-nans -rdynamic")
+ 	ELSE()
+-		ADD_DEFINITIONS("-Wreturn-type -fno-strict-aliasing -frounding-math  -fsignaling-nans -mfpmath=sse -msse -DUNICODE")
++		ADD_DEFINITIONS("-Wreturn-type -fno-strict-aliasing -frounding-math  -fsignaling-nans -DUNICODE")
+ 	ENDIF()
+ 	#SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")	
+ 
