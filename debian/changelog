@@ -1,9 +1,8 @@
 megaglest (3.6.0.2-2) UNRELEASED; urgency=low
 
   * Team upload.
-  * MegaGlest is not portable to non-Linux and non-x86 architectures,
-    The embedded code copy of streflop requires SSE and MegaGlest
-    itself doesn't have networking support for kFreeBSD/Hurd.
+  * MegaGlest is not portable to non-x86 architectures, drop them
+    The embedded code copy of streflop requires SSE.
 
  -- Paul Wise <pabs@debian.org>  Fri, 23 Dec 2011 08:08:50 +0800
 
