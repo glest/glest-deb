@@ -1,6 +1,6 @@
 Source: megaglest
 Section: games
-Priority: optional
+Priority: extra
 Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
 Uploaders:
  Giuseppe Borzi <gborzi@ieee.org>,
@@ -69,7 +69,6 @@ Description: 3D multi-player real time strategy game
  Internet or a LAN.
 
 Package: megaglest-dbg
-Priority: extra
 Section: debug
 Architecture: any
 Depends: megaglest (= ${binary:Version}), ${misc:Depends}

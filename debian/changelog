@@ -1,8 +1,12 @@
 megaglest (3.6.0.3-1) unstable; urgency=low
 
+  [ Mark Vejvoda ]
   * New upstream release
     - Fixes FTBFS on non-x86 architectures (Closes: #654283)
     - Fixes crash with some GPU/driver combinations (Closes: #653547)
+
+  [ Paul Wise ]
+  * megaglest should be priority extra since famfam is extra
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 25 Jan 2012 08:45:18 +0800
 
