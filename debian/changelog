@@ -1,3 +1,9 @@
+megaglest (3.6.0.3-2) UNRELEASED; urgency=low
+
+  * Remove mself from Uploaders
+
+ -- Eddy Petrișor <eddy.petrisor@gmail.com>  Thu, 04 Oct 2012 22:14:41 +0300
+
 megaglest (3.6.0.3-1) unstable; urgency=low
 
   [ Mark Vejvoda ]
