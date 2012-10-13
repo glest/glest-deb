@@ -109,8 +109,8 @@ License: BSD-2-clause
  * those of the authors and should not be interpreted as representing official
  * policies, either expressed or implied, of Nicolas P. Rougier.
 
-Files: source/shared_lib/sources/util/utf8/* source/shared_lib/include/util/utf8/*
-Copyright: Copyright 1997-2002 Free Software Foundation, Inc
+Files: source/shared_lib/include/util/utf8.h source/shared_lib/include/util/utf8/*
+Copyright: Copyright 2006 Nemanja Trifunovic
 License: BSL-1.0
  Permission is hereby granted, free of charge, to any person or organization
  obtaining a copy of the software and accompanying documentation covered by

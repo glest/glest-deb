@@ -2,7 +2,7 @@
 # -*- makefile -*-
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/ -DMINIUPNPC_VERSION_PRE1_6=On
+	dh_auto_configure -- -DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/
 
 override_dh_strip:
 	dh_strip --dbg-package=megaglest-dbg
