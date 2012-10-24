@@ -4,6 +4,21 @@ megaglest (3.6.0.3-2) UNRELEASED; urgency=low
 
  -- Eddy Petrișor <eddy.petrisor@gmail.com>  Thu, 04 Oct 2012 22:14:41 +0300
 
+megaglest (3.6.0.3-1.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * debian/copyright:
+    - Adjust copyright information for UTF8-CPP library (Closes: #690371).
+
+ -- Luca Falavigna <dktrkranz@debian.org>  Sun, 21 Oct 2012 16:20:21 +0200
+
+megaglest (3.6.0.3-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * debian/patches/gcc4.7.patch: Fix FTBFS with g++ 4.7. (Closes: #672014).
+
+ -- Sebastian Ramacher <s.ramacher@gmx.at>  Mon, 14 May 2012 11:16:09 +0200
+
 megaglest (3.6.0.3-1) unstable; urgency=low
 
   [ Mark Vejvoda ]
