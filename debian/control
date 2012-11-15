@@ -10,7 +10,6 @@ Build-Depends:
  cmake,
  debhelper (>= 7.0.50~),
  help2man,
- vlc,
  libcurl4-gnutls-dev | libcurl4-nss-dev,
  libfontconfig1-dev,
  libftgl-dev,
@@ -29,6 +28,7 @@ Build-Depends:
  libxerces-c2-dev,
  libxml2-dev,
  libz-dev,
+ vlc,
  xauth,
  xvfb
 Standards-Version: 3.9.3

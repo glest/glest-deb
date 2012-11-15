@@ -10,6 +10,7 @@ megaglest (3.7.0-1) experimental; urgency=low
 
   [ Paul Wise ]
   * Upstream switched away from luajit, change build-deps
+  * wrap-and-sort -s
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Mon, 29 Oct 2012 12:30:18 +0800
 
