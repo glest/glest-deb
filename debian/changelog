@@ -7,6 +7,7 @@ megaglest (3.7.0-1) experimental; urgency=low
     - Upstream added vlc dependencies, add to deps/build-deps
     - Upstream dropped the configurator, don't install it
   * Bump Standards-Version
+  * Update copyright information
 
   [ Eddy Petrișor ]
   * Remove myself from Uploaders
