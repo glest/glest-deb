@@ -9,6 +9,7 @@ megaglest (3.7.0-1) experimental; urgency=low
     - Drop patch that was included upstream
   * Bump Standards-Version
   * Update copyright information
+  * Let upstream code autodetect the miniupnpc version
 
   [ Eddy Petrișor ]
   * Remove myself from Uploaders
