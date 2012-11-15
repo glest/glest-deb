@@ -1,10 +1,6 @@
 MegaGlest for Debian
 -----------------------
 
-To display numerous options run from a terminal with: --help
-
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Mon, 29 Oct 2012 12:30:18 +0800
-
 If your glx version is lower
 than 1.3 set CheckGlCaps=0 in the ~/.megaglest/glestuser.ini file.
 
