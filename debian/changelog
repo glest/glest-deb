@@ -6,6 +6,7 @@ megaglest (3.7.0-1) experimental; urgency=low
     - Fixes graphics issues (Closes: #534213)
     - Upstream added vlc dependencies, add to deps/build-deps
     - Upstream dropped the configurator, don't install it
+    - Drop patch that was included upstream
   * Bump Standards-Version
   * Update copyright information
 
