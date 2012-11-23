@@ -1,3 +1,11 @@
+megaglest (3.7.1-1) experimental; urgency=low
+
+  [ Mark Vejvoda ]
+  * New upstream release
+    - Fixes upstream reported defects
+
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
+
 megaglest (3.7.0-1) experimental; urgency=low
 
   [ Mark Vejvoda ]
