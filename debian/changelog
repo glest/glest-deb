@@ -19,6 +19,7 @@ megaglest (3.7.1-1) experimental; urgency=low
   * Upstream switched away from luajit, change build-deps
   * wrap-and-sort -s
   * Copyright file is not well-formed, don't claim it is
+  * Bump to debhelper compat 9
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
 
