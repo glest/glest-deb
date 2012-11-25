@@ -3,13 +3,6 @@ megaglest (3.7.1-1) experimental; urgency=low
   [ Mark Vejvoda ]
   * New upstream release
     - Fixes upstream reported defects
-
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
-
-megaglest (3.7.0-1) experimental; urgency=low
-
-  [ Mark Vejvoda ]
-  * New upstream release
     - Fixes FTBFS on non-x86 architectures (Closes: #654283)
     - Fixes graphics issues (Closes: #534213)
     - Upstream added vlc dependencies, add to deps/build-deps
@@ -27,7 +20,7 @@ megaglest (3.7.0-1) experimental; urgency=low
   * wrap-and-sort -s
   * Copyright file is not well-formed, don't claim it is
 
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Mon, 29 Oct 2012 12:30:18 +0800
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
 
 megaglest (3.6.0.3-1.2) unstable; urgency=medium
 
