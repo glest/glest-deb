@@ -21,6 +21,7 @@ megaglest (3.7.1-1) experimental; urgency=low
   * Copyright file is not well-formed, don't claim it is
   * Bump to debhelper compat 9
   * Drop glest transitional package
+  * Fix the Vcs-Browser header
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
 
