@@ -1,3 +1,9 @@
+megaglest (3.7.1-2) UNRELEASED; urgency=low
+
+  * Correct Vcs-* URLs to point to anonscm.debian.org
+
+ -- Evgeni Golov <evgeni@debian.org>  Mon, 15 Jul 2013 22:21:44 +0200
+
 megaglest (3.7.1-1) experimental; urgency=low
 
   [ Mark Vejvoda ]

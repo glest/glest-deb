@@ -31,7 +31,7 @@ Build-Depends:
  xauth,
  xvfb
 Standards-Version: 3.9.3
-Vcs-Svn: svn://svn.debian.org/svn/pkg-games/packages/trunk/megaglest/
+Vcs-Svn: svn://anonscm.debian.org/pkg-games/packages/trunk/megaglest/
 Vcs-Browser: http://anonscm.debian.org/viewvc/pkg-games/packages/trunk/megaglest/
 Homepage: http://megaglest.org/
 
