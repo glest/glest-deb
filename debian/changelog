@@ -1,7 +1,7 @@
 megaglest (3.7.1-1) experimental; urgency=low
 
   [ Mark Vejvoda ]
-  * New upstream release (Closes: #703273)
+  * New upstream release (Closes: #703273) (LP: #1216684)
     - Fixes upstream reported defects
     - Fixes FTBFS on non-x86 architectures (Closes: #654283)
     - Fixes graphics issues (Closes: #534213)
