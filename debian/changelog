@@ -1,4 +1,4 @@
-megaglest (3.7.1-1) experimental; urgency=low
+megaglest (3.7.1-1) unstable; urgency=low
 
   [ Mark Vejvoda ]
   * New upstream release (Closes: #703273) (LP: #1216684)
@@ -27,7 +27,7 @@ megaglest (3.7.1-1) experimental; urgency=low
   [ Evgeni Golov ]
   * Correct Vcs-* URLs to point to anonscm.debian.org
 
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Fri, 23 Nov 2012 12:30:18 +0800
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 18 Sep 2013 21:01:59 +0200
 
 megaglest (3.6.0.3-1.2) unstable; urgency=medium
 
