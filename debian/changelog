@@ -22,6 +22,7 @@ megaglest (3.7.1-1) experimental; urgency=low
   * Bump to debhelper compat 9
   * Drop glest transitional package
   * Fix the Vcs-Browser header
+  * Override a lintian warning about substvars, upstream syncs versions
 
   [ Evgeni Golov ]
   * Correct Vcs-* URLs to point to anonscm.debian.org
