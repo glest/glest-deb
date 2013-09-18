@@ -30,7 +30,7 @@ Build-Depends:
  libz-dev,
  xauth,
  xvfb
-Standards-Version: 3.9.3
+Standards-Version: 3.9.4
 Vcs-Svn: svn://anonscm.debian.org/pkg-games/packages/trunk/megaglest/
 Vcs-Browser: http://anonscm.debian.org/viewvc/pkg-games/packages/trunk/megaglest/
 Homepage: http://megaglest.org/
