@@ -2,6 +2,62 @@ Almost-Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: MegaGlest
 Upstream-Contact: Mark Vejvoda <mark_vejvoda@hotmail.com>
 Source: http://sourceforge.net/projects/megaglest/files/
+Comment:
+ This package was debianized by Giuseppe Borzi <gborzi@ieee.org>
+ and Mark Vejvoda <mark_vejvoda@hotmail.com>
+ on Wed, 25 May 2011 Wed, 25 May 2011 23:31:21 -0700.
+ .
+ It was downloaded from http://sourceforge.net/projects/megaglest
+ .
+ Embedded libs:
+ .
+    freetype-gl:
+    Nicolas P. Rougier
+    Stefan Gustavson (stefan.gustavson@gmail.com)
+ .
+    streflop:
+    Makoto Matsumoto and Takuji Nishimura / Mutsuo Saito
+    Sun Microsystems
+    Free Software Foundation, Inc
+    Stephen L. Moshier <moshier@na-net.ornl.gov>
+    Tobi Vollebregt
+ .
+ MojoSetup Installer:
+ .
+    Julian Seward <jseward@bzip.org>
+    Mark Adler
+    Jean-loup Gailly
+    Dag-Erling Coïdan Smørgrav
+    Massachusetts Institute of Technology
+    Lua.org, PUC-Rio
+ .
+ Scripts:
+ .
+    nixCraft (nixcraft.com)
+    Vincent Gadoury
+    Jonathan Merritt
+    Andreas Becker (seltsamuel@yahoo.de)
+ .
+ Original Glest:
+ .
+    Copyright (C) 2001-2008 Martiño Figueroa
+     - Everything except the files inside the directories listed below,
+       which belong to Matthias Braun.
+ .
+    Copyright (C) 2005 Matthias Braun <matze@braunis.de>
+     - source/shared_lib/*/platform/posix/
+     - source/shared_lib/*/platform/sdl/
+     - source/shared_lib/*/sound/openal/
+ .
+ License:
+ .
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public
+ License can be found in /usr/share/common-licenses/GPL-3.
 
 Files: *
 Copyright: 2008-2011 Titus Tscharntke (info@titusgames.de)
@@ -151,60 +207,3 @@ License: BSD-2-clause
    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-Comment:
- This package was debianized by Giuseppe Borzi <gborzi@ieee.org>
- and Mark Vejvoda <mark_vejvoda@hotmail.com>
- on Wed, 25 May 2011 Wed, 25 May 2011 23:31:21 -0700.
- .
- It was downloaded from http://sourceforge.net/projects/megaglest
- .
- Embedded libs:
- .
-    freetype-gl:
-    Nicolas P. Rougier
-    Stefan Gustavson (stefan.gustavson@gmail.com)
- .
-    streflop:
-    Makoto Matsumoto and Takuji Nishimura / Mutsuo Saito
-    Sun Microsystems
-    Free Software Foundation, Inc
-    Stephen L. Moshier <moshier@na-net.ornl.gov>
-    Tobi Vollebregt
- .
- MojoSetup Installer:
- .
-    Julian Seward <jseward@bzip.org>
-    Mark Adler
-    Jean-loup Gailly
-    Dag-Erling Coïdan Smørgrav
-    Massachusetts Institute of Technology
-    Lua.org, PUC-Rio
- .
- Scripts:
- .
-    nixCraft (nixcraft.com)
-    Vincent Gadoury
-    Jonathan Merritt
-    Andreas Becker (seltsamuel@yahoo.de)
- .
- Original Glest:
- .
-    Copyright (C) 2001-2008 Martiño Figueroa
-     - Everything except the files inside the directories listed below,
-       which belong to Matthias Braun.
- .
-    Copyright (C) 2005 Matthias Braun <matze@braunis.de>
-     - source/shared_lib/*/platform/posix/
-     - source/shared_lib/*/platform/sdl/
-     - source/shared_lib/*/sound/openal/
- .
- License:
- .
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 3 of the License, or
-    (at your option) any later version.
- .
- On Debian systems, the complete text of the GNU General Public
- License can be found in /usr/share/common-licenses/GPL-3.
