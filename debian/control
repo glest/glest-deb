@@ -61,7 +61,7 @@ Description: 3D multi-player real time strategy game
 
 Package: megaglest-dbg
 Section: debug
-Architecture: any
+Architecture: any-amd64 any-i386 alpha arm armel armhf ia64 mipsel sh4
 Depends: megaglest (= ${binary:Version}), ${misc:Depends}
 Description: debug files for MegaGlest
  This package contains debug information for the MegaGlest game.

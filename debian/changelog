@@ -1,3 +1,10 @@
+megaglest (3.7.1-2) unstable; urgency=low
+
+  * Team upload.
+  * Fix the architecture list of megaglest-dbg package (Closes: #725055)
+
+ -- Paul Wise <pabs@debian.org>  Tue, 22 Oct 2013 19:01:38 +0800
+
 megaglest (3.7.1-1) unstable; urgency=low
 
   [ Mark Vejvoda ]
