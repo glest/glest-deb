@@ -1,2 +1,2 @@
 version=3
-http://sf.net/megaglest/megaglest-source-([\d.]+)\.(?:zip|tar\.gz|tar\.bz2|tar\.xz)
+https://github.com/MegaGlest/megaglest-source/releases .*/megaglest-source-([\d.]+)\.(?:zip|tgz|tbz|txz|(?:tar\.(?:gz|bz2|xz)))

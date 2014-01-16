@@ -1,3 +1,14 @@
+megaglest (3.9.1-1) unstable; urgency=low
+
+  [ Mark Vejvoda ]
+  * New upstream release
+    - Fixes build dependency defects (Closes: #733074)
+      (Closes: #662429)
+      (Closes: #723790)
+    - Fixed error handling conditions (Closes: #716693)
+
+ -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 15 Jan 2014 21:01:59 +0800
+
 megaglest (3.7.1-2) unstable; urgency=low
 
   * Team upload.

@@ -12,6 +12,7 @@ Build-Depends:
  help2man,
  libcurl4-gnutls-dev | libcurl4-nss-dev,
  libfontconfig1-dev,
+ libfribidi-dev,
  libftgl-dev,
  libglew-dev,
  libircclient-dev,
@@ -20,14 +21,14 @@ Build-Depends:
  libminiupnpc-dev,
  libogg-dev,
  libopenal-dev,
- libpng12-dev,
+ libpng-dev,
  libsdl1.2-dev,
- libvlc-dev,
  libvorbis-dev,
  libwxgtk2.8-dev,
- libxerces-c2-dev,
+ libxerces-c-dev,
  libxml2-dev,
  libz-dev,
+ libcppunit-dev,
  xauth,
  xvfb
 Standards-Version: 3.9.4
@@ -46,7 +47,6 @@ Depends:
  p7zip-full,
  ttf-dejavu-core,
  ttf-wqy-zenhei,
- vlc,
  ${misc:Depends},
  ${shlibs:Depends}
 Description: 3D multi-player real time strategy game
