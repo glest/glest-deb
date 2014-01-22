@@ -1,9 +1,6 @@
 MegaGlest for Debian
 -----------------------
 
-If your glx version is lower
-than 1.3 set CheckGlCaps=0 in the ~/.megaglest/glestuser.ini file.
-or pass the following command line parameter: --disable-opengl-checks
-
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Thu, 31 Oct 2013 21:01:59 -0800
- -- Giuseppe Borzi <gborzi@ieee.org>, Mon, 12 Dec 2005 20:27:08 +0100
+If your glx version is lower than 1.3 set CheckGlCaps=0 in the
+~/.megaglest/glestuser.ini file or pass the --disable-opengl-checks
+command line parameter to megaglest.
