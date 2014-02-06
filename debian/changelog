@@ -3,6 +3,7 @@ megaglest (3.9.1-1) unstable; urgency=low
   [ Mark Vejvoda ]
   * New upstream release
     - Fixed error handling conditions (Closes: #716693)
+    - Includes experimental big-endian support
   * Fix dependency defects (Closes: #733074, #662429, #723790)
 
   [ Paul Wise ]

@@ -1,9 +1,1 @@
- Megaglest has experimental code to support big endian but needs to be tested 
- on native hardware. To test this, all players must pass the following
- commandline parameter: --enable-new-protocol
-
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Thu, 31 Oct 2013 21:01:59 -0800
-
-- make the game big endian friendly (post started on glest
-  forum: http://www.glest.org/board2/viewtopic.php?t=1426)
 - see what patches were added by other distros
