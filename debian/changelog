@@ -4,13 +4,26 @@ megaglest (3.9.1-1) unstable; urgency=low
   * New upstream release
     - Fixed error handling conditions (Closes: #716693)
     - Includes experimental big-endian support
-  * Fix dependency defects (Closes: #733074, #662429, #723790, #741988)
+  * Fix dependency defects (Closes: #662429, #723790, #741988)
 
   [ Paul Wise ]
   * Bump Standards-Version, no changes needed
-  * Fix building with -DCMAKE_BUILD_TYPE=None (Closes: #739068)
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 15 Jan 2014 21:01:59 +0800
+
+megaglest (3.7.1-3) unstable; urgency=medium
+
+  * Team upload.
+  * Fix building with -DCMAKE_BUILD_TYPE=None (Closes: #739068)
+
+ -- Paul Wise <pabs@debian.org>  Wed, 26 Mar 2014 10:54:58 +0800
+
+megaglest (3.7.1-2.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Update xerces build dependency to libxerces-c-dev. (Closes: #733074)
+
+ -- Jay Berkenbilt <qjb@debian.org>  Wed, 15 Jan 2014 12:20:12 -0500
 
 megaglest (3.7.1-2) unstable; urgency=low
 
