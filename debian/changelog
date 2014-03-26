@@ -8,6 +8,7 @@ megaglest (3.9.1-1) unstable; urgency=low
 
   [ Paul Wise ]
   * Bump Standards-Version, no changes needed
+  * Fix building with -DCMAKE_BUILD_TYPE=None (Closes: #739068)
 
  -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 15 Jan 2014 21:01:59 +0800
 
