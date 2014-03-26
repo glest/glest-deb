@@ -24,7 +24,7 @@ Build-Depends:
  libpng-dev,
  libsdl1.2-dev,
  libvorbis-dev,
- libwxgtk2.8-dev,
+ libwxgtk3.0-dev,
  libxerces-c-dev,
  libxml2-dev,
  libz-dev,
