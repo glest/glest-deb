@@ -2,6 +2,7 @@ From dce61e29ba5f97bbe4c319cec7c6fd370c660971 Mon Sep 17 00:00:00 2001
 From: Paul Wise <pabs3@bonedaddy.net>
 Date: Wed, 26 Mar 2014 10:26:53 +0800
 Subject: [PATCH] Also support -DCMAKE_BUILD_TYPE=None which is used by Debian
+Forwarded: https://github.com/MegaGlest/megaglest-source/pull/9
 
 ---
  CMakeLists.txt                   | 9 ++++++++-
