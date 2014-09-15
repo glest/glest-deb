@@ -1,15 +1,38 @@
-megaglest (3.9.1-1) unstable; urgency=low
+megaglest (3.9.1-1) UNRELEASED; urgency=low
 
   [ Mark Vejvoda ]
-  * New upstream release
+  * New upstream release. (Closes: #752338)
     - Fixed error handling conditions (Closes: #716693)
     - Includes experimental big-endian support
-  * Fix dependency defects (Closes: #662429, #723790, #741988)
+  * Fix dependency defects (Closes: #662429, #723790)
 
   [ Paul Wise ]
-  * Bump Standards-Version, no changes needed
+  * Bump Standards-Version, no changes needed.
 
- -- Mark Vejvoda <mark_vejvoda@hotmail.com>  Wed, 15 Jan 2014 21:01:59 +0800
+  [ Markus Koschany ]
+  * Add myself to Uploaders.
+  * Update debian/copyright for new release.
+  * debian/control: Add arm64 and ppc64el to Architecture field. Remove
+    non-existent arm architecture.
+  * export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed to avoid useless
+    dependencies.
+  * Drop megaglest_allow-build-with-newer-miniupnpc.patch. Fixed upstream.
+
+ -- Markus Koschany <apo@gambaru.de>  Sun, 14 Sep 2014 16:38:16 +0200
+
+megaglest (3.7.1-4) unstable; urgency=medium
+
+  * Team upload.
+  * Allow building with newer miniupnpc (Closes: #751225)
+
+ -- Paul Wise <pabs@debian.org>  Mon, 07 Jul 2014 11:35:01 +0800
+
+megaglest (3.7.1-3.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Update to use wxWidgets 3.0. (Closes: #741988)
+
+ -- Olly Betts <olly@survex.com>  Thu, 29 May 2014 18:59:08 +1200
 
 megaglest (3.7.1-3) unstable; urgency=medium
 

@@ -5,7 +5,8 @@ Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
 Uploaders:
  Giuseppe Borzi <gborzi@ieee.org>,
  Siegfried-Angel Gevatter Pujals <rainct@ubuntu.com>,
- Mark Vejvoda <mark_vejvoda@hotmail.com>
+ Mark Vejvoda <mark_vejvoda@hotmail.com>,
+ Markus Koschany <apo@gambaru.de>
 Build-Depends:
  cmake,
  debhelper (>= 9),
@@ -37,7 +38,7 @@ Vcs-Browser: http://anonscm.debian.org/viewvc/pkg-games/packages/trunk/megaglest
 Homepage: http://megaglest.org/
 
 Package: megaglest
-Architecture: any-amd64 any-i386 alpha arm armel armhf ia64 mipsel sh4
+Architecture: any-amd64 any-i386 alpha arm64 armel armhf ia64 mipsel ppc64el sh4
 Depends:
  famfamfam-flag-png,
  fonts-liberation,
@@ -61,7 +62,7 @@ Description: 3D multi-player real time strategy game
 
 Package: megaglest-dbg
 Section: debug
-Architecture: any-amd64 any-i386 alpha arm armel armhf ia64 mipsel sh4
+Architecture: any-amd64 any-i386 alpha arm64 armel armhf ia64 mipsel ppc64el sh4
 Depends: megaglest (= ${binary:Version}), ${misc:Depends}
 Description: debug files for MegaGlest
  This package contains debug information for the MegaGlest game.
