@@ -3,8 +3,6 @@ Section: games
 Priority: extra
 Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
 Uploaders:
- Giuseppe Borzi <gborzi@ieee.org>,
- Siegfried-Angel Gevatter Pujals <rainct@ubuntu.com>,
  Mark Vejvoda <mark_vejvoda@hotmail.com>,
  Markus Koschany <apo@gambaru.de>
 Build-Depends:
