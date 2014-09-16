@@ -11,6 +11,7 @@ megaglest (3.9.1-1) UNRELEASED; urgency=low
 
   [ Markus Koschany ]
   * Add myself to Uploaders.
+  * Remove Giuseppe and rainct from Uploaders at their own request.
   * Update debian/copyright for new release.
   * debian/control: Add arm64 and ppc64el to Architecture field. Remove
     non-existent arm architecture.
