@@ -184,8 +184,9 @@ License: LGPL-2.1+
 
 Files: source/shared_lib/include/streflop/*
        source/shared_lib/sources/streflop/*
-Copyright: 2006, Nicolas Brodu
-           2012, Mark Vejvoda
+Copyright: 2006,      Nicolas Brodu
+           2012,      Mark Vejvoda
+           1997-2002, Free Software Foundation, Inc
 License: LGPL-2.1+
 
 Files: source/shared_lib/include/streflop/FPUCheck.h
