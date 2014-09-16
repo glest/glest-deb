@@ -179,8 +179,60 @@ Files: source/shared_lib/sources/streflop/libm/flt-32/s_llroundf.cpp
        source/shared_lib/include/streflop/libm/headers/ieee754.h
        source/shared_lib/include/streflop/libm/headers/endian.h
        source/shared_lib/sources/streflop/libm/w_expf.c
-Copyright: Copyright 1997-2002 Free Software Foundation, Inc
+Copyright: 1997-2002, Free Software Foundation, Inc
 License: LGPL-2.1+
+
+Files: source/shared_lib/include/streflop/*
+       source/shared_lib/sources/streflop/*
+Copyright: 2006, Nicolas Brodu
+           2012, Mark Vejvoda
+License: LGPL-2.1+
+
+Files: source/shared_lib/include/streflop/FPUCheck.h
+       source/shared_lib/include/streflop/streflop_cond.h
+       source/shared_lib/sources/streflop/SMath.cpp
+       source/shared_lib/sources/streflop/SoftFloatWrapper.cpp
+Copyright: 2008, Tobi Vollebregt
+           2010, Mark Vejvoda
+License: GPL-2+
+
+Files: source/shared_lib/sources/streflop/libm/*
+Copyright: 1993, Sun Microsystems, Inc
+License: permissive
+ Developed at SunPro, a Sun Microsystems, Inc. business. Permission to use,
+ copy, modify, and distribute this software is freely granted, provided that
+ this notice is preserved.
+
+Files: source/shared_lib/include/softfloat/*
+       source/shared_lib/sources/softfloat/*
+Copyright: 2006, Nicolas Brodu
+           2012, Mark Vejvoda
+           John R. Hauser
+License: softfloat-license
+ Written by John R. Hauser.  This work was made possible in part by the
+ International Computer Science Institute, located at Suite 600, 1947 Center
+ Street, Berkeley, California 94704.  Funding was partially provided by the
+ National Science Foundation under grant MIP-9311980.  The original version
+ of this code was written as part of a project to build a fixed-point vector
+ processor in collaboration with the University of California at Berkeley,
+ overseen by Profs. Nelson Morgan and John Wawrzynek.  More information
+ is available through the Web page `http://www.cs.berkeley.edu/~jhauser/
+ arithmetic/SoftFloat.html'.
+ .
+ THIS SOFTWARE IS DISTRIBUTED AS IS, FOR FREE.  Although reasonable effort has
+ been made to avoid it, THIS SOFTWARE MAY CONTAIN FAULTS THAT WILL AT TIMES
+ RESULT IN INCORRECT BEHAVIOR.  USE OF THIS SOFTWARE IS RESTRICTED TO PERSONS
+ AND ORGANIZATIONS WHO CAN AND WILL TAKE FULL RESPONSIBILITY FOR ALL LOSSES,
+ COSTS, OR OTHER PROBLEMS THEY INCUR DUE TO THE SOFTWARE, AND WHO FURTHERMORE
+ EFFECTIVELY INDEMNIFY JOHN HAUSER AND THE INTERNATIONAL COMPUTER SCIENCE
+ INSTITUTE (possibly via similar legal warning) AGAINST ALL LOSSES, COSTS, OR
+ OTHER PROBLEMS INCURRED BY THEIR CUSTOMERS AND CLIENTS DUE TO THE SOFTWARE.
+ .
+ Derivative works are acceptable, even for commercial purposes, so long as
+ (1) the source code for the derivative work includes prominent notice that
+ the work is derivative, and (2) the source code includes prominent notice with
+ these four paragraphs for those parts of this code that are retained.
+
 
 Files: source/shared_lib/sources/streflop/Random.cpp
 Copyright: Makoto Matsumoto and Takuji Nishimura / OWNER OR / 2005, Mutsuo Saito
@@ -211,6 +263,30 @@ License: BSD-2-clause
    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Files: source/shared_lib/sources/miniz/*
+Copyright: 2012, Rich Geldreich <richgel99@gmail.com>
+License: public-domain
+ This is free and unencumbered software released into the public domain.
+ .
+ Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+ software, either in source code form or as a compiled binary, for any purpose,
+ commercial or non-commercial, and by any means.
+ .
+ In jurisdictions that recognize copyright laws, the author or authors of this
+ software dedicate any and all copyright interest in the software to the public
+ domain. We make this dedication for the benefit of the public at large and to
+ the detriment of our heirs and successors. We intend this dedication to be an
+ overt act of relinquishment in perpetuity of all present and future rights to
+ this software under copyright law.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+ AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 
 Files: mk/linux/mojosetup/lua/src/lapi.c
  mk/linux/mojosetup/lua/src/lapi.h
@@ -499,6 +575,10 @@ License: BSL-1.0
  FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  DEALINGS IN THE SOFTWARE.
+
+License: GPL-2+
+ On Debian systems, the complete text of the GNU General
+ Public License version 3 can be found in "/usr/share/common-licenses/GPL-2".
 
 License: GPL-3+
  On Debian systems, the complete text of the GNU General
