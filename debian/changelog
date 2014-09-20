@@ -1,4 +1,4 @@
-megaglest (3.9.1-1) UNRELEASED; urgency=low
+megaglest (3.9.1-1) unstable; urgency=low
 
   [ Mark Vejvoda ]
   * New upstream release. (Closes: #752338)
@@ -15,11 +15,15 @@ megaglest (3.9.1-1) UNRELEASED; urgency=low
   * Update debian/copyright for new release.
   * debian/control: Add arm64 and ppc64el to Architecture field. Remove
     non-existent arm architecture.
-  * export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed to avoid useless
+  * Export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed to avoid useless
     dependencies.
   * Drop megaglest_allow-build-with-newer-miniupnpc.patch. Fixed upstream.
+  * Drop megaglest.TODO.
+  * Remove megaglest.manpages. The install file is sufficient.
+  * Add megaglest.lintian-overrides and override manpage-has-errors-from-man
+    warning. It is not an issue.
 
- -- Markus Koschany <apo@gambaru.de>  Sun, 14 Sep 2014 16:38:16 +0200
+ -- Markus Koschany <apo@gambaru.de>  Sat, 20 Sep 2014 18:52:09 +0200
 
 megaglest (3.7.1-4) unstable; urgency=medium
 

@@ -204,8 +204,8 @@ License: permissive
  copy, modify, and distribute this software is freely granted, provided that
  this notice is preserved.
 
-Files: source/shared_lib/include/softfloat/*
-       source/shared_lib/sources/softfloat/*
+Files: source/shared_lib/include/streflop/softfloat/*
+       source/shared_lib/sources/streflop/softfloat/*
 Copyright: 2006, Nicolas Brodu
            2012, Mark Vejvoda
            John R. Hauser
