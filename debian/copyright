@@ -20,6 +20,12 @@ Comment:
  See also docs/AUTHORS.source_code.txt for a list of contributors and
  acknowledgements.
 
+Files: debian/*
+Copyright: 2011-2014, Mark Vejvoda <mark_vejvoda@hotmail.com>
+           2012-2013, Paul Wise <pabs@debian.org>
+           2014,      Markus Koschany <apo@gambaru.de>
+License: GPL-3+
+
 Files: mk/cmake/Modules/FindGLIB2.cmake
        mk/cmake/Modules/FindIrcclient.cmake
        mk/cmake/Modules/FindLUA.cmake

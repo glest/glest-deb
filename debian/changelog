@@ -23,7 +23,7 @@ megaglest (3.9.1-1) unstable; urgency=low
   * Add megaglest.lintian-overrides and override manpage-has-errors-from-man
     warning. It is not an issue.
 
- -- Markus Koschany <apo@gambaru.de>  Sat, 20 Sep 2014 18:52:09 +0200
+ -- Markus Koschany <apo@gambaru.de>  Fri, 03 Oct 2014 20:26:05 +0200
 
 megaglest (3.7.1-4) unstable; urgency=medium
 
