@@ -41,6 +41,7 @@ Depends:
  famfamfam-flag-png,
  fonts-liberation,
  fonts-uralic,
+ fonts-linuxlibertine,
  megaglest-data (<= ${source:Version}),
  megaglest-data (>= ${source:Upstream-Version}),
  p7zip-full,
