@@ -1,3 +1,15 @@
+megaglest (3.9.1-2) unstable; urgency=medium
+
+  * Add wxWidgets-assertions.patch.
+    Fix megaglest_editor and megaglest_g3dviewer assertions with newer versions
+    of wxWidgets that made the tools unusable. (Closes: #768572)
+    Cherry-picked from upstream master branch. Commits c21317a5f, ad0b65272,
+    6faa3dc72. Thanks to Mark Vejvoda for the patch.
+  * debian/rules: Export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG and disable
+    wxWidgets assertions.
+
+ -- Markus Koschany <apo@gambaru.de>  Mon, 01 Dec 2014 19:19:07 +0100
+
 megaglest (3.9.1-1) unstable; urgency=low
 
   [ Mark Vejvoda ]

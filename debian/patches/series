@@ -1,1 +1,2 @@
 fix-cmake-build-type-none.patch
+wxWidgets-assertions.patch
