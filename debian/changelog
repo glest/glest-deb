@@ -1,3 +1,10 @@
+megaglest (3.9.1-3) unstable; urgency=medium
+
+  * debian/control: Soften the dependency on megaglest-data to
+    (>= ${source:Version}).
+
+ -- Markus Koschany <apo@gambaru.de>  Sun, 07 Dec 2014 08:50:44 +0100
+
 megaglest (3.9.1-2) unstable; urgency=medium
 
   * Add wxWidgets-assertions.patch.
