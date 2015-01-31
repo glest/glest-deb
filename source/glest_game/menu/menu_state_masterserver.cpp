@@ -790,7 +790,7 @@ void MenuStateMasterserver::render(){
 		           ircClient->getHasJoinedChannel() == true) {
 					 renderer.renderChatManager(&chatManager);
 		        }
-		renderer.renderConsole(&consoleIRC,false,true,21);
+		renderer.renderConsole(&consoleIRC,consoleStoredOnly,21);
 
 	}
 	if(program != NULL) program->renderProgramMsgBox();
@@ -857,7 +857,7 @@ void MenuStateMasterserver::update() {
 					button->setFont(CoreData::getInstance().getDisplayFontSmall());
 					button->setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
 					button->setText(nickList[i]);
-					if(strncmp(&nickList[i][0],"MG_",3) != 0) {
+					if(strncmp(&nickList[i][0],"MG_",3) != 0 || &nickList[i][0] == currentIrcNick) {
 						button->setEnabled(false);
 						button->setEditable(false);
 						button->setCustomTexture(CoreData::getInstance().getCustomTexture());
@@ -1005,8 +1005,13 @@ void MenuStateMasterserver::simpleTask(BaseThread *callingThread,void *userdata)
 					CURL *handle = SystemFlags::initHTTP();
 
 					string playerUUID = "?uuid=" + SystemFlags::escapeURL(Config::getInstance().getString("PlayerId",""));
-                    std::string localServerInfoString = SystemFlags::getHTTP(
-                    		Config::getInstance().getString("Masterserver") + "showServersForGlest.php" + playerUUID,handle);
+
+					string baseURL = Config::getInstance().getString("Masterserver");
+		    		if(baseURL != "") {
+		    			endPathWithSlash(baseURL,false);
+		    		}
+
+					std::string localServerInfoString = SystemFlags::getHTTP(baseURL + "showServersForGlest.php" + playerUUID,handle);
 					SystemFlags::cleanupHTTP(&handle);
                     if(callingThread->getQuitStatus() == true) {
                         return;

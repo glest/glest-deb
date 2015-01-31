@@ -35,7 +35,8 @@ using namespace Shared::Util;
 
 namespace Glest{ namespace Game{
 
-const int CHANGE_COMMAND_SPEED = 325;
+const int CHANGE_COMMAND_SPEED 					= 325;
+const uint32 MIN_FRAMECOUNT_CHANGE_COMMAND_SPEED	= 160;
 
 //Mutex Unit::mutexDeletedUnits;
 //map<void *,bool> Unit::deletedUnits;
@@ -322,6 +323,9 @@ void UnitAttackBoostEffect::setSource(const Unit *unit) {
 void UnitAttackBoostEffect::applyLoadedAttackBoostParticles(UnitParticleSystemType *upstPtr,const XmlNode *node, Unit* unit) {
 	if (upstPtr != NULL) {
 		bool showUnitParticles = Config::getInstance().getBool("UnitParticles","true");
+		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+				showUnitParticles = false;
+			}
 		if (showUnitParticles == true) {
 			upst = new UnitParticleSystemType();
 			*upst = *upstPtr;
@@ -330,10 +334,12 @@ void UnitAttackBoostEffect::applyLoadedAttackBoostParticles(UnitParticleSystemTy
 			ups = new UnitParticleSystem(200);
 			//ups->loadGame(node2);
 			ups->setParticleOwner(unit);
+			ups->setParticleType(upst);
+
 			upst->setValues(ups);
-			ups->setPos(unit->getCurrVector());
+			ups->setPos(unit->getCurrVectorForParticlesystems());
 			ups->setRotation(unit->getRotation());
-			ups->setUnitModel(unit->getCurrentModelPtr());
+			unit->setMeshPosInParticleSystem(ups);
 			if (unit->getFaction()->getTexture()) {
 				ups->setFactionColor(unit->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0, 0));
 			}
@@ -515,6 +521,9 @@ Unit::Unit(int id, UnitPathInterface *unitpath, const Vec2i &pos,
 
 	mutexCommands = new Mutex(CODE_AT_LINE);
 	changedActiveCommand = false;
+	lastChangedActiveCommandFrame = 0;
+	changedActiveCommandFrame = 0;
+
 	lastSynchDataString="";
 	modelFacing = CardinalDir::NORTH;
 	lastStuckFrame = 0;
@@ -572,6 +581,7 @@ Unit::Unit(int id, UnitPathInterface *unitpath, const Vec2i &pos,
 	this->lastHarvestResourceTarget.first = Vec2i(0);
 	this->morphFieldsBlocked=false;
 	//this->lastBadHarvestListPurge = 0;
+	this->oldTotalSight = 0;
 
 	level= NULL;
 	loadType= NULL;
@@ -662,27 +672,7 @@ Unit::~Unit() {
 	}
 	safeMutex.ReleaseLock();
 
-	// If the unit is not visible we better make sure we cleanup associated particles
-	if(this->getVisible() == false) {
-		Renderer::getInstance().cleanupUnitParticleSystems(unitParticleSystems,rsGame);
-
-		Renderer::getInstance().cleanupParticleSystems(fireParticleSystems,rsGame);
-		// Must set this to null of it will be used below in stopDamageParticles()
-
-		if(Renderer::getInstance().validateParticleSystemStillExists(this->fire,rsGame) == false) {
-			this->fire = NULL;
-		}
-	}
-
-	// fade(and by this remove) all unit particle systems
-	queuedUnitParticleSystemTypes.clear();
-	while(unitParticleSystems.empty() == false) {
-		if(Renderer::getInstance().validateParticleSystemStillExists(unitParticleSystems.back(),rsGame) == true) {
-			unitParticleSystems.back()->fade();
-		}
-		unitParticleSystems.pop_back();
-	}
-	stopDamageParticles(true);
+	cleanupAllParticlesystems();
 
 	while(currentAttackBoostEffects.empty() == false) {
 		//UnitAttackBoostEffect &effect = currentAttackBoostEffects.back();
@@ -722,6 +712,29 @@ Unit::~Unit() {
 #endif
 }
 
+void Unit::cleanupAllParticlesystems() {
+
+	Renderer::getInstance().cleanupUnitParticleSystems(unitParticleSystems,rsGame);
+
+	Renderer::getInstance().cleanupParticleSystems(fireParticleSystems,rsGame);
+	// Must set this to null of it will be used below in stopDamageParticles()
+
+	if(Renderer::getInstance().validateParticleSystemStillExists(this->fire,rsGame) == false) {
+		this->fire = NULL;
+	}
+
+	// fade(and by this remove) all unit particle systems
+	queuedUnitParticleSystemTypes.clear();
+	while(unitParticleSystems.empty() == false) {
+		if(Renderer::getInstance().validateParticleSystemStillExists(unitParticleSystems.back(),rsGame) == true) {
+			unitParticleSystems.back()->fade();
+		}
+		unitParticleSystems.pop_back();
+	}
+	stopDamageParticles(true);
+
+}
+
 ParticleSystem * Unit::getFire() const	{
 	if(this->fire != NULL &&
 		Renderer::getInstance().validateParticleSystemStillExists(this->fire,rsGame) == false) {
@@ -753,11 +766,11 @@ void Unit::dumpMemoryList() {
 bool Unit::isNetworkCRCEnabled() {
 	bool isNetworkCRCEnabled = false;
 
-	if(game != NULL && game->getGameSettings() != NULL) {
-		if(isFlagType1BitEnabled(game->getGameSettings()->getFlagTypes1(),ft1_network_synch_checks_verbose) == true) {
+	if(game != NULL) {
+		if(game->isFlagType1BitEnabled(ft1_network_synch_checks_verbose) == true) {
 			isNetworkCRCEnabled = true;
 		}
-		else if(isFlagType1BitEnabled(game->getGameSettings()->getFlagTypes1(),ft1_network_synch_checks) == true) {
+		else if(game->isFlagType1BitEnabled(ft1_network_synch_checks) == true) {
 			isNetworkCRCEnabled = true;
 		}
 	}
@@ -1041,7 +1054,7 @@ float Unit::getEpRatio() const {
 		throw megaglest_runtime_error(szBuf);
 	}
 
-	if(type->getMaxHp() == 0) {
+	if(type->getTotalMaxHp(&totalUpgrade) == 0) {
 		return 0.f;
 	}
 	else {
@@ -1284,12 +1297,16 @@ void Unit::setCurrSkill(const SkillType *currSkill) {
 		unitParticleSystems.empty() == true) {
 		//printf("START - particle system type\n");
 
-		for(UnitParticleSystemTypes::const_iterator it= currSkill->unitParticleSystemTypes.begin(); it != currSkill->unitParticleSystemTypes.end(); ++it) {
+		/*
+		for(UnitParticleSystemTypes::const_iterator it= currSkill->unitParticleSystemTypes.begin();
+				it != currSkill->unitParticleSystemTypes.end(); ++it) {
 			if((*it)->getStartTime() == 0.0) {
 				//printf("Adding NON-queued particle system type [%s] [%f] [%f]\n",(*it)->getType().c_str(),(*it)->getStartTime(),(*it)->getEndTime());
 
 				UnitParticleSystem *ups = new UnitParticleSystem(200);
 				ups->setParticleOwner(this);
+				ups->setParticleType((*it));
+
 				(*it)->setValues(ups);
 				ups->setPos(getCurrVector());
 				ups->setRotation(getRotation());
@@ -1306,6 +1323,8 @@ void Unit::setCurrSkill(const SkillType *currSkill) {
 				queuedUnitParticleSystemTypes.push_back(*it);
 			}
 		}
+		*/
+		checkCustomizedUnitParticleListTriggers(currSkill->unitParticleSystemTypes,true);
 	}
 	progress2= 0;
 	if(this->currSkill != currSkill) {
@@ -1347,7 +1366,7 @@ void Unit::setTarget(const Unit *unit){
 
 	//ser field and vector
 	targetField= unit->getCurrField();
-	targetVec= unit->getCurrVector();
+	targetVec= unit->getCurrVectorAsTarget();
 	targetRef= unit;
 }
 
@@ -1377,10 +1396,10 @@ void Unit::setPos(const Vec2i &pos, bool clearPathFinder) {
 	logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 }
 
-void Unit::refreshPos() {
+void Unit::refreshPos(bool forceRefresh) {
 	// Attempt to improve performance
-	this->exploreCells();
-	calculateFogOfWarRadius();
+	this->exploreCells(forceRefresh);
+	calculateFogOfWarRadius(forceRefresh);
 }
 
 FowAlphaCellsLookupItem Unit::getFogOfWarRadius(bool useCache) const {
@@ -1389,7 +1408,7 @@ FowAlphaCellsLookupItem Unit::getFogOfWarRadius(bool useCache) const {
 	}
 
 	//iterate through all cells
-	int sightRange= this->getType()->getSight();
+	int sightRange= this->getType()->getTotalSight(this->getTotalUpgrade());
 	int radius = sightRange + World::indirectSightRange;
 	PosCircularIterator pci(map, this->getPosNotThreadSafe(), radius);
 	FowAlphaCellsLookupItem result;
@@ -1421,9 +1440,9 @@ FowAlphaCellsLookupItem Unit::getFogOfWarRadius(bool useCache) const {
 	return result;
 }
 
-void Unit::calculateFogOfWarRadius() {
+void Unit::calculateFogOfWarRadius(bool forceRefresh) {
 	if(game->getWorld()->getFogOfWar() == true) {
-		if(this->pos != this->cachedFowPos) {
+		if(forceRefresh || this->pos != this->cachedFowPos) {
 			cachedFow = getFogOfWarRadius(false);
 			static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
 			MutexSafeWrapper safeMutex(mutexCommands,mutexOwnerId);
@@ -1583,7 +1602,16 @@ bool Unit::checkModelStateInfoForNewHpValue() {
 	return result;
 }
 
-Vec3f Unit::getCurrVector() const{
+Vec3f Unit::getCurrVectorForParticlesystems() const{
+	if(getFaction()->getType()->isFlatParticlePositions()){
+		return getCurrVectorFlat();
+	}
+	else {
+		return getCurrMidHeightVector();
+	}
+}
+
+Vec3f Unit::getCurrMidHeightVector() const{
 	if(type == NULL) {
 		char szBuf[8096]="";
 		snprintf(szBuf,8096,"In [%s::%s Line: %d] ERROR: type == NULL, Unit = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->toString().c_str());
@@ -1591,6 +1619,36 @@ Vec3f Unit::getCurrVector() const{
 	}
 
 	Vec3f result = getCurrVectorFlat() + Vec3f(0.f, type->getHeight() / 2.f, 0.f);
+	result.x = truncateDecimal<float>(result.x,6);
+	result.y = truncateDecimal<float>(result.y,6);
+	result.z = truncateDecimal<float>(result.z,6);
+
+	return result;
+}
+
+Vec3f Unit::getCurrVectorAsTarget() const{
+	if(type == NULL) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d] ERROR: type == NULL, Unit = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->toString().c_str());
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	Vec3f result = getCurrVectorFlat() + Vec3f(0.f, type->getTargetHeight() / 2.f, 0.f);
+	result.x = truncateDecimal<float>(result.x,6);
+	result.y = truncateDecimal<float>(result.y,6);
+	result.z = truncateDecimal<float>(result.z,6);
+
+	return result;
+}
+
+Vec3f Unit::getCurrBurnVector() const{
+	if(type == NULL) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d] ERROR: type == NULL, Unit = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->toString().c_str());
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	Vec3f result = getCurrVectorFlat() + Vec3f(0.f, type->getBurnHeight() / 2.f, 0.f);
 	result.x = truncateDecimal<float>(result.x,6);
 	result.y = truncateDecimal<float>(result.y,6);
 	result.z = truncateDecimal<float>(result.z,6);
@@ -1783,26 +1841,37 @@ std::pair<CommandResult,string> Unit::giveCommand(Command *command, bool tryQueu
 		//empty command queue
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] Clear commands because current is NOT queable.\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-		bool willChangedActiveCommand= (commands.empty() == false);
-		if(willChangedActiveCommand){
-			CommandClass currCommandClass=getCurrCommand()->getCommandType()->getClass();
-			CommandClass commandClass=command->getCommandType()->getClass();
-			if(currCommandClass
-			        == commandClass){
-				willChangedActiveCommand= false;
+		bool willChangedActiveCommand = (commands.empty() == false);
+		if(willChangedActiveCommand == true) {
+
+			CommandClass currCommandClass 	= getCurrCommand()->getCommandType()->getClass();
+			CommandClass commandClass		= command->getCommandType()->getClass();
+			if(currCommandClass == commandClass) {
+
+				willChangedActiveCommand = false;
 			}
-			else if(currCommandClass==ccAttack || currCommandClass==ccAttackStopped ||
-					commandClass==ccAttack || commandClass==ccAttackStopped){
+			else if(currCommandClass == ccAttack ||
+					currCommandClass == ccAttackStopped ||
+					commandClass     == ccAttack ||
+					commandClass     == ccAttackStopped) {
+
 				willChangedActiveCommand= true;
 			}
-			else{
+			else {
 				willChangedActiveCommand= false;
 			}
 		}
+
+		if(willChangedActiveCommand == true) {
+
+			lastChangedActiveCommandFrame = changedActiveCommandFrame;
+			changedActiveCommandFrame = getFrameCount();
+
+			//printf("Line: %d getCurrCommand() [%s] command [%s]\n",__LINE__,getCurrCommand()->toString(false).c_str(),command->toString(false).c_str());
+		}
+
 		clearCommands();
-		changedActiveCommand= willChangedActiveCommand;
-
-
+		changedActiveCommand = willChangedActiveCommand;
 
 		//printf("In [%s::%s] Line: %d cleared existing commands\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
@@ -1930,19 +1999,38 @@ void Unit::born(const CommandType *ct) {
 		throw megaglest_runtime_error(szBuf);
 	}
 
-	faction->addStore(type,false);
+	faction->addStore(type);
 	faction->applyStaticProduction(type,ct);
 	setCurrSkill(scStop);
 
 	checkItemInVault(&this->hp,this->hp);
 	int original_hp = this->hp;
-	this->hp= type->getMaxHp();
+
+	
+	//set hp from start hp
+	checkItemInVault(&this->ep,this->ep);
+	if(type->getStartHpType() == UnitType::stValue) {
+		this->hp= type->getStartHpValue();
+	}
+	else {
+		this->hp= type->getTotalMaxHp(&totalUpgrade) * 100 / type->getStartHpPercentage();
+	}
+
 	if(original_hp != this->hp) {
 		//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 		game->getScriptManager()->onUnitTriggerEvent(this,utet_HPChanged);
 		//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 	}
 	addItemToVault(&this->hp,this->hp);
+
+	//set ep from start ep
+	checkItemInVault(&this->ep,this->ep);
+	if(type->getStartEpType() == UnitType::stValue) {
+		this->ep= type->getStartEpValue();
+	}
+	else {
+		this->ep= type->getTotalMaxEp(&totalUpgrade) * 100 / type->getStartEpPercentage();
+	}
 }
 
 void Unit::kill() {
@@ -2153,8 +2241,12 @@ int64 Unit::getUpdateProgress() {
 		//speed
 		int speed = currSkill->getTotalSpeed(&totalUpgrade);
 
-		if(changedActiveCommand) {
-			speed = CHANGE_COMMAND_SPEED;
+		if(changedActiveCommand == true) {
+			if(changedActiveCommandFrame - lastChangedActiveCommandFrame >= MIN_FRAMECOUNT_CHANGE_COMMAND_SPEED) {
+				//printf("Line: %d speed = %d changedActiveCommandFrame [%u] lastChangedActiveCommandFrame [%u] skill [%s] command [%s]\n",__LINE__,speed,changedActiveCommandFrame,lastChangedActiveCommandFrame,currSkill->toString(false).c_str(),getCurrCommand()->toString(false).c_str());
+				//printf("Line: %d speed = %d changedActiveCommandFrame [%u] lastChangedActiveCommandFrame [%u] total = %u\n",__LINE__,speed,changedActiveCommandFrame,lastChangedActiveCommandFrame,(changedActiveCommandFrame - lastChangedActiveCommandFrame));
+				speed = CHANGE_COMMAND_SPEED;
+			}
 		}
 
 		//speed modifier
@@ -2241,10 +2333,31 @@ int64 Unit::getUpdatedProgress(int64 currentProgress, int64 updateFPS, int64 spe
 	}
 
 	if(isNetworkCRCEnabled() == true) {
+		float height			= map->getCell(pos)->getHeight();
+		float airHeight 		= game->getWorld()->getTileset()->getAirHeight();
+		int cellUnitHeight		= -1;
+		int cellObjectHeight	= -1;
+
+		Unit *unit = map->getCell(pos)->getUnit(fLand);
+		if(unit != NULL && unit->getType()->getHeight() > airHeight) {
+			cellUnitHeight = unit->getType()->getHeight();
+		}
+		else {
+			SurfaceCell *sc = map->getSurfaceCell(map->toSurfCoords(pos));
+			if(sc != NULL && sc->getObject() != NULL && sc->getObject()->getType() != NULL) {
+				if(sc->getObject()->getType()->getHeight() > airHeight) {
+					cellObjectHeight = sc->getObject()->getType()->getHeight();
+				}
+			}
+		}
+
+
 		char szBuf[8096]="";
-		snprintf(szBuf,8095,"currentProgress = " MG_I64_SPECIFIER " updateFPS = " MG_I64_SPECIFIER " speed = " MG_I64_SPECIFIER " diagonalFactor = " MG_I64_SPECIFIER " heightFactor = " MG_I64_SPECIFIER " speedDenominator = " MG_I64_SPECIFIER " progressIncrease = " MG_I64_SPECIFIER " [" MG_I64_SPECIFIER "]",
-				currentProgress,updateFPS,speed,diagonalFactor,heightFactor,speedDenominator,progressIncrease,((speed * diagonalFactor * heightFactor) / speedDenominator));
+		snprintf(szBuf,8095,"currentProgress = " MG_I64_SPECIFIER " updateFPS = " MG_I64_SPECIFIER " speed = " MG_I64_SPECIFIER " diagonalFactor = " MG_I64_SPECIFIER " heightFactor = " MG_I64_SPECIFIER " speedDenominator = " MG_I64_SPECIFIER " progressIncrease = " MG_I64_SPECIFIER " [" MG_I64_SPECIFIER "] height [%f] airHeight [%f] cellUnitHeight [%d] cellObjectHeight [%d] skill [%s] pos [%s] lastpos [%s]",
+				currentProgress,updateFPS,speed,diagonalFactor,heightFactor,speedDenominator,progressIncrease,((speed * diagonalFactor * heightFactor) / speedDenominator),height,airHeight,cellUnitHeight,cellObjectHeight,(currSkill != NULL ? currSkill->getName().c_str() : "none"),pos.getString().c_str(),lastPos.getString().c_str());
 		networkCRCLogInfo = szBuf;
+
+		//printf("%s\n",szBuf);
 	}
 
 	newProgress += progressIncrease;
@@ -2310,13 +2423,11 @@ void Unit::updateAttackBoostProgress(const Game* game) {
 					attackBoost->radius);
 
 			if(debugBoost) printf("Line: %d candidates unit size: " MG_SIZE_T_SPECIFIER " attackBoost: %s\n",__LINE__,candidates.size(),attackBoost->getDesc(false).c_str());
-
 			for (unsigned int i = 0; i < candidates.size(); ++i) {
 				Unit *affectedUnit = candidates[i];
 				if (attackBoost->isAffected(this, affectedUnit) == true) {
 					if (affectedUnit->applyAttackBoost(attackBoost, this) == true) {
 						currentAttackBoostOriginatorEffect.currentAttackBoostUnits.push_back(affectedUnit->getId());
-
 						//printf("+ #1 APPLY ATTACK BOOST to unit [%s - %d]\n",affectedUnit->getType()->getName().c_str(),affectedUnit->getId());
 					}
 				}
@@ -2334,12 +2445,14 @@ void Unit::updateAttackBoostProgress(const Game* game) {
 
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups = new UnitParticleSystem(200);
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setParticleOwner(this);
+						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setParticleType(currentAttackBoostOriginatorEffect.currentAppliedEffect->upst);
+
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->upst->setValues(
 								currentAttackBoostOriginatorEffect.currentAppliedEffect->ups);
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setPos(
-								getCurrVector());
+								getCurrVectorForParticlesystems());
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setRotation(getRotation());
-						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setUnitModel(getCurrentModelPtr());
+						setMeshPosInParticleSystem(currentAttackBoostOriginatorEffect.currentAppliedEffect->ups);
 
 						if (getFaction()->getTexture()) {
 							currentAttackBoostOriginatorEffect.
@@ -2445,12 +2558,14 @@ void Unit::updateAttackBoostProgress(const Game* game) {
 
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups = new UnitParticleSystem(200);
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setParticleOwner(this);
+						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setParticleType(currentAttackBoostOriginatorEffect.currentAppliedEffect->upst);
+
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->upst->setValues(
 								currentAttackBoostOriginatorEffect.currentAppliedEffect->ups);
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setPos(
-								getCurrVector());
+								getCurrVectorForParticlesystems());
 						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setRotation(getRotation());
-						currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setUnitModel(getCurrentModelPtr());
+						setMeshPosInParticleSystem(currentAttackBoostOriginatorEffect.currentAppliedEffect->ups);
 
 						if (getFaction()->getTexture()) {
 							currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setFactionColor(
@@ -2510,8 +2625,18 @@ bool Unit::update() {
 	//speed
 	int speed= currSkill->getTotalSpeed(&totalUpgrade);
 
+	if( oldTotalSight  != getType()->getTotalSight(this->getTotalUpgrade())){
+		oldTotalSight= getType()->getTotalSight(this->getTotalUpgrade());
+		// refresh FogOfWar and so on, because sight ha changed since last update
+		refreshPos(true);
+	}
+
 	if(changedActiveCommand) {
-		speed = CHANGE_COMMAND_SPEED;
+		if(changedActiveCommandFrame - lastChangedActiveCommandFrame >= MIN_FRAMECOUNT_CHANGE_COMMAND_SPEED) {
+			//printf("Line: %d speed = %d changedActiveCommandFrame [%u] lastChangedActiveCommandFrame [%u] skill [%s] command [%s]\n",__LINE__,speed,changedActiveCommandFrame,lastChangedActiveCommandFrame,currSkill->toString(false).c_str(),getCurrCommand()->toString(false).c_str());
+			//printf("Line: %d speed = %d changedActiveCommandFrame [%u] lastChangedActiveCommandFrame [%u] total = %u\n",__LINE__,speed,changedActiveCommandFrame,lastChangedActiveCommandFrame,(changedActiveCommandFrame - lastChangedActiveCommandFrame));
+			speed = CHANGE_COMMAND_SPEED;
+		}
 	}
 
 	//speed modifier
@@ -2522,6 +2647,9 @@ bool Unit::update() {
 	this->lastAnimProgress= this->animProgress;
 	const Game *game = Renderer::getInstance().getGame();
 
+	if(animProgress==0){
+		AnimCycleStarts();
+	}
 	progress = getUpdatedProgress(progress,
 			GameConstants::updateFps,
 			speed, diagonalFactor, heightFactor);
@@ -2567,7 +2695,15 @@ bool Unit::update() {
 		int64 heightFactor   = getHeightFactor(ANIMATION_SPEED_MULTIPLIER);
 		int64 speedDenominator = speedDivider *
 				game->getWorld()->getUpdateFps(this->getFactionIndex());
-		int64 progressIncrease = (currSkill->getAnimSpeed() * heightFactor) / speedDenominator;
+		
+		// Override the animation speed for attacks that have upgraded the attack speed
+		int animSpeed = currSkill->getAnimSpeed();
+		if(currSkill->getClass() == scAttack) {
+			int animSpeedBoost = ((AttackSkillType *) currSkill)->getAnimSpeedBoost(&totalUpgrade);
+			animSpeed += animSpeedBoost;
+		}
+
+		int64 progressIncrease = (animSpeed * heightFactor) / speedDenominator;
 		// Ensure we increment at least a value of 1 of the action will be stuck infinitely
 		if(currSkill->getAnimSpeed() > 0 && heightFactor > 0 && progressIncrease == 0) {
 			progressIncrease = 1;
@@ -2612,28 +2748,28 @@ bool Unit::update() {
 	}
 
 	if (this->fire != NULL) {
-		this->fire->setPos(getCurrVector());
+		this->fire->setPos(getCurrBurnVector());
 	}
 	for(UnitParticleSystems::iterator it= unitParticleSystems.begin(); it != unitParticleSystems.end(); ++it) {
 		if(Renderer::getInstance().validateParticleSystemStillExists((*it),rsGame) == true) {
-			(*it)->setPos(getCurrVector());
+			(*it)->setPos(getCurrVectorForParticlesystems());
 			(*it)->setRotation(getRotation());
-			(*it)->setUnitModel(getCurrentModelPtr());
+			setMeshPosInParticleSystem(*it);
 		}
 	}
 	for(UnitParticleSystems::iterator it= damageParticleSystems.begin(); it != damageParticleSystems.end(); ++it) {
 		if(Renderer::getInstance().validateParticleSystemStillExists((*it),rsGame) == true) {
-			(*it)->setPos(getCurrVector());
+			(*it)->setPos(getCurrVectorForParticlesystems());
 			(*it)->setRotation(getRotation());
-			(*it)->setUnitModel(getCurrentModelPtr());
+			setMeshPosInParticleSystem(*it);
 		}
 	}
 
 	for(UnitParticleSystems::iterator it= smokeParticleSystems.begin(); it != smokeParticleSystems.end(); ++it) {
 		if(Renderer::getInstance().validateParticleSystemStillExists((*it),rsGame) == true) {
-			(*it)->setPos(getCurrVector());
+			(*it)->setPos(getCurrMidHeightVector());
 			(*it)->setRotation(getRotation());
-			(*it)->setUnitModel(getCurrentModelPtr());
+			setMeshPosInParticleSystem(*it);
 		}
 	}
 
@@ -2643,9 +2779,9 @@ bool Unit::update() {
 		if(effect != NULL && effect->ups != NULL) {
 			bool particleValid = Renderer::getInstance().validateParticleSystemStillExists(effect->ups,rsGame);
 			if(particleValid == true) {
-				effect->ups->setPos(getCurrVector());
+				effect->ups->setPos(getCurrVectorForParticlesystems());
 				effect->ups->setRotation(getRotation());
-				effect->ups->setUnitModel(getCurrentModelPtr());
+				setMeshPosInParticleSystem(effect->ups);
 			}
 
 			//printf("i = %d particleValid = %d\n",i,particleValid);
@@ -2658,9 +2794,9 @@ bool Unit::update() {
 		if(currentAttackBoostOriginatorEffect.currentAppliedEffect->ups != NULL) {
 			bool particleValid = Renderer::getInstance().validateParticleSystemStillExists(currentAttackBoostOriginatorEffect.currentAppliedEffect->ups,rsGame);
 			if(particleValid == true) {
-				currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setPos(getCurrVector());
+				currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setPos(getCurrVectorForParticlesystems());
 				currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setRotation(getRotation());
-				currentAttackBoostOriginatorEffect.currentAppliedEffect->ups->setUnitModel(getCurrentModelPtr());
+				setMeshPosInParticleSystem(currentAttackBoostOriginatorEffect.currentAppliedEffect->ups);
 			}
 		}
 	}
@@ -2712,10 +2848,12 @@ void Unit::updateTimedParticles() {
 
 					UnitParticleSystem *ups = new UnitParticleSystem(200);
 					ups->setParticleOwner(this);
+					ups->setParticleType(pst);
+
 					pst->setValues(ups);
-					ups->setPos(getCurrVector());
+					ups->setPos(getCurrVectorForParticlesystems());
 					ups->setRotation(getRotation());
-					ups->setUnitModel(getCurrentModelPtr());
+					setMeshPosInParticleSystem(ups);
 
 					if(getFaction()->getTexture()) {
 						ups->setFactionColor(getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
@@ -2805,7 +2943,7 @@ bool Unit::applyAttackBoost(const AttackBoost *boost, const Unit *source) {
 		int prevMaxHpRegen = totalUpgrade.getMaxHpRegeneration();
 		//printf("#1 wasAlive = %d hp = %d boosthp = %d\n",wasAlive,hp,boost->boostUpgrade.getMaxHp());
 
-		totalUpgrade.apply(&boost->boostUpgrade, this);
+		totalUpgrade.apply(source->getId(),&boost->boostUpgrade, this);
 
 		checkItemInVault(&this->hp,this->hp);
 		//hp += boost->boostUpgrade.getMaxHp();
@@ -2853,10 +2991,12 @@ bool Unit::applyAttackBoost(const AttackBoost *boost, const Unit *source) {
 
 				effect->ups = new UnitParticleSystem(200);
 				effect->ups->setParticleOwner(this);
+				effect->ups->setParticleType(effect->upst);
+
 				effect->upst->setValues(effect->ups);
-				effect->ups->setPos(getCurrVector());
+				effect->ups->setPos(getCurrVectorForParticlesystems());
 				effect->ups->setRotation(getRotation());
-				effect->ups->setUnitModel(getCurrentModelPtr());
+				setMeshPosInParticleSystem(effect->ups);
 				if(getFaction()->getTexture()) {
 					effect->ups->setFactionColor(getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
 				}
@@ -2889,7 +3029,7 @@ bool Unit::applyAttackBoost(const AttackBoost *boost, const Unit *source) {
 				Unit::game->getWorld()->getStats()->die(getFactionIndex(),getType()->getCountUnitDeathInStats());
 				game->getScriptManager()->onUnitDied(this);
 
-				StaticSound *sound= this->getType()->getFirstStOfClass(scDie)->getSound();
+				StaticSound *sound= static_cast<const DieSkillType *>(this->getType()->getFirstStOfClass(scDie))->getSound();
 				if(sound != NULL &&
 					(this->getFactionIndex() == Unit::game->getWorld()->getThisFactionIndex() ||
 					 (game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true))) {
@@ -2923,7 +3063,7 @@ void Unit::deapplyAttackBoost(const AttackBoost *boost, const Unit *source) {
 	int originalHp = hp;
 	int prevMaxHp = totalUpgrade.getMaxHp();
 	int prevMaxHpRegen = totalUpgrade.getMaxHpRegeneration();
-	totalUpgrade.deapply(&boost->boostUpgrade, this);
+	totalUpgrade.deapply(source->getId(),&boost->boostUpgrade, this->getId());
 
 	checkItemInVault(&this->hp,this->hp);
 	int original_hp = this->hp;
@@ -2987,7 +3127,7 @@ void Unit::deapplyAttackBoost(const AttackBoost *boost, const Unit *source) {
 			Unit::game->getWorld()->getStats()->die(getFactionIndex(),getType()->getCountUnitDeathInStats());
 			game->getScriptManager()->onUnitDied(this);
 
-			StaticSound *sound= this->getType()->getFirstStOfClass(scDie)->getSound();
+			StaticSound *sound= static_cast<const DieSkillType *>(this->getType()->getFirstStOfClass(scDie))->getSound();
 			if(sound != NULL &&
 				(this->getFactionIndex() == Unit::game->getWorld()->getThisFactionIndex() ||
 				 (game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true))) {
@@ -3059,7 +3199,7 @@ void Unit::tick() {
 						Unit::game->getWorld()->getStats()->die(getFactionIndex(),getType()->getCountUnitDeathInStats());
 						game->getScriptManager()->onUnitDied(this);
 					}
-					StaticSound *sound= this->getType()->getFirstStOfClass(scDie)->getSound();
+					StaticSound *sound= static_cast<const DieSkillType *>(this->getType()->getFirstStOfClass(scDie))->getSound();
 					if(sound != NULL &&
 							(this->getFactionIndex() == Unit::game->getWorld()->getThisFactionIndex() ||
 									(game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true))) {
@@ -3070,11 +3210,11 @@ void Unit::tick() {
 		}
 		//regenerate hp
 		else {
-			if(type->getHpRegeneration() >= 0) {
+			if(type->getTotalMaxHpRegeneration(&totalUpgrade) >= 0) {
 				if( currSkill->getClass() != scBeBuilt){
 					checkItemInVault(&this->hp,this->hp);
 					int original_hp = this->hp;
-					this->hp += type->getHpRegeneration();
+					this->hp += type->getTotalMaxHpRegeneration(&totalUpgrade);
 					if(this->hp > type->getTotalMaxHp(&totalUpgrade)) {
 						this->hp = type->getTotalMaxHp(&totalUpgrade);
 					}
@@ -3091,14 +3231,14 @@ void Unit::tick() {
 			}
 			// If we have negative regeneration then check if the unit should die
 			else {
-				bool decHpResult = decHp(-type->getHpRegeneration());
+				bool decHpResult = decHp(-type->getTotalMaxHpRegeneration(&totalUpgrade));
 				if(decHpResult) {
 					this->setCauseOfDeath(ucodStarvedRegeneration);
 
 					Unit::game->getWorld()->getStats()->die(getFactionIndex(),getType()->getCountUnitDeathInStats());
 					game->getScriptManager()->onUnitDied(this);
 				}
-				StaticSound *sound= this->getType()->getFirstStOfClass(scDie)->getSound();
+				StaticSound *sound= static_cast<const DieSkillType *>(this->getType()->getFirstStOfClass(scDie))->getSound();
 				if(sound != NULL &&
 					(this->getFactionIndex() == Unit::game->getWorld()->getThisFactionIndex() ||
 					 (game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true))) {
@@ -3492,7 +3632,7 @@ bool Unit::morph(const MorphCommandType *mct) {
     }
 
     map->clearUnitCells(this, pos, false);
-    if(map->isFreeCellsOrHasUnit(pos, morphUnitType->getSize(), morphUnitField, this,morphUnitType)) {
+    if(map->canMorph(pos,this,morphUnitType)) {
 		map->clearUnitCells(this, pos, true);
 		faction->deApplyStaticCosts(type,mct);
 
@@ -3509,6 +3649,8 @@ bool Unit::morph(const MorphCommandType *mct) {
 			}
 		}
 
+		//stopDamageParticles(true);
+		cleanupAllParticlesystems();
 
 		checkItemInVault(&this->hp,this->hp);
 		int original_hp = this->hp;
@@ -3530,7 +3672,10 @@ bool Unit::morph(const MorphCommandType *mct) {
 		map->putUnitCells(this, this->pos);
 
 		this->faction->applyDiscount(morphUnitType, mct->getDiscount());
-		this->faction->addStore(this->type,mct->getReplaceStorage());
+		// add new storage
+		this->faction->addStore(this->type);
+		// remove former storage
+		this->faction->removeStore(this->preMorph_type);
 		this->faction->applyStaticProduction(morphUnitType,mct);
 
 		this->level= NULL;
@@ -3592,6 +3737,11 @@ float Unit::computeHeight(const Vec2i &pos) const {
 	return height;
 }
 
+void Unit::AnimCycleStarts(){
+	// we need to queue timed particles if progress starts
+	queueTimedParticles(currSkill->unitParticleSystemTypes);
+}
+
 void Unit::updateTarget(){
 	Unit *target= targetRef.getUnit();
 	if(target!=NULL){
@@ -3605,7 +3755,7 @@ void Unit::updateTarget(){
 #else
 		targetRotation= radToDeg(atan2(relPosf.x, relPosf.y));
 #endif
-		targetVec= target->getCurrVector();
+		targetVec= target->getCurrVectorAsTarget();
 	}
 }
 
@@ -3901,8 +4051,171 @@ void Unit::stopDamageParticles(bool force) {
 	checkCustomizedParticleTriggers(force);
 }
 
+void Unit::checkCustomizedUnitParticleListTriggers(const UnitParticleSystemTypes &unitParticleSystemTypesList,
+		bool applySkillChangeParticles) {
+	if(showUnitParticles == true) {
+		vector<ParticleSystemTypeInterface *> systemTypesInUse;
+
+		if(unitParticleSystems.empty() == false) {
+			for(int index = (int)unitParticleSystems.size() - 1; index >= 0; index--) {
+				UnitParticleSystem *ps = unitParticleSystems[index];
+				if(ps != NULL) {
+					if(Renderer::getInstance().validateParticleSystemStillExists(ps,rsGame) == true) {
+
+						bool stopParticle = false;
+						if((ps->getParticleType() != NULL &&
+								ps->getParticleType()->getMinmaxEnabled())) {
+
+							if(ps->getParticleType() != NULL) {
+								if(ps->getParticleType()->getMinmaxIsPercent() == false) {
+									if(hp < ps->getParticleType()->getMinHp() || hp > ps->getParticleType()->getMaxHp()) {
+										stopParticle = true;
+
+										//printf("STOP Particle line: %d\n",__LINE__);
+									}
+								}
+								else {
+									int hpPercent = (hp / type->getTotalMaxHp(&totalUpgrade) * 100);
+									if(hpPercent < ps->getParticleType()->getMinHp() || hpPercent > ps->getParticleType()->getMaxHp()) {
+										stopParticle = true;
+
+										//printf("STOP Particle line: %d\n",__LINE__);
+									}
+								}
+							}
+
+							if(stopParticle == true) {
+								ps->fade();
+								unitParticleSystems.erase(unitParticleSystems.begin() + index);
+							}
+						}
+
+						if(ps->getParticleType() != NULL && stopParticle == false) {
+							systemTypesInUse.push_back(ps->getParticleType());
+						}
+					}
+				}
+			}
+		}
+
+		//printf("Check Particle start line: %d size: %d\n",__LINE__,(int)unitParticleSystemTypesList.size());
+
+		if(unitParticleSystemTypesList.empty() == false) {
+
+			//for(unsigned int index = 0; index < unitParticleSystemTypesList.size(); ++index) {
+			for(UnitParticleSystemTypes::const_iterator iterParticleType = unitParticleSystemTypesList.begin();
+					iterParticleType != unitParticleSystemTypesList.end(); ++iterParticleType) {
+				UnitParticleSystemType *pst = *iterParticleType;
+
+				vector<ParticleSystemTypeInterface *>::iterator iterFind = std::find(systemTypesInUse.begin(),systemTypesInUse.end(),pst);
+
+				//printf("Check Particle line: %d   isenabled: %d  already in use: %d\n",__LINE__,pst->getMinmaxEnabled(),(iterFind == systemTypesInUse.end()));
+
+				bool showParticle = applySkillChangeParticles;
+				if(pst->getMinmaxEnabled() == true) {
+
+					//printf("Check Particle line: %d   isenabled: %d  already in use: %d\n",__LINE__,pst->getMinmaxEnabled(),(iterFind != systemTypesInUse.end()));
+
+					showParticle = false;
+					if(iterFind == systemTypesInUse.end()) {
+						if(pst->getMinmaxIsPercent() == false) {
+							if(hp >= pst->getMinHp() && hp <= pst->getMaxHp()) {
+								showParticle = true;
+
+								//printf("START Particle line: %d\n",__LINE__);
+							}
+						}
+						else {
+							int hpPercent = (hp / type->getTotalMaxHp(&totalUpgrade) * 100);
+							if(hpPercent >= pst->getMinHp() && hpPercent <= pst->getMaxHp()) {
+								showParticle = true;
+
+								//printf("START Particle line: %d\n",__LINE__);
+							}
+						}
+					}
+				}
+				if(showParticle == true){
+					if(pst->getStartTime() == 0.0) {
+						UnitParticleSystem *ups = new UnitParticleSystem(200);
+						ups->setParticleOwner(this);
+						ups->setParticleType(pst);
+
+						pst->setValues(ups);
+						ups->setPos(getCurrVectorForParticlesystems());
+						ups->setRotation(getRotation());
+						setMeshPosInParticleSystem(ups);
+						if(getFaction()->getTexture()) {
+							ups->setFactionColor(getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
+						}
+						unitParticleSystems.push_back(ups);
+						Renderer::getInstance().manageParticleSystem(ups, rsGame);
+					}
+					else {
+						// do nothing, timed particles are handled below in queueTimedParticles()
+					}
+				}
+			}
+		}
+	}
+}
+
+void Unit::queueTimedParticles(const UnitParticleSystemTypes &unitParticleSystemTypesList){
+	if(showUnitParticles == true) {
+		for(UnitParticleSystemTypes::const_iterator iterParticleType = unitParticleSystemTypesList.begin();
+				iterParticleType != unitParticleSystemTypesList.end(); ++iterParticleType) {
+			UnitParticleSystemType *pst = *iterParticleType;
+			if(pst->getMinmaxEnabled() == false) {
+				if(pst->getStartTime() != 0.0) {
+					queuedUnitParticleSystemTypes.push_back(pst);
+				}
+			}
+		}
+	}
+}
+
+void Unit::setMeshPosInParticleSystem(UnitParticleSystem *ups){
+	if(ups->getMeshName()!=""){
+		string meshName=ups->getMeshName();
+		Model *model= getCurrentModelPtr();
+		model->updateInterpolationVertices(getAnimProgressAsFloat(), isAlive() && !isAnimProgressBound());
+
+		bool foundMesh=false;
+		for(unsigned int i=0; i<model->getMeshCount() ; i++){
+			//printf("meshName=%s\n",unitModel->getMesh(i)->getName().c_str());
+			if(model->getMesh(i)->getName()==meshName){
+				const InterpolationData *data=model->getMesh(i)->getInterpolationData();
+				const Vec3f *verticepos=data->getVertices();
+				ups->setMeshPos(Vec3f(verticepos->x,verticepos->y,verticepos->z));
+				foundMesh=true;
+				break;
+			}
+		}
+		if( foundMesh == false ) {
+			string meshesFound="";
+			for(unsigned i=0; i<model->getMeshCount() ; i++){
+				meshesFound+= model->getMesh(i)->getName()+", ";
+			}
+
+			string errorString = "Warning: Particle system is trying to find mesh'"+meshName+"', but just found:\n'"+meshesFound+"' in file:\n'"+model->getFileName()+"'\n";
+			//throw megaglest_runtime_error(errorString);
+			printf("%s",errorString.c_str());
+		}
+	}
+}
+
+void Unit::checkCustomizedUnitParticleTriggers() {
+	if(currSkill != NULL) {
+		checkCustomizedUnitParticleListTriggers(currSkill->unitParticleSystemTypes,false);
+	}
+}
+
 void Unit::checkCustomizedParticleTriggers(bool force) {
-	// Now check if we have special hp triggered particles
+	//
+	// Now check if we have special pre-exisitng hp triggered particles and
+	// end those that should no longer display
+	//
+	// end s particles
 	if(damageParticleSystems.empty() == false) {
 		for(int i = (int)damageParticleSystems.size()-1; i >= 0; --i) {
 			UnitParticleSystem *ps = damageParticleSystems[i];
@@ -3952,7 +4265,9 @@ void Unit::checkCustomizedParticleTriggers(bool force) {
 		}
 	}
 
-	// Now check if we have special hp triggered particles
+	//
+	// Now check if we have new special hp triggered particles to display
+	//
 	//start additional particles
 	if(showUnitParticles &&
 		type->damageParticleSystemTypes.empty() == false  &&
@@ -3981,10 +4296,12 @@ void Unit::checkCustomizedParticleTriggers(bool force) {
 
 					UnitParticleSystem *ups = new UnitParticleSystem(200);
 					ups->setParticleOwner(this);
+					ups->setParticleType(pst);
+
 					pst->setValues(ups);
-					ups->setPos(getCurrVector());
+					ups->setPos(getCurrVectorForParticlesystems());
 					ups->setRotation(getRotation());
-					ups->setUnitModel(getCurrentModelPtr());
+					setMeshPosInParticleSystem(ups);
 					if(getFaction()->getTexture()) {
 						ups->setFactionColor(getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
 					}
@@ -3995,10 +4312,12 @@ void Unit::checkCustomizedParticleTriggers(bool force) {
 			}
 		}
 	}
+
+	checkCustomizedUnitParticleTriggers();
 }
 
 void Unit::startDamageParticles() {
-	if(hp < type->getMaxHp() / 2 && hp > 0 && alive == true) {
+	if(hp < type->getTotalMaxHp(&totalUpgrade) / 2 && hp > 0 && alive == true) {
 		//start additional particles
 		if( showUnitParticles &&
 			type->damageParticleSystemTypes.empty() == false ) {
@@ -4008,10 +4327,12 @@ void Unit::startDamageParticles() {
 				if(pst->getMinmaxEnabled() == false && damageParticleSystemsInUse.find(i) == damageParticleSystemsInUse.end()) {
 					UnitParticleSystem *ups = new UnitParticleSystem(200);
 					ups->setParticleOwner(this);
+					ups->setParticleType(pst);
+
 					pst->setValues(ups);
-					ups->setPos(getCurrVector());
+					ups->setPos(getCurrVectorForParticlesystems());
 					ups->setRotation(getRotation());
-					ups->setUnitModel(getCurrentModelPtr());
+					setMeshPosInParticleSystem(ups);
 					if(getFaction()->getTexture()) {
 						ups->setFactionColor(getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
 					}
@@ -4028,7 +4349,7 @@ void Unit::startDamageParticles() {
 			fps->setParticleOwner(this);
 			const Game *game = Renderer::getInstance().getGame();
 			fps->setSpeed(2.5f / game->getWorld()->getUpdateFps(this->getFactionIndex()));
-			fps->setPos(getCurrVector());
+			fps->setPos(getCurrBurnVector());
 			fps->setRadius(type->getSize()/3.f);
 			fps->setTexture(CoreData::getInstance().getFireTexture());
 			fps->setParticleSize(type->getSize()/3.f);
@@ -4042,9 +4363,9 @@ void Unit::startDamageParticles() {
 				ups->setParticleOwner(this);
 				ups->setColorNoEnergy(Vec4f(0.0f, 0.0f, 0.0f, 0.13f));
 				ups->setColor(Vec4f(0.115f, 0.115f, 0.115f, 0.22f));
-				ups->setPos(getCurrVector());
+				ups->setPos(getCurrBurnVector());
 				ups->setRotation(getRotation());
-				ups->setUnitModel(getCurrentModelPtr());
+				setMeshPosInParticleSystem(ups);
 				ups->setBlendMode(ups->strToBlendMode("black"));
 				ups->setOffset(Vec3f(0,2,0));
 				ups->setDirection(Vec3f(0,1,-0.2f));
@@ -4066,11 +4387,6 @@ void Unit::startDamageParticles() {
 	}
 
 	checkCustomizedParticleTriggers(false);
-}
-
-void Unit::setTargetVec(const Vec3f &targetVec)	{
-	this->targetVec= targetVec;
-	logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 }
 
 void Unit::setMeetingPos(const Vec2i &meetingPos) {
@@ -4101,10 +4417,10 @@ uint32 Unit::getFrameCount() const {
 	return frameCount;
 }
 
-void Unit::exploreCells() {
+void Unit::exploreCells(bool forceRefresh) {
 	if(this->isOperative() == true) {
 		const Vec2i &newPos = this->getCenteredPos();
-		int sightRange 		= this->getType()->getSight();
+		int sightRange 		= this->getType()->getTotalSight(this->getTotalUpgrade());
 		int teamIndex 		= this->getTeam();
 
 		if(game == NULL) {
@@ -4115,7 +4431,8 @@ void Unit::exploreCells() {
 		}
 
 		// Try the local unit exploration cache
-		if(cacheExploredCellsKey.first == newPos &&
+		if( !forceRefresh &&
+			cacheExploredCellsKey.first == newPos &&
 			cacheExploredCellsKey.second == sightRange) {
 			game->getWorld()->exploreCells(teamIndex, cacheExploredCells);
 		}
@@ -5000,7 +5317,8 @@ Unit * Unit::loadGame(const XmlNode *rootNode, GameSettings *settings, Faction *
 		//result->fire->setTexture(CoreData::getInstance().getFireTexture());
 		result->fireParticleSystems.push_back(result->fire);
 
-		//Renderer::getInstance().manageParticleSystem(result->fire, rsGame);
+		//printf("Load MAIN fire particle result->fire = %p\n",result->fire);
+
 		Renderer::getInstance().addToDeferredParticleSystemList(make_pair(result->fire, rsGame));
 	}
 
@@ -5125,16 +5443,20 @@ Unit * Unit::loadGame(const XmlNode *rootNode, GameSettings *settings, Faction *
 		for(int i = 0; i < (int)unitParticleSystemNodeList.size(); ++i) {
 			XmlNode *node = unitParticleSystemNodeList[i];
 
-			FireParticleSystem *ups = new FireParticleSystem();
-			ups->loadGame(node);
-			//ups->setTexture(CoreData::getInstance().getFireTexture());
-			result->fireParticleSystems.push_back(ups);
+			if(result->fire == NULL || linkFireIndex != i) {
+				FireParticleSystem *ups = new FireParticleSystem();
+				ups->setParticleOwner(result);
+				ups->loadGame(node);
+				//ups->setTexture(CoreData::getInstance().getFireTexture());
+				result->fireParticleSystems.push_back(ups);
 
-			if(linkFireIndex >= 0 && linkFireIndex == i) {
-				result->fire = ups;
+				//printf("Load fire particle i = %d linkFireIndex = %d result->fire = %p ups = %p\n",i,linkFireIndex,result->fire,ups);
+
+				if(result->fire == NULL && linkFireIndex >= 0 && linkFireIndex == i) {
+					result->fire = ups;
+				}
+				Renderer::getInstance().addToDeferredParticleSystemList(make_pair(ups, rsGame));
 			}
-			//Renderer::getInstance().manageParticleSystem(result->fire, rsGame);
-			Renderer::getInstance().addToDeferredParticleSystemList(make_pair(ups, rsGame));
 		}
 	}
 

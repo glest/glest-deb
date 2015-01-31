@@ -50,6 +50,7 @@ public:
 	static const float hTransitionMult;
 	static const float defaultHeight;
 	static const float centerOffsetZ;
+	static const float shakeDist;
 
 public:
 	enum State{
@@ -61,6 +62,7 @@ public:
 private:
 	Vec3f pos;
 	Vec3f destPos;
+	Vec2f shakeOffset;
 
     float hAng;	//YZ plane positive -Z axis
     float vAng;	//XZ plane positive +Z axis
@@ -72,6 +74,8 @@ private:
 
 	Vec3f move;
 
+	float shakeDecrement;
+	float currentShakeIntensity;
 	State state;
 
 	int limitX;
@@ -114,6 +118,9 @@ public:
 	void setRotate(float rotate){this->rotate= rotate;}
 	void setPos(Vec2f pos);
 	void setPos(Vec3f pos);
+
+	const Vec2f &getShakeOffset() const	{return shakeOffset;}
+	void shake(int shakeDuration, int shakeStartIntensity , bool cameraDistanceAffected, Vec3f unitVector);
 
 	void setMoveX(float f)		{this->move.x= f;}
 	void setMoveY(float f)		{this->move.y= f;}
@@ -177,7 +184,7 @@ private:
 	void clampAng();
 	void moveUp(float dist);
 	void rotateHV(float h, float v);
-
+	void shakeCamera();
 };
 
 }} //end namespace

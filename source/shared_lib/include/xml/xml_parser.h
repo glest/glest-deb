@@ -14,14 +14,22 @@
 
 #include <string>
 #include <vector>
-#include <xercesc/util/XercesDefs.hpp>
 #include <map>
+
+#if defined(WANT_XERCES)
+
+#include <xercesc/util/XercesDefs.hpp>
+
+#endif
+
 #include "rapidxml/rapidxml.hpp"
 #include "data_types.h"
 #include "leak_dumper.h"
 
 using namespace rapidxml;
 using namespace std;
+
+#if defined(WANT_XERCES)
 
 namespace XERCES_CPP_NAMESPACE{
 	class DOMImplementation;
@@ -38,10 +46,15 @@ namespace XERCES_CPP_NAMESPACE{
 
 XERCES_CPP_NAMESPACE_USE
 
+#endif
+
 namespace Shared { namespace Xml {
 
 enum xml_engine_parser_type {
+
+#if defined(WANT_XERCES)
 	XML_XERCES_ENGINE = 0,
+#endif
 	XML_RAPIDXML_ENGINE = 1
 } ;
 
@@ -52,6 +65,7 @@ class XmlTree;
 class XmlNode;
 class XmlAttribute;
 
+#if defined(WANT_XERCES)
 // =====================================================
 // 	class XmlIo
 //
@@ -93,6 +107,8 @@ public:
 	void save(const string &path, const XmlNode *node);
 };
 
+#endif
+
 class XmlIoRapid {
 private:
 	static bool initialized;
@@ -108,7 +124,7 @@ public:
 	static bool isInitialized();
 	void cleanup();
 
-	XmlNode *load(const string &path, const std::map<string,string> &mapTagReplacementValues,bool noValidation=false,bool skipStackTrace=false);
+	XmlNode *load(const string &path, const std::map<string,string> &mapTagReplacementValues,bool noValidation=false,bool skipStackTrace=false,bool skipUpdatePathClimbingParts=false);
 	void save(const string &path, const XmlNode *node);
 };
 
@@ -122,6 +138,7 @@ private:
 	string loadPath;
 	xml_engine_parser_type engine_type;
 	bool skipStackCheck;
+	bool skipUpdatePathClimbingParts;
 private:
 	XmlTree(XmlTree&);
 	void operator =(XmlTree&);
@@ -131,6 +148,7 @@ public:
 	XmlTree(xml_engine_parser_type engine_type = XML_RAPIDXML_ENGINE);
 	~XmlTree();
 
+	void setSkipUpdatePathClimbingParts(bool value);
 	void init(const string &name);
 	void load(const string &path, const std::map<string,string> &mapTagReplacementValues, bool noValidation=false,bool skipStackCheck=false,bool skipStackTrace=false);
 	void save(const string &path);
@@ -158,8 +176,15 @@ private:
 	bool hasChildNoSuper(const string& childName) const;
 
 public:
+
+#if defined(WANT_XERCES)
+
 	XmlNode(XERCES_CPP_NAMESPACE::DOMNode *node, const std::map<string,string> &mapTagReplacementValues);
-	XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacementValues);
+	XERCES_CPP_NAMESPACE::DOMElement *buildElement(XERCES_CPP_NAMESPACE::DOMDocument *document) const;
+
+#endif
+
+	XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacementValues,bool skipUpdatePathClimbingParts=false);
 	XmlNode(const string &name);
 	~XmlNode();
 	
@@ -186,8 +211,6 @@ public:
 
 	XmlNode *addChild(const string &name, const string text = "");
 	XmlAttribute *addAttribute(const string &name, const string &value, const std::map<string,string> &mapTagReplacementValues);
-
-	XERCES_CPP_NAMESPACE::DOMElement *buildElement(XERCES_CPP_NAMESPACE::DOMDocument *document) const;
 	xml_node<>* buildElement(xml_document<> *document) const;
 };
 
@@ -208,7 +231,13 @@ private:
 	void operator =(XmlAttribute&);
 
 public:
+
+#if defined(WANT_XERCES)
+
 	XmlAttribute(XERCES_CPP_NAMESPACE::DOMNode *attribute, const std::map<string,string> &mapTagReplacementValues);
+
+#endif
+
 	XmlAttribute(xml_attribute<> *attribute, const std::map<string,string> &mapTagReplacementValues);
 	XmlAttribute(const string &name, const string &value, const std::map<string,string> &mapTagReplacementValues);
 

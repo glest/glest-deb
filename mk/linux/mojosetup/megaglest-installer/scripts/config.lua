@@ -1,5 +1,5 @@
-local GAME_INSTALL_SIZE = 730000000;
-local GAME_VERSION = "3.9.1";
+local GAME_INSTALL_SIZE = 680000000;
+local GAME_VERSION = "3.11.0";
 
 local _ = MojoSetup.translate
 
@@ -157,7 +157,7 @@ Setup.Package
             genericname = _("MegaGlest"),
             tooltip = _("A real time strategy game."),
             builtin_icon = false,
-	    icon = "megaglest_uninstall.ico",
+	    icon = "megaglest-uninstall.ico",
             commandline = "%0/uninstall-megaglest.sh",
             category = "Game;StrategyGame"
         }

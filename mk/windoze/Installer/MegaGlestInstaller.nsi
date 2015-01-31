@@ -3,20 +3,20 @@
 
 !define APNAME MegaGlest
 !define APNAME_OLD Mega-Glest
-!define APVER_OLD 3.9.0
-!define APVER 3.9.1
+!define APVER_OLD 3.9.1
+!define APVER 3.11.0
 
 Name "${APNAME} ${APVER}"
 SetCompressor /FINAL /SOLID lzma
 SetCompressorDictSize 64
 OutFile "${APNAME}-Installer-${APVER}_i386_win32.exe"
-Icon "..\megaglest.ico"
-UninstallIcon "..\megaglest.ico"
-!define MUI_ICON "..\megaglest.ico"
-!define MUI_UNICON "..\megaglest.ico"
+Icon "..\..\shared\megaglest.ico"
+UninstallIcon "..\..\shared\megaglest.ico"
+!define MUI_ICON "..\..\shared\megaglest.ico"
+!define MUI_UNICON "..\..\shared\megaglest.ico"
 InstallDir "$PROGRAMFILES\${APNAME}"
 ShowInstDetails show
-BGGradient 0xDF9437 0xffffff
+;BGGradient 0xDF9437 0xffffff
 
 ; Request application privileges for Windows Vista
 RequestExecutionLevel none
@@ -31,6 +31,8 @@ PageEx license
        LicenseData "..\..\..\data\glest_game\docs\cc-by-sa-3.0-unported.txt"
 PageExEnd
 
+;---- add local plugins dir
+!addPluginDir "plugins"
 ;--------------------------------
 ; Images not included!
 ; Use your own animated GIFs please
@@ -67,7 +69,7 @@ Function myGUIInit
   File megaglestinstallscreen.jpg
 
   FindWindow $0 '_Nb'
-  EBanner::show /NOUNLOAD /FIT=BOTH /HWND=$0 "$PLUGINSDIR\megaglestinstallscreen.jpg"
+  #EBanner::show /NOUNLOAD /FIT=BOTH /HWND=$0 "$PLUGINSDIR\megaglestinstallscreen.jpg"
   #BgImage::SetBg /NOUNLOAD /FILLSCREEN "$PLUGINSDIR\megaglestinstallscreen.jpg"
   #BgImage::Redraw /NOUNLOAD
 
@@ -81,7 +83,7 @@ Function un.myGUIInit
   File megaglestinstallscreen.jpg
 
   FindWindow $0 '_Nb'
-  EBanner::show /NOUNLOAD /FIT=BOTH /HWND=$0 "$PLUGINSDIR\megaglestinstallscreen.jpg"
+  #EBanner::show /NOUNLOAD /FIT=BOTH /HWND=$0 "$PLUGINSDIR\megaglestinstallscreen.jpg"
 FunctionEnd
   
 Function MUIGUIInit
@@ -173,7 +175,7 @@ FunctionEnd
 
 Function .onGUIEnd
 
-  EBanner::stop
+  #EBanner::stop
 
 FunctionEnd
 
@@ -211,31 +213,31 @@ Section "${APNAME} (required)"
   ; Set output path to the installation directory.
   SetOutPath $INSTDIR
   ; Put file there
-  File "..\..\..\data\glest_game\megaglest.exe"
-  File "..\..\..\data\glest_game\megaglest_editor.exe"
-  File "..\..\..\data\glest_game\megaglest_g3dviewer.exe"
-  File "..\..\..\data\glest_game\7z.exe"
-  File "..\..\..\data\glest_game\7z.dll"
-  File "..\..\..\data\glest_game\megaglest.ico"
-  File "..\..\..\data\glest_game\glest.ini"
-  File "..\..\..\data\glest_game\glestkeys.ini"
-  File "..\..\..\data\glest_game\servers.ini"
-  File "..\..\..\data\glest_game\openal32.dll"
+  File "..\megaglest.exe"
+  File "..\megaglest_editor.exe"
+  File "..\megaglest_g3dviewer.exe"
+  File "..\7z.exe"
+  File "..\7z.dll"
+  File "..\..\shared\megaglest.ico"
+  File "..\glest.ini"
+  File "..\..\shared\glestkeys.ini"
+  File "..\..\shared\servers.ini"
+  File "..\openal32.dll"
   
-  File "..\..\..\mk\windoze\NetworkThrottleFix.reg"
+  File "..\NetworkThrottleFix.reg"
   
-  File "..\..\..\data\glest_game\libvlccore.dll"
-  File "..\..\..\data\glest_game\libvlc.dll"
-  File /r /x .svn /x mydata "..\..\..\data\glest_game\plugins"
-  File /r /x .svn /x mydata "..\..\..\data\glest_game\lua"
+  File "..\libvlccore.dll"
+  File "..\libvlc.dll"
+  File /r /x .svn /x mydata "..\plugins"
+  File /r /x .svn /x mydata "..\lua"
   
   SetOutPath "$INSTDIR\blender\"
-  File "..\..\..\data\glest_game\xml2g.exe"
-  File "..\..\..\data\glest_game\g2xml.exe"
+  File "..\\xml2g.exe"
+  File "..\g2xml.exe"
   File /r /x .svn /x mydata "..\..\..\source\tools\glexemel\*.*"
   SetOutPath $INSTDIR
 
-  File /r /x .svn /x mydata "..\..\..\data\glest_game\data"
+  File /r /x .svn /x mydata /x cegui "..\..\..\data\glest_game\data"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\docs"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\maps"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\scenarios"

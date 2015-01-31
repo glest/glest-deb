@@ -23,9 +23,11 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 
 	IF(NOT WIN32)
 
-		FIND_PACKAGE(XercesC REQUIRED)
-		INCLUDE_DIRECTORIES(${XERCESC_INCLUDE})
-		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${XERCESC_LIBRARY})
+                IF(WANT_XERCES)
+		        FIND_PACKAGE(XercesC REQUIRED)
+		        INCLUDE_DIRECTORIES(${XERCESC_INCLUDE})
+		        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${XERCESC_LIBRARY})
+                ENDIF()
 
 		# It was noticed that when using MinGW gcc it is essential that 'core' is mentioned before 'base'.
 		FIND_PACKAGE(wxWidgets COMPONENTS core base gl REQUIRED)
@@ -194,14 +196,11 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 
                 # Installation of the program config and image files
 	        INSTALL(FILES 
-	          "${PROJECT_SOURCE_DIR}/g3dviewer.ico"
+	          "${PROJECT_SOURCE_DIR}/mk/shared/g3dviewer.ico"
 	          DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH})
 
 	        # Installation of the program desktop file
                 SET(MG_DESKTOP_FILE ${PROJECT_SOURCE_DIR}/mk/linux/megaglest_g3dviewer.desktop)
-                IF(NOT EXISTS ${MG_DESKTOP_FILE})
-                        SET(MG_DESKTOP_FILE ${PROJECT_SOURCE_DIR}/megaglest_g3dviewer.desktop)
-                ENDIF()
 
                 INSTALL(FILES
 	          "${MG_DESKTOP_FILE}"

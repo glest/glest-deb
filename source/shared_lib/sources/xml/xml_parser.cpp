@@ -18,9 +18,15 @@
 #include <algorithm>
 
 #include "conversion.h"
+
+#if defined(WANT_XERCES)
+
 #include <xercesc/dom/DOM.hpp>
 #include <xercesc/util/PlatformUtils.hpp>
 #include <xercesc/framework/LocalFileFormatTarget.hpp>
+
+#endif
+
 #include "util.h"
 #include "properties.h"
 #include "platform_common.h"
@@ -30,7 +36,11 @@
 #include "rapidxml/rapidxml_print.hpp"
 #include "leak_dumper.h"
 
+#if defined(WANT_XERCES)
+
 XERCES_CPP_NAMESPACE_USE
+
+#endif
 
 using namespace std;
 using namespace Shared::PlatformCommon;
@@ -38,6 +48,15 @@ using namespace Shared::PlatformCommon;
 namespace Shared { namespace Xml {
 
 using namespace Util;
+
+// =====================================================
+//	class XmlIo
+// =====================================================
+bool XmlIoRapid::initialized= false;
+
+#if defined(WANT_XERCES)
+
+bool XmlIo::initialized		= false;
 
 // =====================================================
 //	class ErrorHandler
@@ -56,13 +75,6 @@ public:
 		return true;
 	}
 };
-
-// =====================================================
-//	class XmlIo
-// =====================================================
-
-bool XmlIo::initialized		= false;
-bool XmlIoRapid::initialized= false;
 
 XmlIo::XmlIo() : parser(NULL) {
 	init();
@@ -285,6 +297,8 @@ void XmlIo::save(const string &path, const XmlNode *node){
 	}
 }
 
+#endif
+
 // =====================================================
 //	class XmlIoRapid
 // =====================================================
@@ -325,7 +339,8 @@ XmlIoRapid::~XmlIoRapid() {
 	cleanup();
 }
 
-XmlNode *XmlIoRapid::load(const string &path, const std::map<string,string> &mapTagReplacementValues,bool noValidation,bool skipStackTrace) {
+XmlNode *XmlIoRapid::load(const string &path, const std::map<string,string> &mapTagReplacementValues,
+		bool noValidation,bool skipStackTrace,bool skipUpdatePathClimbingParts) {
 	bool showPerfStats = SystemFlags::VERBOSE_MODE_ENABLED;
 	Chrono chrono;
 	chrono.start();
@@ -374,7 +389,7 @@ XmlNode *XmlIoRapid::load(const string &path, const std::map<string,string> &map
 
         // Load data and add terminating 0
         vector<char> buffer;
-        buffer.resize((unsigned int)file_size + 1);
+        buffer.resize((unsigned int)file_size + 100);
         xmlFile.read(&buffer.front(), static_cast<streamsize>(file_size));
         buffer[(unsigned int)file_size] = 0;
 
@@ -391,7 +406,7 @@ XmlNode *XmlIoRapid::load(const string &path, const std::map<string,string> &map
 
         if(showPerfStats) printf("In [%s::%s Line: %d] took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
 
-		rootNode= new XmlNode(doc.first_node(),mapTagReplacementValues);
+		rootNode= new XmlNode(doc.first_node(),mapTagReplacementValues, skipUpdatePathClimbingParts);
 
 		if(showPerfStats) printf("In [%s::%s Line: %d] took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
 
@@ -495,8 +510,10 @@ XmlTree::XmlTree(xml_engine_parser_type engine_type) {
 	rootNode= NULL;
 
 	switch(engine_type) {
+#if defined(WANT_XERCES)
 		case XML_XERCES_ENGINE:
 			break;
+#endif
 		case XML_RAPIDXML_ENGINE:
 		break;
 
@@ -506,6 +523,7 @@ XmlTree::XmlTree(xml_engine_parser_type engine_type) {
 
 	this->engine_type = engine_type;
 	this->skipStackCheck = false;
+	this->skipUpdatePathClimbingParts = false;
 }
 
 void XmlTree::init(const string &name){
@@ -516,6 +534,10 @@ void XmlTree::init(const string &name){
 typedef std::vector<XmlTree*> LoadStack;
 //static LoadStack loadStack;
 static string loadStackCacheName = string(__FILE__) + string("_loadStackCacheName");
+
+void XmlTree::setSkipUpdatePathClimbingParts(bool value) {
+	this->skipUpdatePathClimbingParts = value;
+}
 
 void XmlTree::load(const string &path, const std::map<string,string> &mapTagReplacementValues, bool noValidation,bool skipStackCheck,bool skipStackTrace) {
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s] skipStackCheck = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),skipStackCheck);
@@ -542,21 +564,28 @@ void XmlTree::load(const string &path, const std::map<string,string> &mapTagRepl
 
 	loadPath = path;
 
+#if defined(WANT_XERCES)
 	if(this->engine_type == XML_XERCES_ENGINE) {
 		this->rootNode= XmlIo::getInstance().load(path, mapTagReplacementValues, noValidation,skipStackTrace);
 	}
-	else {
-		this->rootNode= XmlIoRapid::getInstance().load(path, mapTagReplacementValues, noValidation,skipStackTrace);
+	else
+#endif
+	{
+		this->rootNode= XmlIoRapid::getInstance().load(path, mapTagReplacementValues, noValidation,skipStackTrace, this->skipUpdatePathClimbingParts);
 	}
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str());
 }
 
-void XmlTree::save(const string &path){
+void XmlTree::save(const string &path) {
+
+#if defined(WANT_XERCES)
 	if(this->engine_type == XML_XERCES_ENGINE) {
 		XmlIo::getInstance().save(path, rootNode);
 	}
-	else {
+	else
+#endif
+	{
 		XmlIoRapid::getInstance().save(path, rootNode);
 	}
 }
@@ -586,6 +615,8 @@ XmlTree::~XmlTree() {
 // =====================================================
 //	class XmlNode
 // =====================================================
+
+#if defined(WANT_XERCES)
 
 XmlNode::XmlNode(DOMNode *node, const std::map<string,string> &mapTagReplacementValues): superNode(NULL) {
     if(node == NULL || node->getNodeName() == NULL) {
@@ -634,7 +665,10 @@ XmlNode::XmlNode(DOMNode *node, const std::map<string,string> &mapTagReplacement
 	}
 }
 
-XmlNode::XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacementValues) : superNode(NULL) {
+#endif
+
+XmlNode::XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacementValues,
+		bool skipUpdatePathClimbingParts) : superNode(NULL) {
 	if(node == NULL || node->name() == NULL) {
         throw megaglest_runtime_error("XML structure seems to be corrupt!");
     }
@@ -655,7 +689,7 @@ XmlNode::XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacem
 	for(xml_node<> *currentNode = node->first_node();
 			currentNode; currentNode = currentNode->next_sibling()) {
 		if(currentNode != NULL && currentNode->type() == node_element) {
-			XmlNode *xmlNode= new XmlNode(currentNode, mapTagReplacementValues);
+			XmlNode *xmlNode= new XmlNode(currentNode, mapTagReplacementValues, skipUpdatePathClimbingParts);
 			children.push_back(xmlNode);
 		}
     }
@@ -669,8 +703,18 @@ XmlNode::XmlNode(xml_node<> *node, const std::map<string,string> &mapTagReplacem
 
 	//get value
 	if(node->type() == node_element && children.size() == 0) {
-		text = node->value();
-		Properties::applyTagsToValue(this->text,&mapTagReplacementValues);
+		string xmlText = node->value();
+
+//		bool debugReplace = false;
+//		if(xmlText.find("{SCENARIOPATH}") != string::npos) {
+//			printf("\n----------------------\n** XML!! WILL REPLACE [%s]\n",xmlText.c_str());
+//			debugReplace = true;
+//		}
+		Properties::applyTagsToValue(xmlText,&mapTagReplacementValues, skipUpdatePathClimbingParts);
+//		if(debugReplace) {
+//			printf("\n\n** XML!! REPLACED WITH [%s]\n===================\n",xmlText.c_str());
+//		}
+		text = xmlText;
 	}
 }
 
@@ -852,6 +896,8 @@ XmlAttribute *XmlNode::addAttribute(const string &name, const string &value, con
 	return attr;
 }
 
+#if defined(WANT_XERCES)
+
 DOMElement *XmlNode::buildElement(XERCES_CPP_NAMESPACE_QUALIFIER DOMDocument *document) const{
 	XMLCh str[strSize];
 	XMLString::transcode(name.c_str(), str, strSize-1);
@@ -874,6 +920,8 @@ DOMElement *XmlNode::buildElement(XERCES_CPP_NAMESPACE_QUALIFIER DOMDocument *do
 
 	return node;
 }
+
+#endif
 
 xml_node<>* XmlNode::buildElement(xml_document<> *document) const {
 	xml_node<>* node = document->allocate_node(node_element, document->allocate_string(name.c_str()));
@@ -913,6 +961,8 @@ string XmlNode::getTreeString() const {
 //	class XmlAttribute
 // =====================================================
 
+#if defined(WANT_XERCES)
+
 XmlAttribute::XmlAttribute(DOMNode *attribute, const std::map<string,string> &mapTagReplacementValues) {
 	if(attribute == NULL || attribute->getNodeName() == NULL) {
         throw megaglest_runtime_error("XML attribute seems to be corrupt!");
@@ -931,6 +981,8 @@ XmlAttribute::XmlAttribute(DOMNode *attribute, const std::map<string,string> &ma
 	XMLString::transcode(attribute->getNodeName(), str, strSize-1);
 	name= str;
 }
+
+#endif
 
 XmlAttribute::XmlAttribute(xml_attribute<> *attribute, const std::map<string,string> &mapTagReplacementValues) {
 	if(attribute == NULL || attribute->name() == NULL) {

@@ -49,15 +49,23 @@ ServerLine::ServerLine(MasterServerInfo *mServerInfo, int lineIndex, int baseY, 
 	//general info:
 	//i+= 10;
 	glestVersionLabel.init(i, baseY - lineOffset);
+	glestVersionLabel.setRenderBackground(true);
+	glestVersionLabel.setMaxEditRenderWidth(960); // use background for whole line
 	glestVersionLabel.setTextColor(color);
 	glestVersionLabel.setText(masterServerInfo.getGlestVersion());
 	glestVersionLabel.setFont(CoreData::getInstance().getDisplayFontSmall());
 	glestVersionLabel.setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
 
 	i+= 70;
+	string platform=masterServerInfo.getPlatform();
+	size_t revOffset = platform.find("-Rev");
+	if(revOffset != platform.npos) {
+		platform = platform.substr(0,revOffset);
+	}
+
 	platformLabel.init(i, baseY - lineOffset);
 	platformLabel.setTextColor(color);
-	platformLabel.setText(masterServerInfo.getPlatform());
+	platformLabel.setText(platform);
 	platformLabel.setFont(CoreData::getInstance().getDisplayFontSmall());
 	platformLabel.setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
 
@@ -146,6 +154,7 @@ ServerLine::ServerLine(MasterServerInfo *mServerInfo, int lineIndex, int baseY, 
 	i+= 130;
 	selectButton.init(i, baseY - lineOffset, 30);
 	selectButton.setText(">");
+	selectButton.setAlwaysLighted(true);
 
 	//printf("glestVersionString [%s] masterServerInfo->getGlestVersion() [%s]\n",glestVersionString.c_str(),masterServerInfo->getGlestVersion().c_str());
 	compatible= checkVersionComptability(glestVersionString, masterServerInfo.getGlestVersion());
@@ -159,7 +168,13 @@ void ServerLine::reloadUI() {
 
 	glestVersionLabel.setText(masterServerInfo.getGlestVersion());
 
-	platformLabel.setText(masterServerInfo.getPlatform());
+	string platform = masterServerInfo.getPlatform();
+	size_t revOffset = platform.find("-Rev");
+	if(revOffset != platform.npos) {
+		platform = platform.substr(0,revOffset);
+	}
+
+	platformLabel.setText(platform);
 
 	serverTitleLabel.setText(masterServerInfo.getServerTitle());
 
@@ -206,20 +221,6 @@ bool ServerLine::buttonMouseMove(int x, int y){
 
 void ServerLine::render(){
 	Renderer &renderer= Renderer::getInstance();
-
-	bool joinEnabled= (masterServerInfo.getNetworkSlots() > masterServerInfo.getConnectedClients());
-	if(joinEnabled == true){
-		if(compatible){
-			selectButton.setEnabled(true);
-			selectButton.setVisible(true);
-			renderer.renderButton(&selectButton);
-		}
-	}
-	else{
-		selectButton.setEnabled(false);
-		selectButton.setVisible(false);
-	}
-
 	//general info:
 	renderer.renderLabel(&glestVersionLabel);
 	renderer.renderLabel(&platformLabel);
@@ -252,6 +253,18 @@ void ServerLine::render(){
 	}
 	renderer.renderLabel(&status);
 
+	bool joinEnabled= (masterServerInfo.getNetworkSlots() > masterServerInfo.getConnectedClients());
+	if(joinEnabled == true){
+		if(compatible){
+			selectButton.setEnabled(true);
+			selectButton.setVisible(true);
+			renderer.renderButton(&selectButton);
+		}
+	}
+	else{
+		selectButton.setEnabled(false);
+		selectButton.setVisible(false);
+	}
 }
 
 void ServerLine::setY(int y){

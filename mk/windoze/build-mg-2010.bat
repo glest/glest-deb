@@ -7,10 +7,10 @@ rem pause
 cd /d "%~dp0"
 
 ECHO Checking for windows binary runtime tools...
-if NOT EXIST ..\..\data\glest_game\7z.exe call cscript getTools.vbs
-if NOT EXIST ..\..\data\glest_game\7z.dll call cscript getTools.vbs
-if NOT EXIST ..\..\data\glest_game\tar.exe call cscript getTools.vbs
-if NOT EXIST ..\..\data\glest_game\wget.exe call cscript getTools.vbs
+if NOT EXIST .\7z.exe call cscript getTools.vbs
+if NOT EXIST .\7z.dll call cscript getTools.vbs
+if NOT EXIST .\tar.exe call cscript getTools.vbs
+if NOT EXIST .\wget.exe call cscript getTools.vbs
 
 set depfolder=windows_deps
 set depfile=%depfolder%.7z 
@@ -23,13 +23,13 @@ goto processBuildStageA
 :getDepFile
 ECHO Retrieving windows dependency archive...
 rem call ..\..\data\glest_game\wget.exe -c -O ..\..\source\%depfile%  http://master.dl.sourceforge.net/project/megaglest/%depfile%
-call ..\..\data\glest_game\wget.exe -c -O ..\..\source\%depfile% http://download.sourceforge.net/project/megaglest/%depfile%
-call ..\..\data\glest_game\7z.exe x -r -o..\..\source\ ..\..\source\%depfile%
+call .\wget.exe -c -O ..\..\source\%depfile% http://download.sourceforge.net/project/megaglest/%depfile%
+call .\7z.exe x -r -o..\..\source\ ..\..\source\%depfile%
 goto processBuildStageA
 
 :checkDepIntegrity
 ECHO Looking for windows dependency archive...
-call ..\..\data\glest_game\7z.exe t ..\..\source\%depfile% >nul
+call .\7z.exe t ..\..\source\%depfile% >nul
 set 7ztestdep=%ERRORLEVEL%
 ECHO Result of windows dependency archive [%7ztestdep%]
 if NOT "%7ztestdep%" == "0" goto getDepFile
@@ -93,15 +93,17 @@ copy /b ..\..\source\glest_game\facilities\game_util.cpp +,,
 
 rem Build Mega-Glest in release mode
 ECHO --------------------------------
-Echo Building Mega-Glest using Visual Studio 2010...
+Echo Building MegaGlest using Visual Studio 2010...
 
 set CL=
 del ..\..\source\glest_game\facilities\gitversion.h
 
 if not "%GITVERSION_SHA1%" == "." set CL=/DGITVERSIONHEADER
-if not "%GITVERSION_SHA1%" == "."  echo building with CL [%CL%]
+if not "%GITVERSION_SHA1%" == "." echo building with CL [%CL%]
 if not "%GITVERSION_SHA1%" == "." echo #define GITVERSION "%GITVERSION_REV%.%GITVERSION_SHA1%" > ..\..\source\glest_game\facilities\gitversion.h
 if not "%GITVERSION_SHA1%" == "." copy /b ..\..\source\glest_game\facilities\game_util.cpp +,,
+
+del /Q /F Release\*.tlog
 
 set msBuildMaxCPU=
 SET BuildInParallel=false
@@ -116,9 +118,9 @@ if %NUMBER_OF_PROCESSORS% GTR 1 (
 ECHO Found CPU Count [%NUMBER_OF_PROCESSORS%] BuildInParallel = [%BuildInParallel%]
 if "%2" == "rebuild" echo Doing a FULL REBUILD...
 rem if "%2" == "rebuild" msbuild /detailedsummary %msBuildMaxCPU% /p:BuildInParallel=%BuildInParallel% /p:Configuration=Release /t:Rebuild Glest_vc2010.sln
-if "%2" == "rebuild" msbuild %msBuildMaxCPU% %BuildInParallelCount% /p:Configuration=Release /t:Rebuild Glest_vc2010.sln
+if "%2" == "rebuild" msbuild %msBuildMaxCPU% %BuildInParallelCount% /p:TrackFileAccess=false;Configuration=Release /t:Rebuild Glest_vc2010.sln
 rem if not "%2" == "rebuild" msbuild /detailedsummary %msBuildMaxCPU% /p:BuildInParallel=%BuildInParallel% /p:Configuration=Release Glest_vc2010.sln
-if not "%2" == "rebuild" msbuild %msBuildMaxCPU% %BuildInParallelCount% /p:Configuration=Release Glest_vc2010.sln
+if not "%2" == "rebuild" msbuild %msBuildMaxCPU% %BuildInParallelCount% /p:TrackFileAccess=false;Configuration=Release Glest_vc2010.sln
 
 rem pause execution so we can see the output before the batch file exits
 if not "%1" == "nopause" pause

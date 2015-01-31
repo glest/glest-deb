@@ -30,8 +30,6 @@
 #include "cache_manager.h"
 #include <iterator>
 #include "map_preview.h"
-#include "string_utils.h"
-#include "network_message.h"
 #include "gen_uuid.h"
 #include "leak_dumper.h"
 
@@ -39,10 +37,10 @@ namespace Glest{ namespace Game{
 
 using namespace ::Shared::Util;
 
-const int MASTERSERVER_BROADCAST_MAX_WAIT_RESPONSE_SECONDS   	= 15;
+const int MASTERSERVER_BROADCAST_MAX_WAIT_RESPONSE_SECONDS  = 15;
 const int MASTERSERVER_BROADCAST_PUBLISH_SECONDS   			= 6;
-const int BROADCAST_MAP_DELAY_SECONDS 	= 5;
-const int BROADCAST_SETTINGS_SECONDS  	= 4;
+const int BROADCAST_MAP_DELAY_SECONDS 						= 5;
+const int BROADCAST_SETTINGS_SECONDS  						= 4;
 static const char *SAVED_GAME_FILENAME 				= "lastCustomGameSettings.mgg";
 static const char *DEFAULT_GAME_FILENAME 			= "data/defaultGameSetup.mgg";
 static const char *DEFAULT_NETWORKGAME_FILENAME 	= "data/defaultNetworkGameSetup.mgg";
@@ -145,7 +143,7 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	this->dirList = Config::getInstance().getPathListForType(ptScenarios);
 
     mainMessageBox.registerGraphicComponent(containerName,"mainMessageBox");
-	mainMessageBox.init(lang.getString("Ok"));
+	mainMessageBox.init(lang.getString("Ok"),500,300);
 	mainMessageBox.setEnabled(false);
 	mainMessageBoxState=0;
 
@@ -174,6 +172,7 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	needToSetChangedGameSettings = false;
 	needToRepublishToMasterserver = false;
 	needToBroadcastServerSettings = false;
+	lastGameSettingsreceivedCount = -1;
 	showMasterserverError = false;
 	tMasterserverErrorElapsed = 0;
 	masterServererErrorToShow = "---";
@@ -195,16 +194,33 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	int xoffset=10;
 
 	//create
-	int buttonx=200;
+	int buttonx=170;
 	int buttony=180;
+
+    // player status
+	listBoxPlayerStatus.registerGraphicComponent(containerName,"listBoxPlayerStatus");
+	listBoxPlayerStatus.init(buttonx, buttony, 150);
+	vector<string> playerStatuses;
+	playerStatuses.push_back(lang.getString("PlayerStatusSetup"));
+	playerStatuses.push_back(lang.getString("PlayerStatusBeRightBack"));
+	playerStatuses.push_back(lang.getString("PlayerStatusReady"));
+	listBoxPlayerStatus.setItems(playerStatuses);
+	listBoxPlayerStatus.setSelectedItemIndex(2,true);
+	listBoxPlayerStatus.setTextColor(Vec3f(0.0f,1.0f,0.0f));
+	listBoxPlayerStatus.setLighted(false);
+	listBoxPlayerStatus.setVisible(true);
+	buttonx+=180;
+
 	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
 	buttonReturn.init(buttonx, buttony, 125);
+	buttonx+=130;
 
 	buttonRestoreLastSettings.registerGraphicComponent(containerName,"buttonRestoreLastSettings");
-	buttonRestoreLastSettings.init(buttonx+130, buttony, 220);
+	buttonRestoreLastSettings.init(buttonx, buttony, 220);
+	buttonx+=225;
 
 	buttonPlayNow.registerGraphicComponent(containerName,"buttonPlayNow");
-	buttonPlayNow.init(buttonx+130+225, buttony, 125);
+	buttonPlayNow.init(buttonx, buttony, 125);
 
 	labelLocalGameVersion.registerGraphicComponent(containerName,"labelLocalGameVersion");
 	labelLocalGameVersion.init(10, networkHeadPos+labelOffset);
@@ -358,19 +374,6 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	checkBoxAllowNativeLanguageTechtree.init(xoffset+650, mapHeadPos-70);
 	checkBoxAllowNativeLanguageTechtree.setValue(false);
 
-    // player status
-	listBoxPlayerStatus.registerGraphicComponent(containerName,"listBoxPlayerStatus");
-	listBoxPlayerStatus.init(810, buttony, 150);
-	vector<string> playerStatuses;
-	playerStatuses.push_back(lang.getString("PlayerStatusSetup"));
-	playerStatuses.push_back(lang.getString("PlayerStatusBeRightBack"));
-	playerStatuses.push_back(lang.getString("PlayerStatusReady"));
-	listBoxPlayerStatus.setItems(playerStatuses);
-	listBoxPlayerStatus.setSelectedItemIndex(2,true);
-	listBoxPlayerStatus.setTextColor(Vec3f(0.0f,1.0f,0.0f));
-	listBoxPlayerStatus.setLighted(false);
-	listBoxPlayerStatus.setVisible(true);
-
 	// Network Scenario
 	int scenarioX=810;
 	int scenarioY=140;
@@ -480,6 +483,26 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	checkBoxAllowInGameJoinPlayer.setVisible(allowInProgressJoin);
 
 
+	labelAllowTeamUnitSharing.registerGraphicComponent(containerName,"labelAllowTeamUnitSharing");
+	labelAllowTeamUnitSharing.init(xoffset+410, 670, 80);
+	labelAllowTeamUnitSharing.setText(lang.getString("AllowTeamUnitSharing"));
+	labelAllowTeamUnitSharing.setVisible(true);
+
+	checkBoxAllowTeamUnitSharing.registerGraphicComponent(containerName,"checkBoxAllowTeamUnitSharing");
+	checkBoxAllowTeamUnitSharing.init(xoffset+600, 670);
+	checkBoxAllowTeamUnitSharing.setValue(false);
+	checkBoxAllowTeamUnitSharing.setVisible(true);
+
+	labelAllowTeamResourceSharing.registerGraphicComponent(containerName,"labelAllowTeamResourceSharing");
+	labelAllowTeamResourceSharing.init(xoffset+410, 640, 80);
+	labelAllowTeamResourceSharing.setText(lang.getString("AllowTeamResourceSharing"));
+	labelAllowTeamResourceSharing.setVisible(true);
+
+	checkBoxAllowTeamResourceSharing.registerGraphicComponent(containerName,"checkBoxAllowTeamResourceSharing");
+	checkBoxAllowTeamResourceSharing.init(xoffset+600, 640);
+	checkBoxAllowTeamResourceSharing.setValue(false);
+	checkBoxAllowTeamResourceSharing.setVisible(true);
+
 
 	// Network Pause for lagged clients
 	labelNetworkPauseGameForLaggedClients.registerGraphicComponent(containerName,"labelNetworkPauseGameForLaggedClients");
@@ -524,6 +547,7 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 
         listBoxTeams[i].registerGraphicComponent(containerName,"listBoxTeams" + intToStr(i));
 		listBoxTeams[i].init(xoffset+650, setupPos-30-i*rowHeight, 60);
+		listBoxTeams[i].setLighted(true);
 
 		labelNetStatus[i].registerGraphicComponent(containerName,"labelNetStatus" + intToStr(i));
 		labelNetStatus[i].init(xoffset+715, setupPos-30-i*rowHeight, 60);
@@ -685,13 +709,17 @@ MenuStateCustomGame::MenuStateCustomGame(Program *program, MainMenu *mainMenu,
 	publishToMasterserverThread->start();
 	publishToClientsThread->start();
 
-	if(openNetworkSlots==true){
-		if(fileExists(DEFAULT_NETWORKGAME_FILENAME) == true)
-			loadGameSettings(DEFAULT_NETWORKGAME_FILENAME);
+	if(openNetworkSlots == true) {
+		string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
+
+		if(fileExists(data_path + DEFAULT_NETWORKGAME_FILENAME) == true)
+			loadGameSettings(data_path + DEFAULT_NETWORKGAME_FILENAME);
 	}
 	else {
-		if(fileExists(DEFAULT_GAME_FILENAME) == true)
-			loadGameSettings(DEFAULT_GAME_FILENAME);
+		string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
+
+		if(fileExists(data_path + DEFAULT_GAME_FILENAME) == true)
+			loadGameSettings(data_path + DEFAULT_GAME_FILENAME);
 	}
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
@@ -711,7 +739,7 @@ void MenuStateCustomGame::reloadUI() {
     Config &config = Config::getInstance();
 
     console.resetFonts();
-	mainMessageBox.init(lang.getString("Ok"));
+	mainMessageBox.init(lang.getString("Ok"),500,300);
 
 
 	if(EndsWith(glestVersionString, "-dev") == false){
@@ -765,6 +793,9 @@ void MenuStateCustomGame::reloadUI() {
 	labelEnableSwitchTeamMode.setText(lang.getString("EnableSwitchTeamMode"));
 
 	labelAllowInGameJoinPlayer.setText(lang.getString("AllowInGameJoinPlayer"));
+
+	labelAllowTeamUnitSharing.setText(lang.getString("AllowTeamUnitSharing"));
+	labelAllowTeamResourceSharing.setText(lang.getString("AllowTeamResourceSharing"));
 
 	labelAISwitchTeamAcceptPercent.setText(lang.getString("AISwitchTeamAcceptPercent"));
 
@@ -1147,7 +1178,6 @@ void MenuStateCustomGame::mouseClick(int x, int y, MouseButton mouseButton) {
 					mapPublishingDelayTimer=time(NULL);
 				}
 			}
-			//else if (listBoxAdvanced.getSelectedItemIndex() == 1 && listBoxFogOfWar.mouseClick(x, y)) {
 			else if (checkBoxAdvanced.getValue() == 1 && listBoxFogOfWar.mouseClick(x, y)) {
 				MutexSafeWrapper safeMutex((publishToMasterserverThread != NULL ? publishToMasterserverThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
 				MutexSafeWrapper safeMutexCLI((publishToClientsThread != NULL ? publishToClientsThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
@@ -1185,14 +1215,41 @@ void MenuStateCustomGame::mouseClick(int x, int y, MouseButton mouseButton) {
 					needToRepublishToMasterserver = true;
 				}
 
-				if(hasNetworkGameSettings() == true)
-				{
+				if(hasNetworkGameSettings() == true) {
 					needToSetChangedGameSettings = true;
 					lastSetChangedGameSettings   = time(NULL);
 				}
 
 				ServerInterface* serverInterface= NetworkManager::getInstance().getServerInterface();
 				serverInterface->setAllowInGameConnections(checkBoxAllowInGameJoinPlayer.getValue() == true);
+			}
+			else if (checkBoxAdvanced.getValue() == 1 && checkBoxAllowTeamUnitSharing.mouseClick(x, y)) {
+				MutexSafeWrapper safeMutex((publishToMasterserverThread != NULL ? publishToMasterserverThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
+				MutexSafeWrapper safeMutexCLI((publishToClientsThread != NULL ? publishToClientsThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
+
+
+				if(checkBoxPublishServer.getValue() == true) {
+					needToRepublishToMasterserver = true;
+				}
+
+				if(hasNetworkGameSettings() == true) {
+					needToSetChangedGameSettings = true;
+					lastSetChangedGameSettings   = time(NULL);
+				}
+			}
+			else if (checkBoxAdvanced.getValue() == 1 && checkBoxAllowTeamResourceSharing.mouseClick(x, y)) {
+				MutexSafeWrapper safeMutex((publishToMasterserverThread != NULL ? publishToMasterserverThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
+				MutexSafeWrapper safeMutexCLI((publishToClientsThread != NULL ? publishToClientsThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
+
+
+				if(checkBoxPublishServer.getValue() == true) {
+					needToRepublishToMasterserver = true;
+				}
+
+				if(hasNetworkGameSettings() == true) {
+					needToSetChangedGameSettings = true;
+					lastSetChangedGameSettings   = time(NULL);
+				}
 			}
 			else if (checkBoxAllowNativeLanguageTechtree.mouseClick(x, y)) {
 				MutexSafeWrapper safeMutex((publishToMasterserverThread != NULL ? publishToMasterserverThread->getMutexThreadObjectAccessor() : NULL),string(__FILE__) + "_" + intToStr(__LINE__));
@@ -1949,13 +2006,10 @@ void MenuStateCustomGame::mouseMove(int x, int y, const MouseState *ms) {
     }
 
 	listBoxMap.mouseMove(x, y);
+
 	if(checkBoxAdvanced.getValue() == 1) {
 		listBoxFogOfWar.mouseMove(x, y);
 		checkBoxAllowObservers.mouseMove(x, y);
-		//listBoxEnableObserverMode.mouseMove(x, y);
-		//listBoxEnableServerControlledAI.mouseMove(x, y);
-		//labelNetworkFramePeriod.mouseMove(x, y);
-		//listBoxNetworkFramePeriod.mouseMove(x, y);
 
 		checkBoxEnableSwitchTeamMode.mouseMove(x, y);
 		listBoxAISwitchTeamAcceptPercent.mouseMove(x, y);
@@ -1964,8 +2018,10 @@ void MenuStateCustomGame::mouseMove(int x, int y, const MouseState *ms) {
 		labelNetworkPauseGameForLaggedClients.mouseMove(x, y);
 		checkBoxNetworkPauseGameForLaggedClients.mouseMove(x, y);
 
-		//labelPathFinderType.mouseMove(x, y);
-		//listBoxPathFinderType.mouseMove(x, y);
+		labelAllowTeamUnitSharing.mouseMove(x,y);
+		checkBoxAllowTeamUnitSharing.mouseMove(x,y);
+		labelAllowTeamResourceSharing.mouseMove(x,y);
+		checkBoxAllowTeamResourceSharing.mouseMove(x,y);
 	}
 	checkBoxAllowInGameJoinPlayer.mouseMove(x, y);
 
@@ -2060,7 +2116,6 @@ void MenuStateCustomGame::render() {
 			// START - this code ensure player title and player names don't overlap
 			int offsetPosition=0;
 		    for(int i=0; i < GameConstants::maxPlayers; ++i) {
-				//const Metrics &metrics= Metrics::getInstance();
 				FontMetrics *fontMetrics= NULL;
 				if(Renderer::renderText3DEnabled == false) {
 					fontMetrics = labelPlayers[i].getFont()->getMetrics();
@@ -2071,7 +2126,6 @@ void MenuStateCustomGame::render() {
 				if(fontMetrics == NULL) {
 					throw megaglest_runtime_error("fontMetrics == NULL");
 				}
-				//int curWidth = (metrics.toVirtualX(fontMetrics->getTextWidth(labelPlayers[i].getText())));
 				int curWidth = (fontMetrics->getTextWidth(labelPlayers[i].getText()));
 				int newOffsetPosition = labelPlayers[i].getX() + curWidth + 2;
 
@@ -2115,13 +2169,6 @@ void MenuStateCustomGame::render() {
 					// Render the player # label the player's color
 					Vec3f playerColor = crcPlayerTextureCache[i]->getPixmap()->getPixel3f(0, 0);
 					renderer.renderLabel(&labelPlayers[i],&playerColor);
-
-					// Blend the color with white so make it more readable
-					//Vec4f newColor(1.f, 1.f, 1.f, 0.57f);
-					//renderer.renderLabel(&labelPlayers[i],&newColor);
-
-					//int quadWidth = labelPlayerNames[i].getX() - labelPlayers[i].getX() - 5;
-					//renderer.renderTextureQuad(labelPlayers[i].getX(), labelPlayers[i].getY(), quadWidth, labelPlayers[i].getH(), crcPlayerTextureCache[i],1.0f,&playerColor);
 				}
 				else {
 					renderer.renderLabel(&labelPlayers[i]);
@@ -2151,8 +2198,15 @@ void MenuStateCustomGame::render() {
 
 				if(listBoxControls[i].getSelectedItemIndex()!=ctClosed){
 					renderer.renderListBox(&listBoxRMultiplier[i]);
-
 					renderer.renderListBox(&listBoxFactions[i]);
+
+					int teamnumber=listBoxTeams[i].getSelectedItemIndex();
+					Vec3f teamcolor=Vec3f(1.0f,1.0f,1.0f);
+					if(teamnumber>=0 && teamnumber<8){
+						teamcolor=crcPlayerTextureCache[teamnumber]->getPixmap()->getPixel3f(0, 0);
+					}
+					listBoxTeams[i].setTextColor(teamcolor);
+
 					renderer.renderListBox(&listBoxTeams[i]);
 					renderer.renderLabel(&labelNetStatus[i]);
 				}
@@ -2166,19 +2220,22 @@ void MenuStateCustomGame::render() {
 				renderer.renderLabel(&labelFogOfWar);
 				renderer.renderLabel(&labelAllowObservers);
 				renderer.renderLabel(&labelFallbackCpuMultiplier);
-				//renderer.renderLabel(&labelPathFinderType);
 
 				renderer.renderLabel(&labelEnableSwitchTeamMode);
 				renderer.renderLabel(&labelAISwitchTeamAcceptPercent);
 
 				renderer.renderListBox(&listBoxFogOfWar);
 				renderer.renderCheckBox(&checkBoxAllowObservers);
-				//renderer.renderListBox(&listBoxEnableObserverMode);
-				//renderer.renderListBox(&listBoxPathFinderType);
 
 				renderer.renderCheckBox(&checkBoxEnableSwitchTeamMode);
 				renderer.renderListBox(&listBoxAISwitchTeamAcceptPercent);
 				renderer.renderListBox(&listBoxFallbackCpuMultiplier);
+
+				renderer.renderLabel(&labelAllowTeamUnitSharing);
+				renderer.renderCheckBox(&checkBoxAllowTeamUnitSharing);
+
+				renderer.renderLabel(&labelAllowTeamResourceSharing);
+				renderer.renderCheckBox(&checkBoxAllowTeamResourceSharing);
 			}
 			renderer.renderLabel(&labelAllowInGameJoinPlayer);
 			renderer.renderCheckBox(&checkBoxAllowInGameJoinPlayer);
@@ -2187,7 +2244,6 @@ void MenuStateCustomGame::render() {
 			renderer.renderLabel(&labelMapFilter);
 			renderer.renderLabel(&labelTechTree);
 			renderer.renderLabel(&labelControl);
-			//renderer.renderLabel(&labelRMultiplier);
 			renderer.renderLabel(&labelFaction);
 			renderer.renderLabel(&labelTeam);
 			renderer.renderLabel(&labelMapInfo);
@@ -2197,7 +2253,6 @@ void MenuStateCustomGame::render() {
 			renderer.renderListBox(&listBoxTileset);
 			renderer.renderListBox(&listBoxMapFilter);
 			renderer.renderListBox(&listBoxTechTree);
-			//renderer.renderListBox(&listBoxAdvanced);
 			renderer.renderCheckBox(&checkBoxAdvanced);
 
 			if(checkBoxPublishServer.getEditable())
@@ -2206,16 +2261,11 @@ void MenuStateCustomGame::render() {
 				renderer.renderLabel(&labelPublishServer);
 				renderer.renderLabel(&labelGameName);
 				if(checkBoxAdvanced.getValue() == 1) {
-					//renderer.renderListBox(&listBoxEnableServerControlledAI);
-					//renderer.renderLabel(&labelEnableServerControlledAI);
-					//renderer.renderLabel(&labelNetworkFramePeriod);
-					//renderer.renderListBox(&listBoxNetworkFramePeriod);
 					renderer.renderLabel(&labelNetworkPauseGameForLaggedClients);
 					renderer.renderCheckBox(&checkBoxNetworkPauseGameForLaggedClients);
 				}
 			}
 
-			//renderer.renderLabel(&labelInfo);
 			renderer.renderCheckBox(&checkBoxScenario);
 			renderer.renderLabel(&labelScenario);
 			if(checkBoxScenario.getValue() == true) {
@@ -2250,7 +2300,7 @@ void MenuStateCustomGame::render() {
 				renderer.renderChatManager(&chatManager);
 			}
 		}
-		renderer.renderConsole(&console,showFullConsole,true);
+		renderer.renderConsole(&console,showFullConsole?consoleFull:consoleStoredAndNormal);
 	}
 	catch(const std::exception &ex) {
 		char szBuf[8096]="";
@@ -2402,7 +2452,10 @@ void MenuStateCustomGame::update() {
 
 		if(this->autoloadScenarioName != "") {
 			listBoxScenario.setSelectedItem(formatString(this->autoloadScenarioName),false);
-
+			lastSetChangedGameSettings = time(NULL);
+			if(serverInterface != NULL){
+				lastGameSettingsreceivedCount=serverInterface->getGameSettingsUpdateCount();
+			}
 			if(listBoxScenario.getSelectedItem() != formatString(this->autoloadScenarioName)) {
 				mainMessageBoxState=1;
 				showMessageBox( "Could not find scenario name: " + formatString(this->autoloadScenarioName), "Scenario Missing", false);
@@ -2452,7 +2505,7 @@ void MenuStateCustomGame::update() {
 				publishText = lang.getString("PublishDisabled");
 			}
 
-            masterServererErrorToShow += publishText;
+            masterServererErrorToShow += "\n\n"+ publishText;
 			showMasterserverError=false;
 			mainMessageBoxState=1;
 			showMessageBox( masterServererErrorToShow, lang.getString("ErrorFromMasterserver"), false);
@@ -2740,7 +2793,6 @@ void MenuStateCustomGame::update() {
 			}
 			listBoxFallbackCpuMultiplier.setEditable(true);
 			checkBoxPublishServer.setEditable(true);
-			//listBoxEnableServerControlledAI.setEditable(true);
 
 			// Masterserver always needs one network slot
 			if(this->headlessServerMode == true && hasOneNetworkSlotOpen == false) {
@@ -2773,7 +2825,6 @@ void MenuStateCustomGame::update() {
 
             ServerInterface* serverInterface= NetworkManager::getInstance().getServerInterface();
             serverInterface->setPublishEnabled(checkBoxPublishServer.getValue() == true);
-			//listBoxEnableServerControlledAI.setEditable(false);
 		}
 
 		bool republishToMaster = (difftime((long int)time(NULL),lastMasterserverPublishing) >= MASTERSERVER_BROADCAST_PUBLISH_SECONDS);
@@ -2810,7 +2861,15 @@ void MenuStateCustomGame::update() {
 		if(needToPublishDelayed == false || headlessServerMode == true) {
 			bool broadCastSettings = (difftime((long int)time(NULL),lastSetChangedGameSettings) >= BROADCAST_SETTINGS_SECONDS);
 
-			//printf("broadCastSettings = %d\n",broadCastSettings);
+			if(headlessServerMode==true){
+				// publish settings directly when we receive them
+				ServerInterface* serverInterface= NetworkManager::getInstance().getServerInterface();
+				if(lastGameSettingsreceivedCount<serverInterface->getGameSettingsUpdateCount()){
+					needToBroadcastServerSettings=true;
+					lastSetChangedGameSettings = time(NULL);
+					lastGameSettingsreceivedCount=serverInterface->getGameSettingsUpdateCount();
+				}
+			}
 
 			if(broadCastSettings == true) {
 				needToBroadcastServerSettings=true;
@@ -3046,8 +3105,7 @@ void MenuStateCustomGame::publishToMasterserver() {
     publishToServerInfo["binaryCompileDate"] = getCompileDateTime();
 
 	//game info:
-	publishToServerInfo["serverTitle"] = getHumanPlayerName() + "'s game";
-	publishToServerInfo["serverTitle"] = labelGameName.getText();
+	publishToServerInfo["serverTitle"] = gameSettings.getGameName();
 	//ip is automatically set
 
 	//game setup info:
@@ -3160,7 +3218,11 @@ void MenuStateCustomGame::simpleTaskForMasterServer(BaseThread *callingThread) {
         if(republish == true) {
         	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-            string request = Config::getInstance().getString("Masterserver") + "addServerInfo.php?";
+            string request = Config::getInstance().getString("Masterserver");
+    		if(request != "") {
+    			endPathWithSlash(request,false);
+    		}
+    		request += "addServerInfo.php?";
 
             //CURL *handle = SystemFlags::initHTTP();
             CURL *handle = callingThread->getGenericData<CURL>();
@@ -3303,7 +3365,7 @@ void MenuStateCustomGame::simpleTaskForClients(BaseThread *callingThread) {
             }
             ServerInterface *serverInterface= NetworkManager::getInstance().getServerInterface(false);
             if(serverInterface != NULL) {
-
+				lastGameSettingsreceivedCount++;
             	if(this->headlessServerMode == false || (serverInterface->getGameSettingsUpdateCount() <= lastMasterServerSettingsUpdateCount)) {
                     GameSettings gameSettings;
                     loadGameSettings(&gameSettings);
@@ -3382,6 +3444,8 @@ void MenuStateCustomGame::loadGameSettings(GameSettings *gameSettings,bool force
 
 		setupUIFromGameSettings(*settings);
 	}
+
+	gameSettings->setGameName(labelGameName.getText());
 
     // Test flags values
     //gameSettings->setFlagTypes1(ft1_show_map_resources);
@@ -3463,6 +3527,24 @@ void MenuStateCustomGame::loadGameSettings(GameSettings *gameSettings,bool force
 	}
 	else {
         valueFlags1 &= ~ft1_allow_in_game_joining;
+        gameSettings->setFlagTypes1(valueFlags1);
+	}
+
+	if(checkBoxAllowTeamUnitSharing.getValue() == true) {
+        valueFlags1 |= ft1_allow_shared_team_units;
+        gameSettings->setFlagTypes1(valueFlags1);
+	}
+	else {
+        valueFlags1 &= ~ft1_allow_shared_team_units;
+        gameSettings->setFlagTypes1(valueFlags1);
+	}
+
+	if(checkBoxAllowTeamResourceSharing.getValue() == true) {
+        valueFlags1 |= ft1_allow_shared_team_resources;
+        gameSettings->setFlagTypes1(valueFlags1);
+	}
+	else {
+        valueFlags1 &= ~ft1_allow_shared_team_resources;
         gameSettings->setFlagTypes1(valueFlags1);
 	}
 
@@ -3647,7 +3729,7 @@ void MenuStateCustomGame::loadGameSettings(GameSettings *gameSettings,bool force
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] i = %d, factionFiles[listBoxFactions[i].getSelectedItemIndex()] [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,i,factionFiles[listBoxFactions[i].getSelectedItemIndex()].c_str());
 
 			gameSettings->setFactionTypeName(slotIndex, factionFiles[listBoxFactions[i].getSelectedItemIndex()]);
-			gameSettings->setNetworkPlayerName(slotIndex, "Closed");
+			gameSettings->setNetworkPlayerName(slotIndex, GameConstants::NETWORK_SLOT_CLOSED_SLOTNAME);
 			gameSettings->setNetworkPlayerUUID(slotIndex,"");
 			gameSettings->setNetworkPlayerPlatform(slotIndex,"");
 
@@ -3819,6 +3901,41 @@ void MenuStateCustomGame::saveGameSettingsToFile(std::string fileName) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
+void MenuStateCustomGame::KeepCurrentHumanPlayerSlots(GameSettings &gameSettings) {
+	//look for human players
+	bool foundValidHumanControlTypeInFile = false;
+	for(int index2 = 0; index2 < GameConstants::maxPlayers; ++index2) {
+		ControlType ctFile = static_cast<ControlType>(gameSettings.getFactionControl(index2));
+		if(ctFile == ctHuman) {
+			ControlType ctUI = static_cast<ControlType>(listBoxControls[index2].getSelectedItemIndex());
+			if(ctUI != ctNetwork && ctUI != ctNetworkUnassigned) {
+				foundValidHumanControlTypeInFile = true;
+				//printf("Human found in file [%d]\n",index2);
+			}
+			else if(labelPlayerNames[index2].getText() == "") {
+				foundValidHumanControlTypeInFile = true;
+			}
+		}
+	}
+
+	for(int index = 0; index < GameConstants::maxPlayers; ++index) {
+		ControlType ct= static_cast<ControlType>(listBoxControls[index].getSelectedItemIndex());
+		if(ct == ctHuman) {
+			//printf("Human found in UI [%d] and file [%d]\n",index,foundControlType);
+
+			if(foundValidHumanControlTypeInFile == false) {
+				gameSettings.setFactionControl(index,ctHuman);
+				gameSettings.setNetworkPlayerName(index,getHumanPlayerName());
+			}
+		}
+
+		ControlType ctFile = static_cast<ControlType>(gameSettings.getFactionControl(index));
+		if(ctFile == ctHuman) {
+			gameSettings.setFactionControl(index,ctHuman);
+		}
+	}
+}
+
 GameSettings MenuStateCustomGame::loadGameSettingsFromFile(std::string fileName) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
@@ -3829,6 +3946,8 @@ GameSettings MenuStateCustomGame::loadGameSettingsFromFile(std::string fileName)
 
     try {
     	CoreData::getInstance().loadGameSettingsFromFile(fileName, &gameSettings);
+    	KeepCurrentHumanPlayerSlots(gameSettings);
+
     	// correct game settings for headless:
     	if(this->headlessServerMode == true) {
     		for(int i = 0; i < GameConstants::maxPlayers; ++i) {
@@ -3875,6 +3994,8 @@ void MenuStateCustomGame::setupUIFromGameSettings(const GameSettings &gameSettin
 		else {
 			listBoxFogOfWar.setSelectedItemIndex(0);
 		}
+		checkBoxAllowTeamUnitSharing.setValue(scenarioInfo.allowTeamUnitSharing);
+		checkBoxAllowTeamResourceSharing.setValue(scenarioInfo.allowTeamResourceSharing);
 	}
 	setupMapList(gameSettings.getScenario());
 	setupTechList(gameSettings.getScenario(),false);
@@ -3955,6 +4076,10 @@ void MenuStateCustomGame::setupUIFromGameSettings(const GameSettings &gameSettin
 	listBoxFallbackCpuMultiplier.setSelectedItemIndex(gameSettings.getFallbackCpuMultiplier());
 
 	checkBoxAllowInGameJoinPlayer.setValue((gameSettings.getFlagTypes1() & ft1_allow_in_game_joining) == ft1_allow_in_game_joining ? true : false);
+
+	checkBoxAllowTeamUnitSharing.setValue((gameSettings.getFlagTypes1() & ft1_allow_shared_team_units) == ft1_allow_shared_team_units ? true : false);
+	checkBoxAllowTeamResourceSharing.setValue((gameSettings.getFlagTypes1() & ft1_allow_shared_team_resources) == ft1_allow_shared_team_resources ? true : false);
+
 	ServerInterface* serverInterface= NetworkManager::getInstance().getServerInterface();
 	if(serverInterface != NULL) {
 		serverInterface->setAllowInGameConnections(checkBoxAllowInGameJoinPlayer.getValue() == true);
@@ -4568,6 +4693,9 @@ void MenuStateCustomGame::processScenario() {
 				listBoxFogOfWar.setSelectedItemIndex(0);
 			}
 
+			checkBoxAllowTeamUnitSharing.setValue(scenarioInfo.allowTeamUnitSharing);
+			checkBoxAllowTeamResourceSharing.setValue(scenarioInfo.allowTeamResourceSharing);
+
 			setupTechList(scenarioInfo.name, false);
 			listBoxTechTree.setSelectedItem(formatString(scenarioInfo.techTreeName));
 			reloadFactions(false,scenarioInfo.name);
@@ -4738,6 +4866,8 @@ void MenuStateCustomGame::SetupUIForScenarios() {
 			}
 			listBoxFogOfWar.setEditable(false);
 			checkBoxAllowObservers.setEditable(false);
+			checkBoxAllowTeamUnitSharing.setEditable(false);
+			checkBoxAllowTeamResourceSharing.setEditable(false);
 			//listBoxPathFinderType.setEditable(false);
 			checkBoxEnableSwitchTeamMode.setEditable(false);
 			listBoxAISwitchTeamAcceptPercent.setEditable(false);
@@ -4758,6 +4888,8 @@ void MenuStateCustomGame::SetupUIForScenarios() {
 			}
 			listBoxFogOfWar.setEditable(true);
 			checkBoxAllowObservers.setEditable(true);
+			checkBoxAllowTeamUnitSharing.setEditable(true);
+			checkBoxAllowTeamResourceSharing.setEditable(true);
 			//listBoxPathFinderType.setEditable(true);
 			checkBoxEnableSwitchTeamMode.setEditable(true);
 			listBoxAISwitchTeamAcceptPercent.setEditable(true);
@@ -4789,11 +4921,12 @@ int MenuStateCustomGame::setupMapList(string scenario) {
 		string scenarioDir = Scenario::getScenarioDir(dirList, scenario);
 		vector<string> pathList = config.getPathListForType(ptMaps,scenarioDir);
 		vector<string> allMaps = MapPreview::findAllValidMaps(pathList,scenarioDir,false,true,&invalidMapList);
-
+		// sort map list non case sensitive
+		std::sort(allMaps.begin(),allMaps.end(),compareNonCaseSensitive);
 		if(scenario != "") {
 			vector<string> allMaps2 = MapPreview::findAllValidMaps(config.getPathListForType(ptMaps,""),"",false,true,&invalidMapList);
 			copy(allMaps2.begin(), allMaps2.end(), std::inserter(allMaps, allMaps.begin()));
-			std::sort(allMaps.begin(),allMaps.end());
+			std::sort(allMaps.begin(),allMaps.end(),compareNonCaseSensitive);
 		}
 
 		if (allMaps.empty()) {

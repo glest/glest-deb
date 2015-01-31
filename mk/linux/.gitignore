@@ -1,2 +1,20 @@
 megaglest
+megaglest.6
+
 megaglest_*
+!*.desktop
+
+core
+core.bak
+
+/build/
+/release/
+/linux_symbols/
+/mydata
+
+/lib/
+/lib_bkp/
+
+# Coverity
+/cov-analysis*/
+/cov-int

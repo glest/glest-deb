@@ -101,6 +101,14 @@ using namespace Shared::Graphics::Gl;
 using namespace Shared::Xml;
 using namespace Shared;
 
+/**
+ * @namespace Glest
+ * Namespace used for all %Glest related code.
+ */
+/**
+ * @namespace Game
+ * Namespace used for game related code.
+ */
 namespace Glest { namespace Game {
 
 static string tempDataLocation 			= getUserHome();
@@ -262,7 +270,11 @@ static void cleanupProcessObjects() {
 	std::map<string, vector<FileReader<Pixmap3D> const * >* > &list3d = FileReader<Pixmap3D>::getFileReadersMap();
 	deleteMapValues(list3d.begin(),list3d.end());
 
+#if defined(WANT_XERCES)
+
 	XmlIo::getInstance().cleanup();
+
+#endif
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -1135,6 +1147,7 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 			Renderer &renderer= Renderer::getInstance();
 			if(keystate.mod & (KMOD_LALT | KMOD_RALT)) {
 				renderer.cycleShowDebugUILevel();
+				printf("**Cycled Debug UI level to: %d\n",renderer.getShowDebugUILevel());
 			}
 			else {
 				bool showDebugUI = renderer.getShowDebugUI();
@@ -1300,6 +1313,32 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
     // Setup path cache for files and folders used in the game
     std::map<string,string> &pathCache = CacheManager::getCachedItem< std::map<string,string> >(GameConstants::pathCacheLookupKey);
 
+    Properties devProperties;
+    string devPropertyFile = Properties::getApplicationPath() + "glest-dev.ini";
+	if(fileExists(devPropertyFile) == true) {
+		devProperties.load(devPropertyFile);
+
+		if(devProperties.hasString("ServerListPath") == true) {
+			string devItem = devProperties.getString("ServerListPath");
+            if(devItem != "") {
+            	endPathWithSlash(devItem);
+            }
+            if(config != NULL) {
+            	config->setString("ServerListPath",devItem,true);
+            }
+		}
+
+		if(devProperties.hasString("GlestKeysIniPath") == true) {
+			string devItem = devProperties.getString("GlestKeysIniPath");
+            if(devItem != "") {
+            	endPathWithSlash(devItem);
+            }
+            if(config != NULL) {
+            	config->setString("GlestKeysIniPath",devItem,true);
+            }
+		}
+	}
+
     //GAME_ARG_DATA_PATH
     if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DATA_PATH]) == true) {
         int foundParamIndIndex = -1;
@@ -1329,13 +1368,26 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
         }
     }
     else if(config != NULL) {
-    	if(config->getString("DataPath","") != "") {
-    		string customPathValue = config->getString("DataPath","");
 
-    		if(customPathValue != "") {
+    	bool foundPath 			= false;
+    	string customPathValue 	= "";
+
+    	if(fileExists(devPropertyFile) == true && devProperties.hasString("DataPath") == true) {
+    		foundPath 		= true;
+    		customPathValue = devProperties.getString("DataPath","");
+    	}
+    	else if(config->getString("DataPath","") != "") {
+    		foundPath 		= true;
+    		customPathValue = config->getString("DataPath","");
+    	}
+
+    	if(foundPath == true) {
+            pathCache[GameConstants::path_data_CacheLookupKey] = customPathValue;
+
+            if(customPathValue != "") {
     			endPathWithSlash(customPathValue);
     		}
-            pathCache[GameConstants::path_data_CacheLookupKey] = config->getString("DataPath","");
+
             Properties::setApplicationDataPath(pathCache[GameConstants::path_data_CacheLookupKey]);
 
             if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using ini specified data path [%s]\n",config->getString("DataPath","").c_str());
@@ -1390,8 +1442,21 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
         }
     }
     else if(config != NULL) {
-    	if(config->getString("LogPath","") != "") {
-            pathCache[GameConstants::path_logs_CacheLookupKey] = config->getString("LogPath","");
+
+    	bool foundPath 			= false;
+    	string customPathValue 	= "";
+
+    	if(fileExists(devPropertyFile) == true && devProperties.hasString("LogPath") == true) {
+    		foundPath 		= true;
+    		customPathValue = devProperties.getString("LogPath","");
+    	}
+    	else if(config->getString("LogPath","") != "") {
+    		foundPath 		= true;
+    		customPathValue = config->getString("LogPath","");
+    	}
+
+    	if(foundPath == true) {
+            pathCache[GameConstants::path_logs_CacheLookupKey] = customPathValue;
             if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using ini specified logs path [%s]\n",config->getString("LogPath","").c_str());
     	}
     }
@@ -3447,8 +3512,8 @@ int handleCreateDataArchivesCommand(int argc, char** argv) {
 				printf("Compress item [%s] is not valid!\n",compress_item.c_str());
 				return_value = 1;
 			}
-
-			return_value = 0;
+			else
+				return_value = 0;
 		}
 		else {
 			printf("\nInvalid missing map specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
@@ -4138,6 +4203,9 @@ int glestMain(int argc, char** argv) {
 #endif
 
 		printf(" - using STREFLOP %s - %s\n",instruction_set,denormals);
+
+#else
+		printf("\n");
 #endif
 	}
 
@@ -4204,9 +4272,13 @@ int glestMain(int argc, char** argv) {
 		}
 	}
 
+#if defined(WANT_XERCES)
+
 	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO]) == true) {
 		printf("XERCES version: %s\n", XERCES_FULLVERSIONDOT);
 	}
+
+#endif
 
 	if( (hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) 		  == true ||
 		 hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) 		  == true ||
@@ -4367,6 +4439,10 @@ int glestMain(int argc, char** argv) {
         }
         createDirectoryPaths(tempDataPath);
 
+        string binaryNameOld = Properties::getApplicationPath() + extractFileFromDirectoryPath(PlatformExceptionHandler::application_binary) + "__REMOVE";
+        if(fileExists(binaryNameOld)) {
+        	removeFile(binaryNameOld);
+        }
 
     	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_USE_PORTS]) == true) {
 			int foundParamIndIndex = -1;
@@ -4453,13 +4529,7 @@ int glestMain(int argc, char** argv) {
 	    	TextureGl::setEnableATIHacks(enableATIHacks);
 	    }
 
-        if(config.getBool("ForceFTGLFonts","false") == true || hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_FORCE_FTGLFONTS]) == true) {
-        	::Shared::Graphics::Font::forceFTGLFonts = true;
-        	printf("**WARNING** Forcing use of FTGL Fonts\n");
-        }
-        else {
-        	Renderer::renderText3DEnabled = config.getBool("Enable3DFontRendering",intToStr(Renderer::renderText3DEnabled).c_str());
-        }
+       	Renderer::renderText3DEnabled = config.getBool("Enable3DFontRendering",intToStr(Renderer::renderText3DEnabled).c_str());
 
         if(config.getBool("EnableLegacyFonts","false") == true || hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_ENABLE_LEGACYFONTS]) == true) {
         	::Shared::Graphics::Font::forceLegacyFonts = true;
@@ -4663,7 +4733,7 @@ int glestMain(int argc, char** argv) {
 		Config &configKeys = Config::getInstance(
 				std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys),
 				std::pair<string,string>(Config::glestkeys_ini_filename,Config::glestuserkeys_ini_filename),
-				std::pair<bool,bool>(true,false));
+				std::pair<bool,bool>(true,false),config.getString("GlestKeysIniPath",""));
 
         SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -4994,7 +5064,7 @@ int glestMain(int argc, char** argv) {
 					gameSettings->setFactionControl(i, ct);
 					gameSettings->setStartLocationIndex(i, i);
 					gameSettings->setResourceMultiplierIndex(i, 10);
-					gameSettings->setNetworkPlayerName(i, "Closed");
+					gameSettings->setNetworkPlayerName(i, GameConstants::NETWORK_SLOT_CLOSED_SLOTNAME);
 				}
 
 				ControlType ct= ctHuman;
@@ -5294,7 +5364,8 @@ int glestMain(int argc, char** argv) {
         bool startCRCPrecacheThread = config.getBool("PreCacheCRCThread","true");
         //printf("### In [%s::%s Line: %d] precache thread enabled = %d SystemFlags::VERBOSE_MODE_ENABLED = %d\n",__FILE__,__FUNCTION__,__LINE__,startCRCPrecacheThread,SystemFlags::VERBOSE_MODE_ENABLED);
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] precache thread enabled = %d\n",__FILE__,__FUNCTION__,__LINE__,startCRCPrecacheThread);
-		if(startCRCPrecacheThread == true) {
+		if (startCRCPrecacheThread == true
+				&& GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
 			static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 			vector<string> techDataPaths = config.getPathListForType(ptTechs);
 

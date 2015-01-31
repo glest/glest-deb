@@ -167,11 +167,14 @@ private:
 	std::map<int,SwitchTeamVote> switchTeamVotes;
 	int currentSwitchTeamVoteFactionIndex;
 
+	bool allowSharedTeamUnits;
 	set<int> livingUnits;
 	set<Unit*> livingUnitsp;
 
 	std::map<int,int> unitsMovingList;
 	std::map<int,int> unitsPathfindingList;
+
+	std::set<const UnitType*> lockedUnits;
 
 	TechTree *techTree;
 	const XmlNode *loadWorldNode;
@@ -183,6 +186,8 @@ private:
 	std::map<int,const Unit *> aliveUnitListCache;
 	std::map<int,const Unit *> mobileUnitListCache;
 	std::map<int,const Unit *> beingBuiltUnitListCache;
+
+	std::map<std::string, bool> resourceTypeCostCache;
 
 public:
 	Faction();
@@ -241,6 +246,9 @@ public:
 	void clearUnitsPathfinding();
 	bool canUnitsPathfind();
 
+	void setLockedUnitForFaction(const UnitType *ut, bool lock);
+	bool isUnitLocked(const UnitType *ut) const { return lockedUnits.find(ut)!=lockedUnits.end(); }
+
     void init(
 		FactionType *factionType, ControlType control, TechTree *techTree, Game *game,
 		int factionIndex, int teamIndex, int startLocationIndex, bool thisFaction,
@@ -251,9 +259,9 @@ public:
 	void setFactionDisconnectHandled(bool value) { factionDisconnectHandled=value;}
 
     //get
-	const Resource *getResource(const ResourceType *rt) const;
+	const Resource *getResource(const ResourceType *rt,bool localFactionOnly=false) const;
 	inline const Resource *getResource(int i) const			{return &resources[i];}
-	int getStoreAmount(const ResourceType *rt) const;
+	int getStoreAmount(const ResourceType *rt,bool localFactionOnly=false) const;
 	inline const FactionType *getType() const					{return factionType;}
 	inline int getIndex() const								{return index;}
 
@@ -321,7 +329,7 @@ public:
 	Unit *findUnit(int id) const;
 	void addUnit(Unit *unit);
 	void removeUnit(Unit *unit);
-	void addStore(const UnitType *unitType, bool replaceStorage);
+	void addStore(const UnitType *unitType);
 	void removeStore(const UnitType *unitType);
 
 	//resources
@@ -375,9 +383,13 @@ public:
 	string getCRC_DetailsForWorldFrames() const;
 	uint64 getCRC_DetailsForWorldFrameCount() const;
 
+	void updateUnitTypeWithResourceCostCache(const ResourceType *rt);
+	bool hasUnitTypeWithResourceCostInCache(const ResourceType *rt) const;
+
 private:
 	void init();
 	void resetResourceAmount(const ResourceType *rt);
+	bool hasUnitTypeWithResouceCost(const ResourceType *rt);
 };
 
 }}//end namespace

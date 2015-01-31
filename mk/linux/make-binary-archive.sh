@@ -15,12 +15,11 @@ kernel=`uname -s | tr '[A-Z]' '[a-z]'`
 architecture=`uname -m  | tr '[A-Z]' '[a-z]'`
 
 RELEASENAME=megaglest-binary-$kernel-$architecture
-#PACKAGE="$RELEASENAME-$VERSION.7z"
 PACKAGE="$RELEASENAME-$VERSION.tar.xz"
 CURRENTDIR="$(dirname $(readlink -f $0))"
-#RELEASEDIR="$CURRENTDIR/release/$RELEASENAME-$VERSION/megaglest-$VERSION"
-RELEASEDIR="$CURRENTDIR/release/$RELEASENAME-$VERSION"
-PROJDIR="$CURRENTDIR/../../"
+RELEASEDIR_ROOT="$CURRENTDIR/../../../release/"
+RELEASEDIR="${RELEASEDIR_ROOT}/${RELEASENAME-$VERSION}"
+PROJDIR="$CURRENTDIR/"
 
 echo "Creating binary package in $RELEASEDIR"
 
@@ -43,7 +42,7 @@ fi
 
 cd $PROJDIR
 mkdir -p "$RELEASEDIR/lib"
-cd mk/linux
+
 [[ -d "lib" ]] && rm -rf "lib"
 echo "building binary dependencies ..."
 ./makedeps_folder.sh megaglest
@@ -54,28 +53,26 @@ fi
 # copy binary info
 cd $PROJDIR
 echo "copying binaries ..."
-cp -r mk/linux/lib/* "$RELEASEDIR/lib"
-cp mk/linux/*.ico "$RELEASEDIR/"
-cp mk/linux/*.bmp "$RELEASEDIR/"
-cp mk/linux/*.png "$RELEASEDIR/"
-cp mk/linux/*.xpm "$RELEASEDIR/"
-cp mk/linux/*.ini "$RELEASEDIR/"
-cp mk/linux/megaglest "$RELEASEDIR/"
-cp mk/linux/megaglest_editor "$RELEASEDIR/"
-cp mk/linux/megaglest_g3dviewer "$RELEASEDIR/"
-cp mk/linux/start_megaglest "$RELEASEDIR/"
-cp mk/linux/start_megaglest_mapeditor "$RELEASEDIR/"
-cp mk/linux/start_megaglest_g3dviewer "$RELEASEDIR/"
-cp mk/linux/start_megaglest_gameserver "$RELEASEDIR/"
+cp -r lib/* "$RELEASEDIR/lib"
+cp {../shared/,}*.ico "$RELEASEDIR/"
+cp *.bmp "$RELEASEDIR/"
+cp *.png "$RELEASEDIR/"
+cp *.xpm "$RELEASEDIR/"
+cp {../shared/,}*.ini "$RELEASEDIR/"
+cp megaglest "$RELEASEDIR/"
+cp megaglest_editor "$RELEASEDIR/"
+cp megaglest_g3dviewer "$RELEASEDIR/"
+cp start_megaglest "$RELEASEDIR/"
+cp start_megaglest_mapeditor "$RELEASEDIR/"
+cp start_megaglest_g3dviewer "$RELEASEDIR/"
+cp start_megaglest_gameserver "$RELEASEDIR/"
 
 echo "creating $PACKAGE"
 cd $CURRENTDIR
-[[ -f "$release/$PACKAGE" ]] && rm "release/$PACKAGE"
-#tar cJf "release/$PACKAGE" -C "$CURRENTDIR/release/" "$RELEASENAME-$VERSION"
-#tar -cf - -C "$CURRENTDIR/release/$RELEASENAME-$VERSION/" "./" | xz > release/$PACKAGE
-cd release/$RELEASENAME-$VERSION/
+[[ -f "${RELEASEDIR_ROOT}/$PACKAGE" ]] && rm "${RELEASEDIR_ROOT}/$PACKAGE"
+cd $RELEASEDIR
 tar -cf - * | xz > ../$PACKAGE
 cd $CURRENTDIR
-# 7z a -mmt -mx=9 -ms=on -mhc=on "release/$PACKAGE" "$CURRENTDIR/release/$RELEASENAME-$VERSION"
 
-ls -la release/$PACKAGE
+ls -la ${RELEASEDIR_ROOT}/$PACKAGE
+
