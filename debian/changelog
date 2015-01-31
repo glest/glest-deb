@@ -10,6 +10,8 @@ megaglest (3.11.0+dfsg-1) experimental; urgency=medium
   * Drop wxWidgets-assertions.patch. Merged upstream.
   * Drop clean file. Let the build system handle that.
   * Update debian/copyright for new release.
+  * Remove empty data directory and the ini files which are also provided by
+    megaglest-data.
 
  -- Markus Koschany <apo@gambaru.de>  Sat, 31 Jan 2015 17:51:32 +0100
 

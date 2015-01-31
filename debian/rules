@@ -21,5 +21,12 @@ override_dh_auto_clean:
 	rm -rf mk/linux/mojosetup/
 	dh_auto_clean
 
+override_dh_install:
+	dh_install
+	# Remove empty directory and the ini files which are also provided by
+	# megaglest-data
+	$(RM) -r debian/megaglest/usr/share/games/megaglest/data
+	$(RM) debian/megaglest/usr/share/games/megaglest/glest*
+
 get-orig-source:
 	uscan --verbose --repack --compression xz --force-download
