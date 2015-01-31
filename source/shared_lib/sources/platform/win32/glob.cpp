@@ -266,7 +266,7 @@ int glob(   char const  *pattern
 
             //cch = lstrlenW(find_data.cFileName);
 			string sFileName = utf8_encode(find_data.cFileName);
-			cch = sFileName.length();
+			cch = (int)sFileName.length();
             if(NULL != file_part)
             {
                 cch += (int)(file_part - effectivePattern);
@@ -286,8 +286,10 @@ int glob(   char const  *pattern
                 if(new_buffer == NULL)
                 {
                     result = GLOB_NOSPACE;
-                    free(buffer);
-                    buffer = NULL;
+                    if(buffer) {
+                    	free(buffer);
+                    	buffer = NULL;
+                    }
                     break;
                 }
 
@@ -295,6 +297,9 @@ int glob(   char const  *pattern
                 cbAlloc = new_cbAlloc;
             }
 
+			if(buffer == NULL) {
+				throw exception("buffer == NULL");
+			}
             (void)lstrcpynA(buffer + cbCurr, szRelative, 1 + (int)(file_part - effectivePattern));
             (void)lstrcatA(buffer + cbCurr, sFileName.c_str());
             cbCurr += cch + 1;
@@ -315,7 +320,10 @@ int glob(   char const  *pattern
             if(new_buffer == NULL)
             {
                 result = GLOB_NOSPACE;
-                free(buffer);
+                if(buffer) {
+                	free(buffer);
+                	buffer = NULL;
+                }
             }
             else
             {
@@ -402,7 +410,10 @@ int glob(   char const  *pattern
             if(NULL == pp)
             {
                 result = GLOB_NOSPACE;
-                free(buffer);
+                if(buffer) {
+                	free(buffer);
+                	buffer = NULL;
+                }
             }
             else
             {

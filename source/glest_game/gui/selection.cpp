@@ -16,6 +16,7 @@
 #include "unit_type.h"
 #include "gui.h"
 #include "config.h"
+#include "world.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -36,50 +37,75 @@ Selection::~Selection(){
 	clear();
 }
 
-void Selection::select(Unit *unit) {
+bool Selection::select(Unit *unit) {
+	bool result = false;
 	//check size
 	//if(selectedUnits.size() >= maxUnits){
-	if(selectedUnits.size() >= Config::getInstance().getInt("MaxUnitSelectCount",intToStr(maxUnits).c_str())) {
-		return;
+	if((int)selectedUnits.size() >= Config::getInstance().getInt("MaxUnitSelectCount",intToStr(maxUnits).c_str())) {
+		return result;
 	}
 
-	//check if already selected
-	for(int i=0; i < selectedUnits.size(); ++i) {
-		if(selectedUnits[i ]== unit) {
-			return;
+	// Fix Bug reported on sourceforge.net: Glest::Game::Selection::select crash with NULL pointer - ID: 3608835
+	if(unit != NULL) {
+		//check if already selected
+		for(int i=0; i < (int)selectedUnits.size(); ++i) {
+			if(selectedUnits[i ]== unit) {
+				return true;
+			}
 		}
+
+		//check if dead
+		if(unit->isDead()) {
+			return false;
+		}
+
+		//check if multisel
+		if(!unit->getType()->getMultiSelect() && !isEmpty()) {
+			return false;
+		}
+
+		//check if enemy
+		if(unit->getFactionIndex() != factionIndex && !isEmpty()) {
+			return false;
+		}
+
+		//check existing enemy
+		if(selectedUnits.size()==1 && selectedUnits.front()->getFactionIndex() != factionIndex) {
+			clear();
+		}
+
+		//check existing multisel
+		if(selectedUnits.size()==1 && !selectedUnits.front()->getType()->getMultiSelect()){
+			clear();
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] unit selected [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
+
+		unit->addObserver(this);
+
+		int unitTypeId=unit->getType()->getId();
+		bool inserted=false;
+		for(int i=0; i < (int)selectedUnits.size(); ++i) {
+			int currentTypeId=selectedUnits[i]->getType()->getId();
+
+			if(unitTypeId<=currentTypeId) {
+				//place unit here
+				selectedUnits.insert(selectedUnits.begin()+i,unit);
+				inserted=true;
+				break;
+			}
+			else if(unitTypeId>currentTypeId) {
+				//do nothing
+			}
+		}
+		if( !inserted ){
+			selectedUnits.push_back(unit);
+		}
+		result = true;
+		gui->onSelectionChanged();
 	}
 
-	//check if dead
-	if(unit->isDead()) {
-		return;
-	}
-
-	//check if multisel
-	if(!unit->getType()->getMultiSelect() && !isEmpty()) {
-		return;
-	}
-
-	//check if enemy
-	if(unit->getFactionIndex() != factionIndex && !isEmpty()) {
-		return;
-	}
-
-	//check existing enemy
-	if(selectedUnits.size()==1 && selectedUnits.front()->getFactionIndex() != factionIndex) {
-		clear();
-	}
-
-	//check existing multisel
-	if(selectedUnits.size()==1 && !selectedUnits.front()->getType()->getMultiSelect()){
-		clear();
-	}
-
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] unit selected [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
-
-	unit->addObserver(this);
-	selectedUnits.push_back(unit);
-	gui->onSelectionChanged();
+	return result;
 }
 
 void Selection::select(const UnitContainer &units){
@@ -94,8 +120,8 @@ void Selection::unSelect(const UnitContainer &units){
 
 	//add units to gui
 	for(UnitIterator it= units.begin(); it!=units.end(); ++it){
-		for(int i=0; i<selectedUnits.size(); ++i){
-			if(selectedUnits[i]==*it){
+		for(int i = 0; i < (int)selectedUnits.size(); ++i) {
+			if(selectedUnits[i] == *it) {
 				unSelect(i);
 			}
 		}
@@ -120,7 +146,7 @@ bool Selection::isUniform() const{
 
 	const UnitType *ut= selectedUnits.front()->getType();
 
-	for(int i=0; i<selectedUnits.size(); ++i){
+	for(int i = 0; i < (int)selectedUnits.size(); ++i) {
 		if(selectedUnits[i]->getType()!=ut){
             return false;
 		}
@@ -168,29 +194,72 @@ bool Selection::hasUnit(const Unit* unit) const{
 	return find(selectedUnits.begin(), selectedUnits.end(), unit)!=selectedUnits.end();
 }
 
-void Selection::assignGroup(int groupIndex){
+void Selection::assignGroup(int groupIndex,const UnitContainer *pUnits) {
+	if(groupIndex < 0 || groupIndex >= maxGroups) {
+		throw megaglest_runtime_error("Invalid value for groupIndex = " + intToStr(groupIndex));
+	}
+
 	//clear group
 	groups[groupIndex].clear();
 
 	//assign new group
-	for(int i=0; i<selectedUnits.size(); ++i){
-		groups[groupIndex].push_back(selectedUnits[i]);
+	const UnitContainer *addUnits = &selectedUnits;
+	if(pUnits != NULL) {
+		addUnits = pUnits;
+	}
+	for(unsigned int i = 0; i < addUnits->size(); ++i) {
+		groups[groupIndex].push_back((*addUnits)[i]);
 	}
 }
 
+void Selection::addUnitToGroup(int groupIndex,Unit *unit) {
+	if(groupIndex < 0 || groupIndex >= maxGroups) {
+		throw megaglest_runtime_error("Invalid value for groupIndex = " + intToStr(groupIndex));
+	}
+
+	if(unit != NULL) {
+		groups[groupIndex].push_back(unit);
+	}
+}
+
+void Selection::removeUnitFromGroup(int groupIndex,int unitId) {
+	if(groupIndex < 0 || groupIndex >= maxGroups) {
+		throw megaglest_runtime_error("Invalid value for groupIndex = " + intToStr(groupIndex));
+	}
+
+	for(unsigned int i = 0; i < groups[groupIndex].size(); ++i) {
+		Unit *unit = groups[groupIndex][i];
+		if(unit != NULL && unit->getId() == unitId) {
+			groups[groupIndex].erase(groups[groupIndex].begin() + i);
+			break;
+		}
+	}
+}
+
+vector<Unit*> Selection::getUnitsForGroup(int groupIndex) {
+	if(groupIndex < 0 || groupIndex >= maxGroups) {
+		throw megaglest_runtime_error("Invalid value for groupIndex = " + intToStr(groupIndex));
+	}
+	return groups[groupIndex];
+}
+
 void Selection::recallGroup(int groupIndex){
+	if(groupIndex < 0 || groupIndex >= maxGroups) {
+		throw megaglest_runtime_error("Invalid value for groupIndex = " + intToStr(groupIndex));
+	}
+
 	clear();
-	for(int i=0; i<groups[groupIndex].size(); ++i){
+	for(int i = 0; i < (int)groups[groupIndex].size(); ++i) {
 		select(groups[groupIndex][i]);
 	}
 }
 
-void Selection::unitEvent(UnitObserver::Event event, const Unit *unit){
+void Selection::unitEvent(UnitObserver::Event event, const Unit *unit) {
 
 	if(event==UnitObserver::eKill){
 
 		//remove from selection
-		for(int i=0; i<selectedUnits.size(); ++i){
+		for(int i = 0; i < (int)selectedUnits.size(); ++i) {
 			if(selectedUnits[i]==unit){
 				selectedUnits.erase(selectedUnits.begin()+i);
 				break;
@@ -199,7 +268,7 @@ void Selection::unitEvent(UnitObserver::Event event, const Unit *unit){
 
 		//remove from groups
 		for(int i=0; i<maxGroups; ++i){
-			for(int j=0; j<groups[i].size(); ++j){
+			for(int j = 0; j < (int)groups[i].size(); ++j) {
 				if(groups[i][j]==unit){
 					groups[i].erase(groups[i].begin()+j);
 					break;
@@ -209,11 +278,104 @@ void Selection::unitEvent(UnitObserver::Event event, const Unit *unit){
 
 		//notify gui only if no more units to execute the command
 		//of course the selection changed, but this doesn't matter in this case.
-		if( selectedUnits.size()<1 ){
+		if( selectedUnits.empty() == true ){
 			gui->onSelectionChanged();
 		}
 
 	}
 }
+
+void Selection::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *selectionNode = rootNode->addChild("Selection");
+
+//	int factionIndex;
+	selectionNode->addAttribute("factionIndex",intToStr(factionIndex), mapTagReplacements);
+//	int teamIndex;
+	selectionNode->addAttribute("teamIndex",intToStr(teamIndex), mapTagReplacements);
+//	UnitContainer selectedUnits;
+	for(unsigned int i = 0; i < selectedUnits.size(); i++) {
+		Unit *unit = selectedUnits[i];
+
+		XmlNode *selectedUnitsNode = selectionNode->addChild("selectedUnits");
+		selectedUnitsNode->addAttribute("unitId",intToStr(unit->getId()), mapTagReplacements);
+	}
+//	UnitContainer groups[maxGroups];
+	for(unsigned int x = 0; x < (unsigned int)maxGroups; ++x) {
+		XmlNode *groupsNode = selectionNode->addChild("groups");
+		for(unsigned int i = 0; i < (unsigned int)groups[x].size(); ++i) {
+			Unit *unit = groups[x][i];
+
+			XmlNode *selectedUnitsNode = groupsNode->addChild("selectedUnits");
+			selectedUnitsNode->addAttribute("unitId",intToStr(unit->getId()), mapTagReplacements);
+		}
+	}
+
+//	Gui *gui;
+}
+
+void Selection::loadGame(const XmlNode *rootNode, World *world) {
+	const XmlNode *selectionNode = rootNode->getChild("Selection");
+
+//	vector<XmlNode *> fowPixmap1NodeList = minimapNode->getChildList("fowPixmap1");
+//	for(unsigned int i = 0; i < fowPixmap1NodeList.size(); ++i) {
+//		XmlNode *fowPixmap1Node = fowPixmap1NodeList[i];
+//
+//		int pixelIndex = fowPixmap1Node->getAttribute("index")->getIntValue();
+//		fowPixmap1->getPixels()[pixelIndex] = fowPixmap1Node->getAttribute("pixel")->getIntValue();
+//	}
+
+	//	int factionIndex;
+	factionIndex = selectionNode->getAttribute("factionIndex")->getIntValue();
+	//	int teamIndex;
+	teamIndex = selectionNode->getAttribute("teamIndex")->getIntValue();
+	//	UnitContainer selectedUnits;
+//	for(unsigned int i = 0; i < selectedUnits.size(); i++) {
+//		Unit *unit = selectedUnits[i];
+//
+//		XmlNode *selectedUnitsNode = selectionNode->addChild("selectedUnits");
+//		selectedUnitsNode->addAttribute("id",intToStr(unit->getId()), mapTagReplacements);
+//	}
+	vector<XmlNode *> selectedUnitsNodeList = selectionNode->getChildList("selectedUnits");
+	for(unsigned int i = 0; i < selectedUnitsNodeList.size(); ++i) {
+		XmlNode *selectedUnitsNode = selectedUnitsNodeList[i];
+
+		int unitId = selectedUnitsNode->getAttribute("unitId")->getIntValue();
+		Unit *unit = world->findUnitById(unitId);
+		//assert(unit != NULL);
+		//printf("#1 Unit [%s], group: %d\n",unit->getType()->getName().c_str(),i);
+		selectedUnits.push_back(unit);
+	}
+
+	//	UnitContainer groups[maxGroups];
+//	for(unsigned int x = 0; x < maxGroups; ++x) {
+//		XmlNode *groupsNode = selectionNode->addChild("groups");
+//		for(unsigned int i = 0; i < groups[x].size(); ++i) {
+//			Unit *unit = groups[x][i];
+//
+//			XmlNode *selectedUnitsNode = groupsNode->addChild("selectedUnits");
+//			selectedUnitsNode->addAttribute("unitId",intToStr(unit->getId()), mapTagReplacements);
+//		}
+//	}
+	vector<XmlNode *> groupsNodeList = selectionNode->getChildList("groups");
+	for(unsigned int i = 0; i < groupsNodeList.size(); ++i) {
+		XmlNode *groupsNode = groupsNodeList[i];
+
+		vector<XmlNode *> selectedGroupsUnitsNodeList = groupsNode->getChildList("selectedUnits");
+		for(unsigned int j = 0; j < selectedGroupsUnitsNodeList.size(); ++j) {
+			XmlNode *selectedGroupsUnitsNode = selectedGroupsUnitsNodeList[j];
+
+			int unitId = selectedGroupsUnitsNode->getAttribute("unitId")->getIntValue();
+			Unit *unit = world->findUnitById(unitId);
+			//assert(unit != NULL);
+			//printf("Unit #2 [%s], group: %d\n",unit->getType()->getName().c_str(),i);
+			groups[i].push_back(unit);
+		}
+	}
+
+	//	Gui *gui;
+
+}
+
 
 }}//end namespace

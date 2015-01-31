@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_UNITPARTICLETYPE_H_
 #define _GLEST_GAME_UNITPARTICLETYPE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include <list>
 
@@ -53,6 +58,7 @@ protected:
 	float emissionRateFade;
 	Vec3f direction;
     bool relative;
+	string meshName;
     bool relativeDirection;
     bool fixed;
     int staticParticleCount;
@@ -65,8 +71,10 @@ protected:
 	float startTime;
 	float endTime;
 
+
 public:
 	UnitParticleSystemType();
+	virtual ~UnitParticleSystemType() {};
 
 	void load(const XmlNode *particleSystemNode, const string &dir,
 			RendererInterface *newTexture, std::map<string,vector<pair<string, string> > > &loadedFileList,
@@ -82,9 +90,14 @@ public:
 
 	const void setValues (UnitParticleSystem *uts);
 	bool hasTexture() const { return(texture != NULL); }
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
 };
 
-class ObjectParticleSystemType: public UnitParticleSystemType{
+class ObjectParticleSystemType: public UnitParticleSystemType {
+public:
+	ObjectParticleSystemType();
+	virtual ~ObjectParticleSystemType();
 };
 
 }}//end namespace

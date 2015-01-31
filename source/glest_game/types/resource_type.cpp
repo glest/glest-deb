@@ -38,13 +38,24 @@ ResourceType::ResourceType() {
 	defResPerPatch=0;
 	recoup_cost = false;
     model = NULL;
+    displayInHud = false;
+    cleanupMemory = true;
 }
 
-ResourceType::~ResourceType(){
-	while(!(particleTypes.empty())){
-		delete particleTypes.back();
-		particleTypes.pop_back();
+ResourceType::~ResourceType() {
+	if(cleanupMemory == true) {
+		while(particleTypes.empty() == false) {
+			delete particleTypes.back();
+			particleTypes.pop_back();
+		}
 	}
+}
+
+string ResourceType::getName(bool translatedValue) const {
+	if(translatedValue == false) return name;
+
+	Lang &lang = Lang::getInstance();
+	return lang.getTechTreeString("ResourceTypeName_" + name,name.c_str());
 }
 
 void ResourceType::load(const string &dir, Checksum* checksum, Checksum *techtreeChecksum,
@@ -59,8 +70,8 @@ void ResourceType::load(const string &dir, Checksum* checksum, Checksum *techtre
 
 		name= lastDir(dir);
 
-		char szBuf[1024]="";
-		sprintf(szBuf,Lang::getInstance().get("LogScreenGameLoadingResourceType","",true).c_str(),formatString(name).c_str());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingResourceType","",true).c_str(),formatString(getName(true)).c_str());
 		Logger::getInstance().add(szBuf, true);
 
 		string currentPath = dir;
@@ -99,17 +110,14 @@ void ResourceType::load(const string &dir, Checksum* checksum, Checksum *techtre
                 const XmlNode *modelNode= typeNode->getChild("model");
                 string modelPath= modelNode->getAttribute("path")->getRestrictedValue(currentPath);
 
-                model= renderer.newModel(rsGame);
-                if(model) {
-                	model->load(modelPath, false, &loadedFileList, &sourceXMLFile);
-                }
+                model= renderer.newModel(rsGame, modelPath, false, &loadedFileList, &sourceXMLFile);
                 loadedFileList[modelPath].push_back(make_pair(sourceXMLFile,modelNode->getAttribute("path")->getRestrictedValue()));
 
                 if(modelNode->hasChild("particles")){
 					const XmlNode *particleNode= modelNode->getChild("particles");
 					bool particleEnabled= particleNode->getAttribute("value")->getBoolValue();
 					if(particleEnabled == true) {
-						for(int k= 0; k < particleNode->getChildCount(); ++k) {
+						for(int k= 0; k < (int)particleNode->getChildCount(); ++k) {
 							const XmlNode *particleFileNode= particleNode->getChild("particle-file", k);
 							string particlePath= particleFileNode->getAttribute("path")->getRestrictedValue();
 
@@ -168,10 +176,19 @@ void ResourceType::load(const string &dir, Checksum* checksum, Checksum *techtre
 		default:
 			break;
 		}
+
+		//displayInHud
+		if(resourceNode->hasChild("display") == true) {
+			const XmlNode *displayNode= resourceNode->getChild("display");
+			displayInHud= displayNode->getAttribute("value")->getBoolValue();
+		}
+		else {
+			displayInHud=true;
+		}
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading resource type: " + path + "\n" + e.what());
+		throw megaglest_runtime_error("Error loading resource type: " + path + "\n" + e.what());
 	}
 }
 
@@ -190,12 +207,43 @@ ResourceClass ResourceType::strToRc(const string &s){
 	if(s=="consumable"){
         return rcConsumable;
 	}
-	throw runtime_error("Error converting from string ro resourceClass, found: " + s);
+	throw megaglest_runtime_error("Error converting from string ro resourceClass, found: " + s);
 }
 
 void ResourceType::deletePixels() {
 	if(model != NULL) {
 		model->deletePixels();
+	}
+}
+
+void ResourceType::saveGame(XmlNode *rootNode) {
+	//DisplayableType::saveGame(rootNode);
+
+	std::map<string,string> mapTagReplacements;
+	XmlNode *resourceTypeNode = rootNode->addChild("ResourceType");
+
+	resourceTypeNode->addAttribute("name",this->getName(), mapTagReplacements);
+//    ResourceClass resourceClass;
+	resourceTypeNode->addAttribute("resourceClass",intToStr(resourceClass), mapTagReplacements);
+//    int tilesetObject;	//used only if class==rcTileset
+	resourceTypeNode->addAttribute("tilesetObject",intToStr(tilesetObject), mapTagReplacements);
+//    int resourceNumber;	//used only if class==rcTech, resource number in the map
+	resourceTypeNode->addAttribute("resourceNumber",intToStr(resourceNumber), mapTagReplacements);
+//    int interval;		//used only if class==rcConsumable
+	resourceTypeNode->addAttribute("interval",intToStr(interval), mapTagReplacements);
+//	int defResPerPatch;	//used only if class==rcTileset || class==rcTech
+	resourceTypeNode->addAttribute("defResPerPatch",intToStr(defResPerPatch), mapTagReplacements);
+//	bool recoup_cost;
+	resourceTypeNode->addAttribute("recoup_cost",intToStr(recoup_cost), mapTagReplacements);
+//
+//    Model *model;
+	if(model != NULL) {
+		resourceTypeNode->addAttribute("model",model->getFileName(), mapTagReplacements);
+	}
+//    ObjectParticleSystemTypes particleTypes;
+	for(unsigned int i = 0; i < particleTypes.size(); ++i) {
+		ObjectParticleSystemType *opst = particleTypes[i];
+		opst->saveGame(resourceTypeNode);
 	}
 }
 

@@ -26,6 +26,9 @@ namespace Shared{ namespace Graphics{ namespace Gl{
 
 ShaderProgramGl::ShaderProgramGl(){
 	inited= false;
+	vertexShader=0;
+	fragmentShader=0;
+	handle=0;
 }
 
 void ShaderProgramGl::init(){
@@ -70,7 +73,7 @@ bool ShaderProgramGl::link(string &messages){
 	//bind attributes
 	for(unsigned int i=0; i<attributes.size(); ++i){
 		//int a= attributes[i].second;
-		string s= attributes[i].first;
+		//string s= attributes[i].first;
 		glBindAttribLocationARB(handle, attributes[i].second, attributes[i].first.c_str());
 	}
 
@@ -162,7 +165,7 @@ void ShaderProgramGl::bindAttribute(const string &name, int index){
 GLint ShaderProgramGl::getLocation(const string &name){
 	GLint location= glGetUniformLocationARB(handle, name.c_str());
 	if(location==-1){
-		throw runtime_error("Can't locate uniform: "+ name);
+		throw megaglest_runtime_error("Can't locate uniform: "+ name);
 	}
 	return location;
 }
@@ -173,6 +176,7 @@ GLint ShaderProgramGl::getLocation(const string &name){
 
 ShaderGl::ShaderGl(){
 	inited= false;
+	handle = 0;
 }
 
 void ShaderGl::load(const string &path){

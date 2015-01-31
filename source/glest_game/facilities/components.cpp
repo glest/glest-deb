@@ -11,7 +11,6 @@
 
 #include "components.h"
 
-#include <cassert>
 #include <algorithm>
 
 #include "metrics.h"
@@ -35,6 +34,8 @@ float GraphicComponent::anim= 0.f;
 float GraphicComponent::fade= 0.f;
 const float GraphicComponent::animSpeed= 0.02f;
 const float GraphicComponent::fadeSpeed= 0.01f;
+// WHITE
+Vec3f GraphicComponent::customTextColor = Vec3f(1.0,1.0,1.0);
 
 std::map<std::string, std::map<std::string, GraphicComponent *> > GraphicComponent::registeredGraphicComponentList;
 
@@ -53,6 +54,7 @@ GraphicComponent::GraphicComponent(std::string containerName, std::string objNam
 	text = "";
 	font = NULL;
 	font3D = NULL;
+	textNativeTranslation = "";
 }
 
 void GraphicComponent::clearRegisteredComponents(std::string containerName) {
@@ -72,7 +74,7 @@ void GraphicComponent::clearRegisterGraphicComponent(std::string containerName, 
 }
 
 void GraphicComponent::clearRegisterGraphicComponent(std::string containerName, std::vector<std::string> objNameList) {
-	for(int idx = 0; idx < objNameList.size(); ++idx) {
+	for(int idx = 0; idx < (int)objNameList.size(); ++idx) {
 		GraphicComponent::clearRegisterGraphicComponent(containerName, objNameList[idx]);
 	}
 }
@@ -275,6 +277,12 @@ GraphicLabel::GraphicLabel() {
 	wordWrap = false;
 	centeredW = -1;
 	centeredH = 1;
+	editable = false;
+	editModeEnabled = false;
+	maxEditWidth = -1;
+	maxEditRenderWidth = -1;
+	isPassword = false;
+	texture = NULL;
 }
 
 void GraphicLabel::init(int x, int y, int w, int h, bool centered, Vec3f textColor, bool wordWrap) {
@@ -282,6 +290,28 @@ void GraphicLabel::init(int x, int y, int w, int h, bool centered, Vec3f textCol
 	this->centered= centered;
 	this->textColor=textColor;
 	this->wordWrap = wordWrap;
+}
+
+bool GraphicLabel::mouseMove(int x, int y) {
+	if(this->getVisible() == false) {
+		return false;
+	}
+
+	int useWidth = w;
+	if(text.length() > 0 && font3D != NULL) {
+		float lineWidth = (font3D->getTextHandler()->Advance(text.c_str()) * Shared::Graphics::Font::scaleFontValue);
+		useWidth = (int)lineWidth;
+	}
+
+	if(editable && useWidth<getMaxEditRenderWidth()){
+		useWidth = getMaxEditRenderWidth();
+	}
+
+    return
+        x > this->x &&
+        y > this->y &&
+        x < this->x + useWidth &&
+        y < this->y + h;
 }
 
 bool GraphicLabel::getCenteredW() const {
@@ -336,9 +366,10 @@ const int GraphicListBox::defH= 22;
 const int GraphicListBox::defW= 140;
 
 GraphicListBox::GraphicListBox(std::string containerName, std::string objName)
-: GraphicComponent(containerName, objName) {
+: GraphicComponent(containerName, objName), graphButton1(), graphButton2() {
     selectedItemIndex = 0;
     lighted = false;
+    leftControlled = false;
 }
 
 void GraphicListBox::init(int x, int y, int w, int h, Vec3f textColor){
@@ -353,21 +384,96 @@ void GraphicListBox::init(int x, int y, int w, int h, Vec3f textColor){
     lighted=false;
 }
 
+const string & GraphicListBox::getTextNativeTranslation() {
+	if(this->translated_items.empty() == true ||
+			this->selectedItemIndex < 0 ||
+			this->selectedItemIndex >= (int)this->translated_items.size() ||
+			this->items.size() != this->translated_items.size()) {
+		return this->text;
+	}
+	else {
+		return this->translated_items[this->selectedItemIndex];
+	}
+}
+
 //queryes
-void GraphicListBox::pushBackItem(string item){
+void GraphicListBox::pushBackItem(string item, string translated_item){
     items.push_back(item);
+    translated_items.push_back(translated_item);
     setSelectedItemIndex(0);
 }
 
-void GraphicListBox::setItems(const vector<string> &items){
+void GraphicListBox::setItems(const vector<string> &items, const vector<string> translated_items){
     this->items= items;
-    setSelectedItemIndex(0);
+    this->translated_items = translated_items;
+    if(items.empty() == false) {
+    	setSelectedItemIndex(0);
+    }
+    else {
+    	selectedItemIndex=-1;
+    	setText("");
+    }
 }
 
 void GraphicListBox::setSelectedItemIndex(int index, bool errorOnMissing){
-    if(errorOnMissing == true) assert(index>=0 && index<items.size());
+	if(errorOnMissing == true && (index < 0 || index >= (int)items.size())) {
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"Index not found in listbox name: [%s] value index: %d size: %lu",this->instanceName.c_str(),index,(unsigned long)items.size());
+		throw megaglest_runtime_error(szBuf);
+	}
     selectedItemIndex= index;
     setText(getSelectedItem());
+}
+
+void GraphicListBox::setLeftControlled(bool leftControlled) {
+	if(this->leftControlled!=leftControlled){
+		this->leftControlled= leftControlled;
+		if(leftControlled==true) {
+			graphButton2.setX(x+graphButton1.getW()-4);
+			graphButton2.setH(graphButton2.getH()-4);
+			graphButton2.setW(graphButton2.getW()-4);
+			graphButton1.setH(graphButton1.getH()-4);
+			graphButton1.setW(graphButton1.getW()-4);
+			graphButton2.setY(graphButton2.getY()+2);
+			graphButton1.setY(graphButton1.getY()+2);
+
+//			graphButton2.setX(x);
+//			graphButton2.setH(graphButton2.getH()/2);
+//			graphButton2.setW(graphButton2.getW()/2);
+//			graphButton1.setH(graphButton1.getH()/2);
+//			graphButton1.setW(graphButton1.getW()/2);
+//			graphButton2.setY(graphButton2.getY()+graphButton1.getH());
+
+		}
+		else {
+			graphButton2.setX(x+w-graphButton2.getW()+4);
+			graphButton2.setH(graphButton2.getH()+4);
+			graphButton2.setW(graphButton2.getW()+4);
+			graphButton1.setH(graphButton1.getH()+4);
+			graphButton1.setW(graphButton1.getW()+4);
+			graphButton2.setY(graphButton2.getY()-2);
+			graphButton1.setY(graphButton1.getY()-2);
+
+
+//			graphButton2.setY(graphButton2.getY()-graphButton1.getH());
+//			graphButton2.setH(graphButton2.getH()*2);
+//			graphButton2.setW(graphButton2.getW()*2);
+//			graphButton1.setH(graphButton1.getH()*2);
+//			graphButton1.setW(graphButton1.getW()*2);
+//			graphButton2.setX(x+w-graphButton2.getW());
+		}
+	}
+}
+
+void GraphicListBox::setX(int x) {
+	this->x= x;
+	graphButton1.setX(x);
+	if(leftControlled==true) {
+		graphButton2.setX(x+graphButton1.getW());
+	}
+	else {
+		graphButton2.setX(x+w-graphButton2.getW());
+	}
 }
 
 void GraphicListBox::setY(int y) {
@@ -399,10 +505,13 @@ void GraphicListBox::setSelectedItem(string item, bool errorOnMissing){
 
 	if(iter==items.end()) {
 		if(errorOnMissing == true) {
-			for(int idx = 0; idx < items.size(); idx++) {
-				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] idx = %d items[idx] = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,idx,items[idx].c_str());
+			for(int idx = 0; idx < (int)items.size(); idx++) {
+				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d]\ninstanceName [%s] idx = %d items[idx] = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,instanceName.c_str(),idx,items[idx].c_str());
 			}
-			throw runtime_error("[" + instanceName +"] Value not found on list box: [" + item + "]");
+
+		    char szBuf[8096]="";
+		    snprintf(szBuf,8096,"Value not found in listbox name: [%s] value: %s",this->instanceName.c_str(),item.c_str());
+			throw megaglest_runtime_error(szBuf);
 		}
 	}
 	else {
@@ -421,24 +530,77 @@ bool GraphicListBox::mouseMove(int x, int y){
         graphButton2.mouseMove(x, y);
 }
 
-bool GraphicListBox::mouseClick(int x, int y){
+bool GraphicListBox::mouseClick(int x, int y,string advanceToItemStartingWith) {
 	if(this->getVisible() == false) {
 		return false;
 	}
 
-	if(!items.empty()){
+	if(!items.empty()) {
 		bool b1= graphButton1.mouseClick(x, y);
 		bool b2= graphButton2.mouseClick(x, y);
 
-		if(b1){
-			selectedItemIndex--;
+		if(b1) {
+			bool bFound = false;
+			if(advanceToItemStartingWith != "") {
+				for(int i = selectedItemIndex - 1; i >= 0; --i) {
+					string item = items[i];
+					if((int)translated_items.size() > i) item = translated_items[i];
+					if(StartsWith(toLower(item),toLower(advanceToItemStartingWith)) == true) {
+						bFound = true;
+						selectedItemIndex = i;
+						break;
+					}
+				}
+				if(bFound == false) {
+					for(int i = (int)items.size() - 1; i >= selectedItemIndex; --i) {
+						string item = items[i];
+						if((int)translated_items.size() > i) item = translated_items[i];
+						//printf("Trying to match [%s] with item [%s]\n",advanceToItemStartingWith.c_str(),item.c_str());
+						if(StartsWith(toLower(item),toLower(advanceToItemStartingWith)) == true) {
+							bFound = true;
+							selectedItemIndex = i;
+							break;
+						}
+					}
+				}
+			}
+			if(bFound == false) {
+				selectedItemIndex--;
+			}
 			if(selectedItemIndex<0){
-				selectedItemIndex=items.size()-1;
+				selectedItemIndex = (int)items.size()-1;
 			}
 		}
-		else if(b2){
-			selectedItemIndex++;
-			if(selectedItemIndex>=items.size()){
+		else if(b2) {
+			bool bFound = false;
+			if(advanceToItemStartingWith != "") {
+				for(int i = selectedItemIndex + 1; i < (int)items.size(); ++i) {
+					string item = items[i];
+					if((int)translated_items.size() > i) item = translated_items[i];
+					//printf("Trying to match [%s] with item [%s]\n",advanceToItemStartingWith.c_str(),item.c_str());
+					if(StartsWith(toLower(item),toLower(advanceToItemStartingWith)) == true) {
+						bFound = true;
+						selectedItemIndex = i;
+						break;
+					}
+				}
+				if(bFound == false) {
+					for(int i = 0; i <= selectedItemIndex; ++i) {
+						string item = items[i];
+						if((int)translated_items.size() > i) item = translated_items[i];
+						//printf("Trying to match [%s] with item [%s]\n",advanceToItemStartingWith.c_str(),item.c_str());
+						if(StartsWith(toLower(item),toLower(advanceToItemStartingWith)) == true) {
+							bFound = true;
+							selectedItemIndex = i;
+							break;
+						}
+					}
+				}
+			}
+			if(bFound == false) {
+				selectedItemIndex++;
+			}
+			if(selectedItemIndex >= (int)items.size()) {
 				selectedItemIndex=0;
 			}
 		}
@@ -456,38 +618,36 @@ bool GraphicListBox::mouseClick(int x, int y){
 const int GraphicMessageBox::defH= 240;
 const int GraphicMessageBox::defW= 350;
 
-GraphicMessageBox::GraphicMessageBox(std::string containerName, std::string objName)
-: GraphicComponent(containerName, objName) {
-	buttonCount = 0;
-	header = "";
+GraphicMessageBox::GraphicMessageBox(std::string containerName, std::string objName) :
+	GraphicComponent(containerName, objName){
+	header= "";
+	autoWordWrap=true;
 }
 
-
-void GraphicMessageBox::init(const string &button1Str, const string &button2Str, int newWidth,int newHeight) {
-	init(button1Str,newWidth,newHeight);
-
-	button1.init(x+(w-GraphicButton::defW)/4, y+25);
-	button1.setText(button1Str);
-	button2.init(x+3*(w-GraphicButton::defW)/4, y+25);
-	button2.setText(button2Str);
-	buttonCount= 2;
+GraphicMessageBox::~GraphicMessageBox(){
+	//remove buttons
+	removeButtons();
 }
 
-void GraphicMessageBox::setX(int x) {
-	this->x= x;
-
-	button1.init(x+(w-GraphicButton::defW)/4, y+25);
-	button2.init(x+3*(w-GraphicButton::defW)/4, y+25);
+void GraphicMessageBox::removeButtons(){
+	while(!buttons.empty()){
+		delete buttons.back();
+		buttons.pop_back();
+	}
 }
 
-void GraphicMessageBox::setY(int y) {
-	this->y= y;
-
-	button1.init(x+(w-GraphicButton::defW)/4, y+25);
-	button2.init(x+3*(w-GraphicButton::defW)/4, y+25);
+void GraphicMessageBox::init(const string &button1Str, const string &button2Str, int newWidth, int newHeight){
+	init(button1Str, newWidth, newHeight);
+	addButton(button2Str);
 }
 
-void GraphicMessageBox::init(const string &button1Str, int newWidth,int newHeight) {
+void GraphicMessageBox::init(const string &button1Str, int newWidth, int newHeight){
+	init(newWidth,newHeight);
+	removeButtons();
+	addButton(button1Str);
+}
+
+void GraphicMessageBox::init(int newWidth, int newHeight){
 	font= CoreData::getInstance().getMenuFontNormal();
 	font3D= CoreData::getInstance().getMenuFontNormal3D();
 
@@ -496,56 +656,85 @@ void GraphicMessageBox::init(const string &button1Str, int newWidth,int newHeigh
 
 	const Metrics &metrics= Metrics::getInstance();
 
-	x= (metrics.getVirtualW()-w)/2;
-	y= (metrics.getVirtualH()-h)/2;
+	x= (metrics.getVirtualW() - w) / 2;
+	y= (metrics.getVirtualH() - h) / 2;
+}
 
-	button1.init(x+(w-GraphicButton::defW)/2, y+25);
-	button1.setText(button1Str);
-	buttonCount= 1;
+void GraphicMessageBox::addButton(const string &buttonStr, int width, int height){
+	GraphicButton *newButton= new GraphicButton();
+	newButton->init(0, 0);
+	newButton->setText(buttonStr);
+	if(width != -1){
+		newButton->setW(width);
+	}
+	if(height != -1){
+		newButton->setH(height);
+	}
+	buttons.push_back(newButton);
+	alignButtons();
+}
+
+void GraphicMessageBox::alignButtons(){
+	int currXPos= 0;
+	int totalbuttonListLength=0;
+	int buttonOffset=5;
+	for(int i= 0; i < getButtonCount(); i++){
+		GraphicButton *button= getButton(i);
+		totalbuttonListLength+=button->getW();
+	}
+	totalbuttonListLength+=(getButtonCount()-1)*buttonOffset;
+	currXPos=x+w/2-totalbuttonListLength/2;
+	for(int i= 0; i < getButtonCount(); i++){
+		GraphicButton *button= getButton(i);
+		button->setY(y + 25);
+		button->setX(currXPos);
+		currXPos+=button->getW()+buttonOffset;
+	}
+}
+
+void GraphicMessageBox::setX(int x){
+	this->x= x;
+	alignButtons();
+}
+
+void GraphicMessageBox::setY(int y){
+	this->y= y;
+	alignButtons();
 }
 
 bool GraphicMessageBox::mouseMove(int x, int y){
-	if(this->getVisible() == false) {
+	if(this->getVisible() == false){
 		return false;
 	}
-
-	return button1.mouseMove(x, y) || button2.mouseMove(x, y);
+	for(int i= 0; i < getButtonCount(); i++){
+		if(getButton(i)->mouseMove(x, y)){
+			return true;
+		}
+	}
+	return false;
 }
 
 bool GraphicMessageBox::mouseClick(int x, int y){
-	if(this->getVisible() == false) {
+	if(this->getVisible() == false){
 		return false;
 	}
 
-	bool b1= button1.mouseClick(x, y);
-	bool b2= button2.mouseClick(x, y);
-	if(buttonCount==1){
-		return b1;
+	for(int i= 0; i < getButtonCount(); i++){
+		if(getButton(i)->mouseClick(x, y)){
+			return true;
+		}
 	}
-	else{
-		return b1 ||b2;
-	}
+	return false;
 }
 
 bool GraphicMessageBox::mouseClick(int x, int y, int &clickedButton){
-	if(this->getVisible() == false) {
+	if(this->getVisible() == false){
 		return false;
 	}
 
-	bool b1= button1.mouseClick(x, y);
-	bool b2= button2.mouseClick(x, y);
-
-	if(buttonCount==1){
-		clickedButton= 1;
-		return b1;
-	}
-	else{
-		if(b1){
-			clickedButton= 1;
-			return true;
-		}
-		else if(b2){
-			clickedButton= 2;
+	for(int i= 0; i < getButtonCount(); i++){
+		if(getButton(i)->mouseClick(x, y)){
+			clickedButton=i;
 			return true;
 		}
 	}
@@ -600,11 +789,14 @@ bool GraphicCheckBox::mouseMove(int x, int y){
 
 bool GraphicCheckBox::mouseClick(int x, int y){
 	bool result=GraphicComponent::mouseClick( x,  y);
-	if(result)
-    	if(value) 
+	if(result == true) {
+    	if(value) {
     		value=false;
-    	else
+    	}
+    	else {
     		value=true;
+    	}
+	}
     return result;
 }
 
@@ -618,6 +810,7 @@ const int GraphicScrollBar::defLength= 200;
 GraphicScrollBar::GraphicScrollBar(std::string containerName, std::string objName)
 : GraphicComponent(containerName, objName) {
 	lighted = false;
+	activated = false;
 	horizontal = false;
 	elementCount = 0;
 	visibleSize = 0;
@@ -636,13 +829,14 @@ void GraphicScrollBar::init(int x, int y, bool horizontal,int length, int thickn
 	this->visibleStart=0;
 	this->visibleCompPosStart=0;
 	this->visibleCompPosEnd=length;
-	lighted= false;
+	activated = false;
+	lighted = false;
 }
 
 bool GraphicScrollBar::mouseDown(int x, int y) {
 	if(getVisible() && getEnabled() && getEditable())
 	{
-		if(mouseMove(x,y))
+		if(activated)
 		{
 			if( elementCount>visibleSize) {
 				int pos;
@@ -664,6 +858,11 @@ bool GraphicScrollBar::mouseDown(int x, int y) {
 		}
 	}
 	return false;
+}
+
+void GraphicScrollBar::mouseUp(int x, int y) {
+	activated = false;
+	lighted = false;
 }
 
 void GraphicScrollBar::setVisibleStart(int vs){
@@ -701,9 +900,12 @@ void GraphicScrollBar::setVisibleSize(int visibleSize){
 
 bool GraphicScrollBar::mouseClick(int x, int y){
 	bool result=GraphicComponent::mouseClick( x,  y);
-	if(result)
+	if(result) {
+		activated = true;
+		lighted = true;
 		mouseDown( x,  y);
-    return result;
+	}
+	return result;
 }
 
 
@@ -712,9 +914,13 @@ bool GraphicScrollBar::mouseMove(int x, int y){
 		return false;
 	}
 
-	bool b= GraphicComponent::mouseMove(x, y);
-    lighted= b;
-    return b;
+	bool inScrollBar = GraphicComponent::mouseMove(x, y);
+	if (activated) {
+		lighted = true;
+	} else {
+		lighted = inScrollBar;
+	}
+	return inScrollBar;
 }
 
 int GraphicScrollBar::getLength() const {
@@ -725,6 +931,18 @@ int GraphicScrollBar::getThickness() const {
 	return horizontal?getH():getW();
 }
 
+void GraphicScrollBar::arrangeComponents(vector<GraphicComponent *> &gcs) {
+	if(getElementCount()!=0 ) {
+    	for(int i = getVisibleStart(); i <= getVisibleEnd(); ++i) {
+    		if(horizontal){
+    			gcs[i]->setX(getX()+getLength()-gcs[i]->getW()-gcs[i]->getW()*(i-getVisibleStart()));
+    		}
+    		else {
+    			gcs[i]->setY(getY()+getLength()-gcs[i]->getH()-gcs[i]->getH()*(i-getVisibleStart()));
+    		}
+    	}
+    }
+}
 // ===========================================================
 // 	class PopupMenu
 // ===========================================================
@@ -760,7 +978,7 @@ void PopupMenu::init(string menuHeader,std::vector<string> menuItems) {
 	int maxButtonWidth = -1;
 	for(unsigned int i = 0; i < menuItems.size(); ++i) {
 		int currentButtonWidth = -1;
-		if(font3D != NULL && Font::forceLegacyFonts == false) {
+		if(font3D != NULL && Shared::Graphics::Font::forceLegacyFonts == false) {
 			FontMetrics *fontMetrics= font3D->getMetrics();
 			if(fontMetrics) {
 				currentButtonWidth = fontMetrics->getTextWidth(menuItems[i]);
@@ -786,7 +1004,7 @@ void PopupMenu::init(string menuHeader,std::vector<string> menuItems) {
 	}
 
 	int offsetH = (yStartOffset - y);
-	int maxH = (offsetH + ((menuItems.size() -1 ) * (textHeight + textHeightSpacing)));
+	int maxH = (offsetH + (((int)menuItems.size() -1 ) * (textHeight + textHeightSpacing)));
 	if(maxH >= h) {
 		h = maxH;
 		y= (metrics.getVirtualH()-h)/2;

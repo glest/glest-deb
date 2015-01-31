@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_SOUNDRENDERER_H_
 #define _GLEST_GAME_SOUNDRENDERER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "sound.h"
 #include "sound_player.h"
 #include "window.h"
@@ -22,11 +27,11 @@
 
 namespace Glest{ namespace Game{
 
-using Shared::Sound::StrSound;
-using Shared::Sound::StaticSound;
-using Shared::Sound::SoundPlayer;
-using Shared::Graphics::Vec3f;
-using namespace Shared::PlatformCommon;
+using ::Shared::Sound::StrSound;
+using ::Shared::Sound::StaticSound;
+using ::Shared::Sound::SoundPlayer;
+using ::Shared::Graphics::Vec3f;
+using namespace ::Shared::PlatformCommon;
 
 // =====================================================
 // 	class SoundRenderer
@@ -46,7 +51,7 @@ private:
 	float musicVolume;
 	float ambientVolume;
 
-	Mutex mutex;
+	Mutex *mutex;
 	bool runThreadSafe;
 
 private:
@@ -56,11 +61,11 @@ private:
 
 public:
 	//misc
-	~SoundRenderer();
+	virtual ~SoundRenderer();
 	static SoundRenderer &getInstance();
 	bool init(Window *window);
 	void update();
-	virtual void simpleTask(BaseThread *callingThread) { update(); }
+	virtual void simpleTask(BaseThread *callingThread,void *userdata) { update(); }
 	SoundPlayer *getSoundPlayer() const	{return soundPlayer;}
 
 	//music

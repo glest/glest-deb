@@ -28,6 +28,7 @@ using namespace Shared::Util;
 
 namespace Shared { namespace Platform {
 
+
 // ======================================
 //	Global Fcs  
 // ======================================

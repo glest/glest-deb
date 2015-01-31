@@ -40,12 +40,18 @@ MenuStateAbout::MenuStateAbout(Program *program, MainMenu *mainMenu) :
 
 	adjustModelText = true;
 
+	customModTextureX = 0;
+	customModTextureY = 0;
+	customModTextureW = 0;
+	customModTextureH = 0;
+	customModTextureAlpha = 0.f;
+
 	string additionalCredits= loadAdditionalCredits();
 
 	//init
 	buttonReturn.registerGraphicComponent(containerName, "buttonReturn");
 	buttonReturn.init(460, 100, 125);
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
 	labelAdditionalCredits.registerGraphicComponent(containerName, "labelAdditionalCredits");
 	labelAdditionalCredits.init(500, 700);
@@ -96,7 +102,42 @@ MenuStateAbout::MenuStateAbout(Program *program, MainMenu *mainMenu) :
 	labelTeammateName[8].init(labelTeammateName[4].getX(), 160);
 	labelTeammateRole[8].init(labelTeammateRole[4].getX(), 180);
 
+	customModTexture = NULL;
+	labelCustomModCredits.registerGraphicComponent(containerName, "labelCustomModCredits");
+	labelCustomModCredits.init(-1, -1);
+	labelCustomModCredits.setText("");
+	labelCustomModCredits.setVisible(false);
+
+	enableCustomModCredits = Config::getInstance().getBool("EnabledCustomModCredits","false");
+	if(enableCustomModCredits == true) {
+		string customModCreditsText = Config::getInstance().getString("CustomModCreditsText","");
+		if(customModCreditsText != "") {
+			replaceAll(customModCreditsText, "\\n", "\n");
+			int x = Config::getInstance().getInt("CustomModCreditsTextX","1");
+			int y = Config::getInstance().getInt("CustomModCreditsTextY","1");
+			int w = Config::getInstance().getInt("CustomModCreditsTextW",intToStr(GraphicLabel::defW).c_str());
+			int h = Config::getInstance().getInt("CustomModCreditsTextH",intToStr(GraphicLabel::defH).c_str());
+
+			labelCustomModCredits.init(x, y, w, h);
+			labelCustomModCredits.setText(customModCreditsText);
+			labelCustomModCredits.setVisible(true);
+		}
+
+		int buttonReturnX = Config::getInstance().getInt("CustomModCreditsReturnX",intToStr(buttonReturn.getX()).c_str());
+		int buttonReturnY = Config::getInstance().getInt("CustomModCreditsReturnY",intToStr(buttonReturn.getY()).c_str());
+		int buttonReturnW = Config::getInstance().getInt("CustomModCreditsReturnW",intToStr(buttonReturn.getW()).c_str());
+
+		buttonReturn.init(buttonReturnX, buttonReturnY, buttonReturnW);
+	}
+
 	GraphicComponent::applyAllCustomProperties(containerName);
+}
+
+MenuStateAbout::~MenuStateAbout() {
+	if(customModTexture != NULL) {
+		Renderer::getInstance().endTexture(rsGlobal, customModTexture, false);
+		customModTexture = NULL;
+	}
 }
 
 void MenuStateAbout::reloadUI() {
@@ -105,10 +146,10 @@ void MenuStateAbout::reloadUI() {
 	adjustModelText = true;
 	string additionalCredits= loadAdditionalCredits();
 
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 	labelAdditionalCredits.setText(additionalCredits);
 
-	if(additionalCredits == "") {
+	//if(additionalCredits == "") {
 		for(int i= 0; i < aboutStringCount1; ++i){
 			labelAbout1[i].setText(getAboutString1(i));
 		}
@@ -116,16 +157,16 @@ void MenuStateAbout::reloadUI() {
 		for(int i= 0; i < aboutStringCount2; ++i){
 			labelAbout2[i].setText(getAboutString2(i));
 		}
-	}
-	else {
-		for(int i= 0; i < aboutStringCount1; ++i){
-			labelAbout1[i].setText(getAboutString1(i));
-		}
+	//}
+	//else {
+	//	for(int i= 0; i < aboutStringCount1; ++i){
+	//		labelAbout1[i].setText(getAboutString1(i));
+	//	}
 
-		for(int i= 0; i < aboutStringCount2; ++i){
-			labelAbout2[i].setText(getAboutString2(i));
-		}
-	}
+	//	for(int i= 0; i < aboutStringCount2; ++i){
+	//		labelAbout2[i].setText(getAboutString2(i));
+	//	}
+	//}
 
 	for(int i= 0; i < teammateCount; ++i) {
 		labelTeammateName[i].setText(getTeammateName(i));
@@ -159,7 +200,7 @@ string MenuStateAbout::loadAdditionalCredits(){
 		std::cout << buffer << std::endl;
 		file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-		fclose(fp);
+		if(fp) fclose(fp);
 #endif
 	}
 	return result;
@@ -184,57 +225,71 @@ void MenuStateAbout::mouseMove(int x, int y, const MouseState *ms){
 void MenuStateAbout::render() {
 	Renderer &renderer= Renderer::getInstance();
 
-	renderer.renderLabel(&labelAdditionalCredits);
-	renderer.renderButton(&buttonReturn);
+	if(enableCustomModCredits == true) {
+		if(customModTexture == NULL) {
+			string customModCreditsTextureFile = Config::getInstance().getString("CustomModCreditsTextureFile","");
+			if(customModCreditsTextureFile != "") {
+				customModTexture = Renderer::findTexture(customModCreditsTextureFile);
+			}
+		}
 
-	for(int i= 0; i < aboutStringCount1; ++i) {
-		renderer.renderLabel(&labelAbout1[i]);
+		renderer.renderBackground(customModTexture);
+		renderer.renderLabel(&labelCustomModCredits);
 	}
-	for(int i= 0; i < aboutStringCount2; ++i) {
-		renderer.renderLabel(&labelAbout2[i]);
-	}
+	else {
+		renderer.renderLabel(&labelAdditionalCredits);
 
-	if(adjustModelText == true) {
-		std::vector<Vec3f> &characterMenuScreenPositionListCache =
-				CacheManager::getCachedItem< std::vector<Vec3f> >(GameConstants::characterMenuScreenPositionListCacheLookupKey);
+		for(int i= 0; i < aboutStringCount1; ++i) {
+			renderer.renderLabel(&labelAbout1[i]);
+		}
+		for(int i= 0; i < aboutStringCount2; ++i) {
+			renderer.renderLabel(&labelAbout2[i]);
+		}
 
-		for(int i= 0; i < teammateCount; ++i) {
-			int characterPos = (i % teammateTopLineCount);
-			if(characterPos < characterMenuScreenPositionListCache.size()) {
-				adjustModelText = false;
+		if(adjustModelText == true) {
+			std::vector<Vec3f> &characterMenuScreenPositionListCache =
+					CacheManager::getCachedItem< std::vector<Vec3f> >(GameConstants::characterMenuScreenPositionListCacheLookupKey);
 
-				int xPos = characterMenuScreenPositionListCache[characterPos].x;
-				if(i == 7 && characterPos+1 < characterMenuScreenPositionListCache.size()) {
-					xPos += ((characterMenuScreenPositionListCache[characterPos+1].x - characterMenuScreenPositionListCache[characterPos].x) / 2);
-				}
-				else if(i == 8 && characterPos+1 < characterMenuScreenPositionListCache.size()) {
-					xPos = characterMenuScreenPositionListCache[characterPos+1].x;
-				}
+			for(int i= 0; i < teammateCount; ++i) {
+				int characterPos = (i % teammateTopLineCount);
+				if(characterPos < (int)characterMenuScreenPositionListCache.size()) {
+					adjustModelText = false;
 
-				FontMetrics *fontMetrics= NULL;
-				if(Renderer::renderText3DEnabled == false) {
-					fontMetrics= labelTeammateName[i].getFont()->getMetrics();
-				}
-				else {
-					fontMetrics= labelTeammateName[i].getFont3D()->getMetrics();
-				}
-				int newxPos = xPos - (fontMetrics->getTextWidth(labelTeammateName[i].getText()) / 2);
-				if(newxPos != labelTeammateName[i].getX()) {
-					labelTeammateName[i].init(newxPos, labelTeammateName[i].getY());
-				}
+					int xPos = characterMenuScreenPositionListCache[characterPos].x;
+					if(i == 7 && characterPos+1 < (int)characterMenuScreenPositionListCache.size()) {
+						xPos += ((characterMenuScreenPositionListCache[characterPos+1].x - characterMenuScreenPositionListCache[characterPos].x) / 2);
+					}
+					else if(i == 8 && characterPos+1 < (int)characterMenuScreenPositionListCache.size()) {
+						xPos = characterMenuScreenPositionListCache[characterPos+1].x;
+					}
 
-				newxPos = xPos - (fontMetrics->getTextWidth(labelTeammateRole[i].getText()) / 2);
-				if(newxPos != labelTeammateRole[i].getX()) {
-					labelTeammateRole[i].init(newxPos, labelTeammateRole[i].getY());
+					FontMetrics *fontMetrics= NULL;
+					if(Renderer::renderText3DEnabled == false) {
+						fontMetrics= labelTeammateName[i].getFont()->getMetrics();
+					}
+					else {
+						fontMetrics= labelTeammateName[i].getFont3D()->getMetrics();
+					}
+					int newxPos = xPos - (fontMetrics->getTextWidth(labelTeammateName[i].getText()) / 2);
+					if(newxPos != labelTeammateName[i].getX()) {
+						labelTeammateName[i].init(newxPos, labelTeammateName[i].getY());
+					}
+
+					newxPos = xPos - (fontMetrics->getTextWidth(labelTeammateRole[i].getText()) / 2);
+					if(newxPos != labelTeammateRole[i].getX()) {
+						labelTeammateRole[i].init(newxPos, labelTeammateRole[i].getY());
+					}
 				}
 			}
 		}
+
+		for(int i= 0; i < teammateCount; ++i) {
+			renderer.renderLabel(&labelTeammateName[i]);
+			renderer.renderLabel(&labelTeammateRole[i]);
+		}
 	}
 
-	for(int i= 0; i < teammateCount; ++i) {
-		renderer.renderLabel(&labelTeammateName[i]);
-		renderer.renderLabel(&labelTeammateRole[i]);
-	}
+	renderer.renderButton(&buttonReturn);
 
 	if(program != NULL)
 		program->renderProgramMsgBox();

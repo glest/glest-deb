@@ -27,6 +27,15 @@ using namespace Shared::Util;
 
 namespace Shared{ namespace Platform{
 
+// Example values:
+// DEFAULT_CHARSET (English) = 1
+// GB2312_CHARSET (Chinese)  = 134
+//#ifdef WIN32
+//DWORD PlatformContextGl::charSet = DEFAULT_CHARSET;
+//#else
+//int PlatformContextGl::charSet = 1;
+//#endif
+
 // ======================================
 //	Global Fcs
 // ======================================
@@ -56,7 +65,7 @@ void createGlFontBitmaps(uint32 &base, const string &type, int size, int width,
 		LOGFONT lf;
 		//POSITION pos;
 		//lf.lfCharSet = ANSI_CHARSET;
-		lf.lfCharSet = (BYTE)charSet;
+		lf.lfCharSet = (BYTE)PlatformContextGl::charSet;
 		lf.lfFaceName[0]='\0';
 		
 		//HGLRC hdRC =wglGetCurrentContext();
@@ -94,10 +103,10 @@ void createGlFontBitmaps(uint32 &base, const string &type, int size, int width,
 
 	LPWSTR wstr = Ansi2WideString(useRealFontName.c_str());
 	HFONT font= CreateFont(
-						   size, 0, 0, 0, width, FALSE, FALSE, FALSE, charSet,
+						   size, 0, 0, 0, width, FALSE, FALSE, FALSE, PlatformContextGl::charSet,
 						   OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
 						   DEFAULT_PITCH| (useRealFontName.c_str() ? FF_DONTCARE:FF_SWISS), wstr);
-	delete [] wstr;
+	if(wstr) delete [] wstr;
 	assert(font!=NULL);
 
 	HDC dc= wglGetCurrentDC();
@@ -108,8 +117,7 @@ void createGlFontBitmaps(uint32 &base, const string &type, int size, int width,
 	dwErrorGL = GetLastError();
 	assertGl();
 
-	BOOL err= 0;
-	err= wglUseFontBitmaps(dc, 0, charCount, base);
+	BOOL err= wglUseFontBitmaps(dc, 0, charCount, base);
 	dwErrorGL = GetLastError();
 
 /*

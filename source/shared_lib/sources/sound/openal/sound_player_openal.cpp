@@ -136,6 +136,7 @@ ALenum SoundSource::getFormat(Sound* sound)
 
 StaticSoundSource::StaticSoundSource() {
 	bufferAllocated = false;
+	buffer = 0;
 }
 
 StaticSoundSource::~StaticSoundSource() {
@@ -179,6 +180,9 @@ void StaticSoundSource::play(StaticSound* sound) {
 StreamSoundSource::StreamSoundSource()
 {
 	sound = 0;
+	fadeState = NoFading;
+	format = 0;
+	fade = 0;
 	alGenBuffers(STREAMFRAGMENTS, buffers);
 	SoundPlayerOpenAL::checkAlError(string(__FILE__) + string(" ") + string(__FUNCTION__) + string(" ") + intToStr(__LINE__));
 }
@@ -331,6 +335,7 @@ SoundPlayerOpenAL::SoundPlayerOpenAL() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	device = 0;
+	context = 0;
 	initOk = false;
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -372,6 +377,18 @@ bool SoundPlayerOpenAL::init(const SoundPlayerParams* params) {
 	this->params = *params;
 
 	try {
+
+		if(context != 0) {
+			alcMakeContextCurrent( NULL );
+			alcDestroyContext(context);
+			context = 0;
+		}
+
+		if(device != 0) {
+			alcCloseDevice(device);
+			device = 0;
+		}
+
 		// Allows platforms to specify which sound device to use
 		// using the environment variable: MEGAGLEST_SOUND_DEVICE
 		char *deviceName = getenv("MEGAGLEST_SOUND_DEVICE");
@@ -426,6 +443,7 @@ void SoundPlayerOpenAL::end() {
 			i != staticSources.end(); ++i) {
 		delete *i;
     }
+	staticSources.clear();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -433,12 +451,14 @@ void SoundPlayerOpenAL::end() {
 			i != streamSources.end(); ++i) {
 		delete *i;
     }
+	streamSources.clear();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-    alcMakeContextCurrent( NULL );
-    SoundPlayerOpenAL::checkAlcError(string(__FILE__) + string(" ") + string(__FUNCTION__) + string(" ") + intToStr(__LINE__));
-
+	if(context != 0) {
+		alcMakeContextCurrent( NULL );
+		SoundPlayerOpenAL::checkAlcError(string(__FILE__) + string(" ") + string(__FUNCTION__) + string(" ") + intToStr(__LINE__));
+	}
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	if(context != 0) {
@@ -545,7 +565,7 @@ void SoundPlayerOpenAL::updateStreams() {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		printOpenALInfo();
-		throw runtime_error(ex.what());
+		throw megaglest_runtime_error(ex.what());
 	}
 	catch(...) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s Line: %d] UNKNOWN Error\n",__FILE__,__FUNCTION__,__LINE__);
@@ -571,7 +591,7 @@ StaticSoundSource* SoundPlayerOpenAL::findStaticSoundSource() {
 		}
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d] playingCount = %d, staticSources.size() = %lu, params.staticBufferCount = %u\n",__FILE__,__FUNCTION__,__LINE__,playingCount,(unsigned long)staticSources.size(),params.staticBufferCount);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled) SystemFlags::OutputDebug(SystemFlags::debugSound,"In [%s::%s %d] playingCount = %d, staticSources.size() = " MG_SIZE_T_SPECIFIER ", params.staticBufferCount = %u\n",__FILE__,__FUNCTION__,__LINE__,playingCount,(unsigned long)staticSources.size(),params.staticBufferCount);
 
 	// create a new source
 	if(staticSources.size() >= params.staticBufferCount) {
@@ -618,8 +638,8 @@ StreamSoundSource* SoundPlayerOpenAL::findStreamSoundSource() {
 void SoundPlayerOpenAL::checkAlcError(string message) {
 	int err = alcGetError(device);
 	if(err != ALC_NO_ERROR) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"%s [%s]",message.c_str(),alcGetString(device, err));
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"%s [%s]",message.c_str(),alcGetString(device, err));
 
 		//std::stringstream msg;
 		//msg << message.c_str() << alcGetString(device, err);
@@ -631,8 +651,8 @@ void SoundPlayerOpenAL::checkAlcError(string message) {
 void SoundPlayerOpenAL::checkAlError(string message) {
 	int err = alGetError();
 	if(err != AL_NO_ERROR) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"%s [%s]",message.c_str(),alGetString(err));
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"%s [%s]",message.c_str(),alGetString(err));
 		//std::stringstream msg;
 		//msg << message.c_str() << alGetString(err);
 		printf("openal error [%s]\n",szBuf);

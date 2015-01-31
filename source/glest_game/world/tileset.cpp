@@ -29,6 +29,8 @@ using namespace Shared::Graphics;
 
 namespace Glest{ namespace Game{
 
+const float Tileset::standardAirHeight= 5.0f;
+const float Tileset::standardShadowIntensity= 0.2f;
 // =====================================================
 // 	class AmbientSounds
 // =====================================================
@@ -121,14 +123,21 @@ void AmbientSounds::load(const string &dir, const XmlNode *xmlNode,
 Checksum Tileset::loadTileset(const vector<string> pathList, const string &tilesetName,
 		Checksum* checksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
     Checksum tilesetChecksum;
-    for(int idx = 0; idx < pathList.size(); idx++) {
+
+    bool found = false;
+    for(int idx = 0; idx < (int)pathList.size(); idx++) {
 		string currentPath = pathList[idx];
 		endPathWithSlash(currentPath);
         string path = currentPath + tilesetName;
         if(isdir(path.c_str()) == true) {
             load(path, checksum, &tilesetChecksum, loadedFileList);
+            found = true;
             break;
         }
+    }
+    if(found == false) {
+		throw megaglest_runtime_error("Error could not find tileset [" + tilesetName + "]\n");
+
     }
     return tilesetChecksum;
 }
@@ -143,6 +152,7 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	string name= lastDir(dir);
+	tileset_name = name;
 	string currentPath = dir;
 	endPathWithSlash(currentPath);
 	string path= currentPath + name + ".xml";
@@ -153,14 +163,15 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 	checksumValue.addFile(path);
 
 	try {
-		char szBuf[1024]="";
-		sprintf(szBuf,Lang::getInstance().get("LogScreenGameLoadingTileset","",true).c_str(),formatString(name).c_str());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingTileset","",true).c_str(),formatString(name).c_str());
 		Logger::getInstance().add(szBuf, true);
 
 		Renderer &renderer= Renderer::getInstance();
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+		//printf("About to load tileset [%s]\n",path.c_str());
 		//parse xml
 		XmlTree xmlTree;
 		xmlTree.load(path,Properties::getTagReplacementValues());
@@ -174,7 +185,9 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 
 		//surfaces
 		const XmlNode *surfacesNode= tilesetNode->getChild("surfaces");
+		int partsize= 0;
 		for(int i=0; i < surfCount; ++i) {
+
 			const XmlNode *surfaceNode;
 			if(surfacesNode->hasChildAtIndex("surface",i)){
 				surfaceNode= surfacesNode->getChild("surface", i);
@@ -184,25 +197,104 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 				surfaceNode= surfacesNode->getChild("surface", 2);
 			}
 
-
-			int childCount= surfaceNode->getChildCount();
-			surfPixmaps[i].resize(childCount);
-			surfProbs[i].resize(childCount);
-
-			for(int j = 0; j < childCount; ++j) {
-				surfPixmaps[i][j] = NULL;
+			if(surfaceNode->hasAttribute("partsize")){
+				partsize=surfaceNode->getAttribute("partsize",true)->getIntValue();
+			}
+			else{
+				partsize=0;
 			}
 
-			for(int j = 0; j < childCount; ++j) {
-				const XmlNode *textureNode= surfaceNode->getChild("texture", j);
-				if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
-					surfPixmaps[i][j] = new Pixmap2D();
-					surfPixmaps[i][j]->init(3);
-					surfPixmaps[i][j]->load(textureNode->getAttribute("path")->getRestrictedValue(currentPath));
-				}
-				loadedFileList[textureNode->getAttribute("path")->getRestrictedValue(currentPath)].push_back(make_pair(sourceXMLFile,textureNode->getAttribute("path")->getRestrictedValue()));
+			if(partsize==0){
+				int childCount= (int)surfaceNode->getChildCount();
+				surfPixmaps[i].resize(childCount);
+				surfProbs[i].resize(childCount);
 
-				surfProbs[i][j]= textureNode->getAttribute("prob")->getFloatValue();
+				for(int j = 0; j < childCount; ++j) {
+					surfPixmaps[i][j] = NULL;
+				}
+
+				for(int j = 0; j < childCount; ++j) {
+					const XmlNode *textureNode= surfaceNode->getChild("texture", j);
+					if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+						surfPixmaps[i][j] = new Pixmap2D();
+						surfPixmaps[i][j]->init(3);
+						surfPixmaps[i][j]->load(textureNode->getAttribute("path")->getRestrictedValue(currentPath));
+					}
+					loadedFileList[textureNode->getAttribute("path")->getRestrictedValue(currentPath)].push_back(make_pair(sourceXMLFile,textureNode->getAttribute("path")->getRestrictedValue()));
+
+					surfProbs[i][j]= textureNode->getAttribute("prob")->getFloatValue();
+				}
+			}
+			else {
+				// read single big texture and cut it into pieces
+				const XmlNode *textureNode= surfaceNode->getChild("texture", 0);
+
+				// There is no way to figure out parts without loading the texture
+				// unfortunately we must load it even for headless server
+				// to get width and height
+				bool switchOffNonGraphicalModeEnabled = GlobalStaticFlags::getIsNonGraphicalModeEnabled();
+				if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+					GlobalStaticFlags::setIsNonGraphicalModeEnabled(false);
+				}
+
+				string exceptionError = "";
+				Pixmap2D *pixmap 	= NULL;
+				int width 			= 0;
+				int height 			= 0;
+
+				try {
+					pixmap=new Pixmap2D();
+					pixmap->init(3);
+					pixmap->load(textureNode->getAttribute("path")->getRestrictedValue(currentPath));
+					loadedFileList[textureNode->getAttribute("path")->getRestrictedValue(currentPath)].push_back(make_pair(sourceXMLFile,textureNode->getAttribute("path")->getRestrictedValue()));
+
+					width  = pixmap->getW();
+					height = pixmap->getW();
+				}
+				catch(const exception &ex) {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+
+					exceptionError = "Error: " + path + "\n" + ex.what();
+				}
+
+				if(switchOffNonGraphicalModeEnabled == true) {
+					GlobalStaticFlags::setIsNonGraphicalModeEnabled(true);
+
+					delete pixmap;
+					pixmap = NULL;
+				}
+
+				if(exceptionError != "") {
+					throw megaglest_runtime_error(exceptionError.c_str());
+				}
+
+				if(width != height) {
+					throw megaglest_runtime_error("width != height");
+				}
+				if(width % 64 != 0) {
+					throw megaglest_runtime_error("width % 64 != 0");
+				}
+				if(width % partsize != 0) {
+					throw megaglest_runtime_error("width % partsize != 0");
+				}
+
+				int parts=width/partsize;
+				int numberOfPieces=parts*parts;
+				partsArray[i]=parts;
+				surfPixmaps[i].resize(numberOfPieces);
+				surfProbs[i].resize(numberOfPieces);
+				int j=0;
+				for(int x = 0; x < parts; ++x) {
+					for(int y = 0; y < parts; ++y) {
+						if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+							surfPixmaps[i][j] = new Pixmap2D();
+							surfPixmaps[i][j]->init(partsize,partsize,3);
+							surfPixmaps[i][j]->copyImagePart(x*partsize,y*partsize,pixmap);
+						}
+						surfProbs[i][j]=-1;
+						j++;
+					}
+				}
 			}
 		}
 
@@ -212,7 +304,7 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 		const XmlNode *objectsNode= tilesetNode->getChild("objects");
 		for(int i=0; i<objCount; ++i){
 			const XmlNode *objectNode= objectsNode->getChild("object", i);
-			int childCount= objectNode->getChildCount();
+			int childCount= (int)objectNode->getChildCount();
 
 			int objectHeight = 0;
 			bool walkable = objectNode->getAttribute("walkable")->getBoolValue();
@@ -230,11 +322,16 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 				TilesetModelType* tmt=objectTypes[i].loadModel(pathAttribute->getRestrictedValue(currentPath),&loadedFileList, sourceXMLFile);
 				loadedFileList[pathAttribute->getRestrictedValue(currentPath)].push_back(make_pair(sourceXMLFile,pathAttribute->getRestrictedValue()));
 
+				if(modelNode->hasAttribute("anim-speed") == true) {
+					int animSpeed= modelNode->getAttribute("anim-speed")->getIntValue();
+					tmt->setAnimSpeed(animSpeed);
+				}
+
 				if(modelNode->hasChild("particles")){
 					const XmlNode *particleNode= modelNode->getChild("particles");
 					bool particleEnabled= particleNode->getAttribute("value")->getBoolValue();
 					if(particleEnabled){
-						for(int k=0; k<particleNode->getChildCount(); ++k){
+						for(int k=0; k < (int)particleNode->getChildCount(); ++k){
 							const XmlNode *particleFileNode= particleNode->getChild("particle-file", k);
 							string path= particleFileNode->getAttribute("path")->getRestrictedValue();
 							ObjectParticleSystemType *objectParticleSystemType= new ObjectParticleSystemType();
@@ -247,13 +344,31 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 					}
 				}
 
-			//rotationAllowed
-			if(modelNode->hasChild("rotationAllowed")){
+				//rotationAllowed
+				if(modelNode->hasAttribute("rotationAllowed") == true) {
+					tmt->setRotationAllowed(modelNode->getAttribute("rotationAllowed")->getBoolValue());
+				}
+				else if(modelNode->hasChild("rotationAllowed")){
 					const XmlNode *rotationAllowedNode= modelNode->getChild("rotationAllowed");
 					tmt->setRotationAllowed(rotationAllowedNode->getAttribute("value")->getBoolValue());
 				}
 				else{
 					tmt->setRotationAllowed(true);
+				}
+				//randomPositionEnabled
+				if(modelNode->hasAttribute("randomPositionEnabled") == true) {
+					tmt->setRandomPositionEnabled(modelNode->getAttribute("randomPositionEnabled")->getBoolValue());
+				}
+				else{
+					tmt->setRandomPositionEnabled(true);
+				}
+
+				//smoothTwoFrameAnim
+				if(modelNode->hasAttribute("smoothTwoFrameAnim") == true) {
+					tmt->setSmoothTwoFrameAnim(modelNode->getAttribute("smoothTwoFrameAnim")->getBoolValue());
+				}
+				else{
+					tmt->setSmoothTwoFrameAnim(false);
 				}
 			}
 		}
@@ -282,7 +397,7 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-		int waterFrameCount= waterNode->getChildCount();
+		int waterFrameCount= (int)waterNode->getChildCount();
 		if(waterTex) {
 			waterTex->getPixmap()->init(waterFrameCount, 4);
 		}
@@ -320,6 +435,13 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 		moonLightColor.y= moonLightColorNode->getAttribute("green")->getFloatValue();
 		moonLightColor.z= moonLightColorNode->getAttribute("blue")->getFloatValue();
 
+		if(parametersNode->hasChild("shadow-intensity")) {
+			const XmlNode *shadowIntenseNode= parametersNode->getChild("shadow-intensity");
+			shadowIntensity= shadowIntenseNode->getAttribute("value")->getFloatValue();
+		} else {
+			shadowIntensity=standardShadowIntensity;
+		}
+
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		//weather
@@ -330,7 +452,7 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 #ifdef USE_STREFLOP
-		float rnd= streflop::fabs(random.randRange(-1.f, 1.f));
+		float rnd= streflop::fabs(static_cast<streflop::Simple>(random.randRange(-1.f, 1.f)));
 #else
 		float rnd= fabs(random.randRange(-1.f, 1.f));
 #endif
@@ -347,14 +469,35 @@ void Tileset::load(const string &dir, Checksum *checksum, Checksum *tilesetCheck
 			weather= wSnowy;
 		}
 
+		//printf("==> Weather is: %d rnd = %f [sun: %f rainyProb: %f]",weather,rnd,sunnyProb,rainyProb);
+
+		//airHeight
+		if(parametersNode->hasChild("air-height")) {
+			const XmlNode *node= parametersNode->getChild("air-height");
+			airHeight= node->getAttribute("value")->getFloatValue();
+			// airHeight should not be lower than default
+			if( airHeight<Tileset::standardAirHeight){
+				airHeight=standardAirHeight;
+			}
+			// airHeight should not be bigger than 3 x default
+			if( airHeight>3*Tileset::standardAirHeight){
+				airHeight=3*Tileset::standardAirHeight;
+			}
+		}
+
+
+
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	}
 	//Exception handling (conversions and so on);
 	catch(const exception &e) {
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error: " + path + "\n" + e.what());
+		throw megaglest_runtime_error("Error: " + path + "\n" + e.what());
 	}
+
+    Lang &lang = Lang::getInstance();
+    lang.loadTilesetStrings(name);
 }
 
 Tileset::~Tileset() {
@@ -363,31 +506,42 @@ Tileset::~Tileset() {
 		surfPixmaps[i].clear();
 	}
 
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingTileset","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingTileset","",true), true);
 }
 
 const Pixmap2D *Tileset::getSurfPixmap(int type, int var) const{
-	int vars= surfPixmaps[type].size();
+	int vars= (int)surfPixmaps[type].size();
 	return surfPixmaps[type][var % vars];
 }
 
-void Tileset::addSurfTex(int leftUp, int rightUp, int leftDown, int rightDown, Vec2f &coord, const Texture2D *&texture) {
+void Tileset::addSurfTex(int leftUp, int rightUp, int leftDown, int rightDown, Vec2f &coord, const Texture2D *&texture, int mapX, int mapY) {
 	//center textures
 	if(leftUp == rightUp && leftUp == leftDown && leftUp == rightDown) {
 		//texture variation according to probability
 		float r= random.randRange(0.f, 1.f);
-		int var= 0;
-		float max= 0.f;
-		for(int i=0; i < surfProbs[leftUp].size(); ++i) {
-			max+= surfProbs[leftUp][i];
-			if(r <= max) {
-				var= i;
-				break;
-			}
+		const Pixmap2D *pixmap = NULL;
+
+		if(surfProbs[leftUp][0] < 0) {
+			// big textures use coordinates
+			int parts = partsArray[leftUp];
+			pixmap = getSurfPixmap(leftUp, (mapY % parts) * parts + (mapX % parts));
 		}
-		SurfaceInfo si(getSurfPixmap(leftUp, var));
+		else {
+			float max= 0.f;
+			int var= 0;
+			for(int i=0; i < (int)surfProbs[leftUp].size(); ++i) {
+				max += surfProbs[leftUp][i];
+				if(r <= max) {
+					var= i;
+					break;
+				}
+			}
+			pixmap=getSurfPixmap(leftUp, var);
+		}
+		SurfaceInfo si(pixmap);
 		surfaceAtlas.addSurface(&si);
 		coord= si.getCoord();
+		// only for 512px printf("coord.x=%f coord.y=%f mapX=%d mapY=%d  result=%d\n",coord.x,coord.y,mapX,mapY,(mapY%8)*8+(mapX%8));
 		texture= si.getTexture();
 	}
 	//spatted textures

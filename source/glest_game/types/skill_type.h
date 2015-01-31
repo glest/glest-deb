@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_SKILLTYPE_H_
 #define _GLEST_GAME_SKILLTYPE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "sound.h"
 #include "vec.h"
 #include "model.h"
@@ -63,6 +68,7 @@ enum SkillClass{
     scUpgrade,
 	scMorph,
 	scDie,
+	scFogOfWar,
 
     scCount
 };
@@ -75,17 +81,17 @@ typedef list<UnitParticleSystemType*> UnitParticleSystemTypes;
 // =====================================================
 
 enum AttackBoostTargetType {
-	abtAlly,
-	abtFoe,
-	abtFaction,
-	abtUnitTypes,
-	abtAll
+	abtAlly, // Only ally units are affected
+	abtFoe, // Only foe units are affected
+	abtFaction, // Only same faction units are affected
+	abtUnitTypes, // Specify which units are affected ( in general same as abtAll )
+	abtAll // All units are affected (including enemies)
 };
 
 class AttackBoost {
 public:
 	AttackBoost();
-	~AttackBoost();
+	virtual ~AttackBoost();
 	bool enabled;
 	bool allowMultipleBoosts;
 	int radius;
@@ -100,6 +106,10 @@ public:
 	string name;
 
 	bool isAffected(const Unit *source, const Unit *dest) const;
+	virtual string getDesc(bool translatedValue) const;
+
+	virtual void saveGame(XmlNode *rootNode) const;
+	virtual void loadGame(const XmlNode *rootNode, Faction *faction, const SkillType *skillType);
 };
 
 class AnimationAttributes {
@@ -156,6 +166,9 @@ public:
 
     static void resetNextAttackBoostId() { nextAttackBoostId=0; }
 
+    const AnimationAttributes getAnimationAttribute(int index) const;
+    int getAnimationCount() const { return (int)animations.size(); }
+
     //get
 	const string &getName() const		{return name;}
 	SkillClass getClass() const			{return skillClass;}
@@ -169,12 +182,16 @@ public:
 	
 	bool isAttackBoostEnabled() const { return attackBoost.enabled; }
 	const AttackBoost * getAttackBoost() const { return &attackBoost; }
+	//virtual string getDesc(const TotalUpgrade *totalUpgrade) const= 0;
 
 	//other
-	virtual string toString() const= 0;	
+	virtual string toString(bool translatedValue) const= 0;
 	virtual int getTotalSpeed(const TotalUpgrade *) const	{return speed;}
 	static string skillClassToStr(SkillClass skillClass); 
 	static string fieldToStr(Field field);
+	virtual string getBoostDesc(bool translatedValue) const {return attackBoost.getDesc(translatedValue);}
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
@@ -184,7 +201,7 @@ public:
 class StopSkillType: public SkillType{
 public:
     StopSkillType();
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 };
 
 // ===============================
@@ -194,7 +211,7 @@ public:
 class MoveSkillType: public SkillType{
 public:
     MoveSkillType();
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 
 	virtual int getTotalSpeed(const TotalUpgrade *totalUpgrade) const;
 };
@@ -229,32 +246,34 @@ public:
     virtual void load(const XmlNode *sn, const XmlNode *attackBoostsNode, const string &dir, const TechTree *tt,
     		const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
     		string parentLoader);
-	virtual string toString() const;
+	virtual string toString(bool translatedValue) const;
     
 	//get
-	int getAttackStrength() const				{return attackStrength;}
-	int getAttackVar() const					{return attackVar;}
-	int getAttackRange() const					{return attackRange;}
-	const AttackType *getAttackType() const		{return attackType;}
-	bool getAttackField(Field field) const		{return attackFields[field];}
-	float getAttackStartTime() const			{return attackStartTime;}
-	string getSpawnUnit() const					{return spawnUnit;}
-	int getSpawnUnitCount() const				{return spawnUnitcount;}
+	inline int getAttackStrength() const				{return attackStrength;}
+	inline int getAttackVar() const					{return attackVar;}
+	inline int getAttackRange() const					{return attackRange;}
+	inline const AttackType *getAttackType() const		{return attackType;}
+	inline bool getAttackField(Field field) const		{return attackFields[field];}
+	inline float getAttackStartTime() const			{return attackStartTime;}
+	inline string getSpawnUnit() const					{return spawnUnit;}
+	inline int getSpawnUnitCount() const				{return spawnUnitcount;}
 
 	//get proj
-	bool getProjectile() const									{return projectile;}
-	ParticleSystemTypeProjectile * getProjParticleType() const	{return projectileParticleSystemType;}
-	StaticSound *getProjSound() const							{return projSounds.getRandSound();}
+	inline bool getProjectile() const									{return projectile;}
+	inline ParticleSystemTypeProjectile * getProjParticleType() const	{return projectileParticleSystemType;}
+	inline StaticSound *getProjSound() const							{return projSounds.getRandSound();}
 
 	//get splash
-	bool getSplash() const										{return splash;}
-	int getSplashRadius() const									{return splashRadius;}
-	bool getSplashDamageAll() const								{return splashDamageAll;}
-	ParticleSystemTypeSplash * getSplashParticleType() const	{return splashParticleSystemType;}
+	inline bool getSplash() const										{return splash;}
+	inline int getSplashRadius() const									{return splashRadius;}
+	inline bool getSplashDamageAll() const								{return splashDamageAll;}
+	inline ParticleSystemTypeSplash * getSplashParticleType() const	{return splashParticleSystemType;}
 	
 	//misc
 	int getTotalAttackStrength(const TotalUpgrade *totalUpgrade) const;
 	int getTotalAttackRange(const TotalUpgrade *totalUpgrade) const;
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 
@@ -265,7 +284,7 @@ public:
 class BuildSkillType: public SkillType{
 public:
     BuildSkillType();
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 };
 
 // ===============================
@@ -275,7 +294,7 @@ public:
 class HarvestSkillType: public SkillType{
 public:
     HarvestSkillType();
-	virtual string toString() const;
+	virtual string toString(bool translatedValue) const;
 };
 
 // ===============================
@@ -285,7 +304,7 @@ public:
 class RepairSkillType: public SkillType{
 public:
     RepairSkillType();
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 };
 
 // ===============================
@@ -302,9 +321,11 @@ public:
     			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
     			string parentLoader);
 
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 
 	virtual int getTotalSpeed(const TotalUpgrade *totalUpgrade) const;
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
@@ -321,9 +342,11 @@ public:
     			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
     			string parentLoader);
 
-	virtual string toString() const;
+	virtual string toString(bool translatedValue) const;
 
 	virtual int getTotalSpeed(const TotalUpgrade *totalUpgrade) const;
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 
@@ -342,7 +365,9 @@ public:
     virtual void load(const XmlNode *sn, const XmlNode *attackBoostsNode, const string &dir, const TechTree *tt,
     			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
     			string parentLoader);
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
+
+    virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
@@ -361,15 +386,17 @@ public:
     			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
     			string parentLoader);
 
-    virtual string toString() const;
+    virtual string toString(bool translatedValue) const;
 	virtual int getTotalSpeed(const TotalUpgrade *totalUpgrade) const;
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
 // 	class DieSkillType  
 // ===============================
 
-class DieSkillType: public SkillType{
+class DieSkillType: public SkillType {
 private:
 	bool fade;
 
@@ -380,14 +407,40 @@ public:
 	virtual void load(const XmlNode *sn, const XmlNode *attackBoostsNode, const string &dir, const TechTree *tt,
 			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
 			string parentLoader);
-	virtual string toString() const;
+	virtual string toString(bool translatedValue) const;
+
+	virtual void saveGame(XmlNode *rootNode);
+};
+
+// ===============================
+// 	class FogOfWarSkillType
+// ===============================
+
+class FogOfWarSkillType: public SkillType {
+private:
+	bool fowEnable;
+	bool applyToTeam;
+	float durationTime;
+
+public:
+	FogOfWarSkillType();
+    bool getFowEnable() const	{return fowEnable;}
+    bool getApplyToTeam() const	{return applyToTeam;}
+    float getDurationTime() const	{return durationTime;}
+
+	virtual void load(const XmlNode *sn, const XmlNode *attackBoostsNode, const string &dir, const TechTree *tt,
+			const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
+			string parentLoader);
+	virtual string toString(bool translatedValue) const;
+
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
 // 	class SkillFactory  
 // ===============================
 
-class SkillTypeFactory: public MultiFactory<SkillType>{
+class SkillTypeFactory: public MultiFactory<SkillType> {
 private:
 	SkillTypeFactory();
 public:

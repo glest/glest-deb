@@ -12,20 +12,28 @@
 #ifndef _GLEST_GAME_SCRIPT_MANAGER_H_
 #define _GLEST_GAME_SCRIPT_MANAGER_H_
 
-#include <string>
-#include <queue>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <string>
+#include <list>
 #include "lua_script.h"
 #include "components.h"
 #include "game_constants.h"
 #include <map>
+#include "xml_parser.h"
+#include "randomgen.h"
 #include "leak_dumper.h"
 
 using std::string;
-using std::queue;
+using std::list;
 using Shared::Graphics::Vec2i;
 using Shared::Lua::LuaScript;
 using Shared::Lua::LuaHandle;
+using Shared::Xml::XmlNode;
+using Shared::Util::RandomGen;
 
 namespace Glest{ namespace Game{
 
@@ -37,15 +45,25 @@ class GameCamera;
 //	class ScriptManagerMessage
 // =====================================================
 
-class ScriptManagerMessage{
+class ScriptManagerMessage {
 private:
 	string text;
 	string header;
+	int factionIndex;
+	int teamIndex;
+	bool messageNotTranslated;
 
 public:
-	ScriptManagerMessage(string text, string header)	{this->text= text, this->header= header;}
+	ScriptManagerMessage();
+	ScriptManagerMessage(string text, string header, int factionIndex=-1,int teamIndex=-1,bool messageNotTranslated=false);
 	const string &getText() const	{return text;}
 	const string &getHeader() const	{return header;}
+	int getFactionIndex() const	{return factionIndex;}
+	int getTeamIndex() const	{return teamIndex;}
+	bool getMessageNotTranslated() const { return messageNotTranslated; }
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 
 class PlayerModifiers{
@@ -65,7 +83,11 @@ public:
 	bool getAiEnabled() const		{return aiEnabled;}
 	bool getConsumeEnabled() const	{return consumeEnabled;}
 
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
+
 private:
+
 	bool winner;
 	bool aiEnabled;
 	bool consumeEnabled;
@@ -75,36 +97,62 @@ private:
 //	class ScriptManager
 // =====================================================
 
+enum UnitTriggerEventType {
+	utet_None = 0,
+	utet_HPChanged = 1,
+	utet_EPChanged,
+	utet_LevelChanged,
+	utet_FieldChanged,
+	utet_SkillChanged
+};
+
 enum CellTriggerEventType {
 	ctet_Unit,
 	ctet_UnitPos,
 	ctet_Faction,
-	ctet_FactionPos
+	ctet_FactionPos,
+	ctet_UnitAreaPos,
+	ctet_FactionAreaPos,
+	ctet_AreaPos
 };
 
 class CellTriggerEvent {
 public:
+	CellTriggerEvent();
 	CellTriggerEventType type;
 	int sourceId;
 	int destId;
 	Vec2i destPos;
+	Vec2i destPosEnd;
 
 	int triggerCount;
+
+	std::map<int,string> eventStateInfo;
+
+	std::map<int,std::map<Vec2i, bool> > eventLookupCache;
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 
 class TimerTriggerEvent {
 public:
+	TimerTriggerEvent();
 	bool running;
 	//time_t startTime;
 	//time_t endTime;
 	int startFrame;
 	int endFrame;
 
+	int triggerSecondsElapsed;
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 
 class ScriptManager {
 private:
-	typedef queue<ScriptManagerMessage> MessageQueue;
+	typedef list<ScriptManagerMessage> MessageQueue;
 
 private:
 
@@ -149,11 +197,28 @@ private:
 
 	int currentTimerTriggeredEventId;
 	int currentCellTriggeredEventId;
+	int currentCellTriggeredEventUnitId;
+
+	int currentCellTriggeredEventAreaEntryUnitId;
+	int currentCellTriggeredEventAreaExitUnitId;
+
 	int currentEventId;
 	std::map<int,CellTriggerEvent> CellTriggerEventList;
 	std::map<int,TimerTriggerEvent> TimerTriggerEventList;
 	bool inCellTriggerEvent;
 	std::vector<int> unRegisterCellTriggerEventList;
+
+	bool registeredDayNightEvent;
+	int lastDayNightTriggerStatus;
+
+	std::map<int,UnitTriggerEventType> UnitTriggerEventList;
+	int lastUnitTriggerEventUnitId;
+	UnitTriggerEventType lastUnitTriggerEventType;
+
+	RandomGen random;
+	const XmlNode *rootNode;
+
+	std::map<string, string> luaSavedGameData;
 
 private:
 	static ScriptManager* thisScriptManager;
@@ -166,31 +231,45 @@ public:
 
 	ScriptManager();
 	~ScriptManager();
-	void init(World* world, GameCamera *gameCamera);
+	void init(World* world, GameCamera *gameCamera,const XmlNode *rootNode);
 
 	//message box functions
+	void addMessageToQueue(ScriptManagerMessage msg);
 	bool getMessageBoxEnabled() const									{return !messageQueue.empty();}
 	GraphicMessageBox* getMessageBox()									{return &messageBox;}
 	string getDisplayText() const										{return displayText;}
-	bool getGameOver() const											{return gameOver;}
-	bool getGameWon() const												{return gameWon;}
 	const PlayerModifiers *getPlayerModifiers(int factionIndex) const	{return &playerModifiers[factionIndex];}
 
 	//events
-	void onMessageBoxOk();
+	void onMessageBoxOk(bool popFront=true);
 	void onResourceHarvested();
 	void onUnitCreated(const Unit* unit);
 	void onUnitDied(const Unit* unit);
 	void onUnitAttacked(const Unit* unit);
 	void onUnitAttacking(const Unit* unit);
 	void onGameOver(bool won);
+
 	void onCellTriggerEvent(Unit *movingUnit);
 	void onTimerTriggerEvent();
+	void onDayNightTriggerEvent();
+	void onUnitTriggerEvent(const Unit *unit, UnitTriggerEventType event);
+
+	bool getGameWon() const;
+	bool getIsGameOver() const;
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 
 private:
 	string wrapString(const string &str, int wrapCount);
 
 	//wrappers, commands
+	void networkShowMessageForFaction(const string &text, const string &header,int factionIndex);
+	void networkShowMessageForTeam(const string &text, const string &header,int teamIndex);
+
+	void networkSetCameraPositionForFaction(int factionIndex, const Vec2i &pos);
+	void networkSetCameraPositionForTeam(int teamIndex, const Vec2i &pos);
+
 	void showMessage(const string &text, const string &header);
 	void clearDisplayText();
 	void setDisplayText(const string &text);
@@ -200,6 +279,7 @@ private:
 	void DisplayFormattedLangText(const char *fmt,...);
 	void setCameraPosition(const Vec2i &pos);
 	void createUnit(const string &unitName, int factionIndex, Vec2i pos);
+	void createUnitNoSpacing(const string &unitName, int factionIndex, Vec2i pos);
 
 	void destroyUnit(int unitId);
 	void giveKills(int unitId, int amount);
@@ -212,11 +292,17 @@ private:
 	void stopAllSound();
 	void togglePauseGame(int pauseStatus);
 
+	void playStaticVideo(const string &playVideo);
+	void playStreamingVideo(const string &playVideo);
+	void stopStreamingVideo(const string &playVideo);
+	void stopAllVideo();
+
 	void giveResource(const string &resourceName, int factionIndex, int amount);
 	void givePositionCommand(int unitId, const string &producedName, const Vec2i &pos);
 	void giveProductionCommand(int unitId, const string &producedName);
 	void giveAttackCommand(int unitId, int unitToAttackId);
 	void giveUpgradeCommand(int unitId, const string &upgradeName);
+	void giveStopCommand(int unitId);
 
 	void disableAi(int factionIndex);
 	void enableAi(int factionIndex);
@@ -227,14 +313,31 @@ private:
 	int registerCellTriggerEventForUnitToLocation(int sourceUnitId, const Vec2i &pos);
 	int registerCellTriggerEventForFactionToUnit(int sourceFactionId, int destUnitId);
 	int registerCellTriggerEventForFactionToLocation(int sourceFactionId, const Vec2i &pos);
+
+	int registerCellAreaTriggerEventForUnitToLocation(int sourceUnitId, const Vec4i &pos);
+	int registerCellAreaTriggerEventForFactionToLocation(int sourceFactionId, const Vec4i &pos);
+
+	int registerCellAreaTriggerEvent(const Vec4i &pos);
+
 	int getCellTriggerEventCount(int eventId);
 	void unregisterCellTriggerEvent(int eventId);
 	int startTimerEvent();
+	int startEfficientTimerEvent(int triggerSecondsElapsed);
 	int resetTimerEvent(int eventId);
 	int stopTimerEvent(int eventId);
 	int getTimerEventSecondsElapsed(int eventId);
+
 	int getCellTriggeredEventId();
 	int getTimerTriggeredEventId();
+
+	int getCellTriggeredEventAreaEntryUnitId();
+	int getCellTriggeredEventAreaExitUnitId();
+
+	int getCellTriggeredEventUnitId();
+
+	void setRandomGenInit(int seed);
+	int getRandomGen(int minVal, int maxVal);
+	int getWorldFrameCount();
 
 	bool getAiEnabled(int factionIndex);
 	bool getConsumeEnabled(int factionIndex);
@@ -247,12 +350,21 @@ private:
 	Vec2i getPerformanceTimerResults();
 
 	//wrappers, queries
+	int getIsUnitAlive(int unitId);
 	Vec2i getStartLocation(int factionIndex);
 	Vec2i getUnitPosition(int unitId);
 	int getUnitFaction(int unitId);
+	const string getUnitName(int unitId);
 	int getResourceAmount(const string &resourceName, int factionIndex);
 	const string &getLastCreatedUnitName();
 	int getLastCreatedUnitId();
+
+	void setUnitPosition(int unitId, Vec2i pos);
+
+	void addCellMarker(Vec2i pos, int factionIndex, const string &note, const string &textureFile);
+	void removeCellMarker(Vec2i pos, int factionIndex);
+
+	void showMarker(Vec2i pos, int factionIndex, const string &note, const string &textureFile, int flashCount);
 
 	const string &getLastDeadUnitName();
 	int getLastDeadUnitId();
@@ -269,11 +381,58 @@ private:
 	int getUnitCount(int factionIndex);
 	int getUnitCountOfType(int factionIndex, const string &typeName);
 
-	bool getGameWon();
+	const string getSystemMacroValue(const string &key);
+	const string getPlayerName(int factionIndex);
+
+	vector<int> getUnitsForFaction(int factionIndex,const string& commandTypeName, int field);
+	int getUnitCurrentField(int unitId);
 
 	void loadScenario(const string &name, bool keepFactions);
 
+	int isFreeCellsOrHasUnit(int field, int unitId,Vec2i pos);
+	int isFreeCells(int unitSize, int field,Vec2i pos);
+
+	int getHumanFactionId();
+	void highlightUnit(int unitId, float radius, float thickness, Vec4f color);
+	void unhighlightUnit(int unitId);
+
+	bool selectUnit(int unitId);
+	void unselectUnit(int unitId);
+	void addUnitToGroupSelection(int unitId,int groupIndex);
+	void recallGroupSelection(int groupIndex);
+	void removeUnitFromGroupSelection(int unitId,int group);
+	void setAttackWarningsEnabled(bool enabled);
+	bool getAttackWarningsEnabled();
+
+	int getIsDayTime();
+	int getIsNightTime();
+	float getTimeOfDay();
+	void registerDayNightEvent();
+	void unregisterDayNightEvent();
+
+	void registerUnitTriggerEvent(int unitId);
+	void unregisterUnitTriggerEvent(int unitId);
+	int getLastUnitTriggerEventUnitId();
+	UnitTriggerEventType getLastUnitTriggerEventType();
+	int getUnitProperty(int unitId, UnitTriggerEventType type);
+	const string getUnitPropertyName(int unitId, UnitTriggerEventType type);
+
+	void disableSpeedChange();
+	void enableSpeedChange();
+	bool getSpeedChangeEnabled();
+	void storeSaveGameData(string name, string value);
+	string loadSaveGameData(string name);
+
+	ControlType getFactionPlayerType(int factionIndex);
+	// -----------------------------------------------------------------------
+
 	//callbacks, commands
+	static int networkShowMessageForFaction(LuaHandle* luaHandle);
+	static int networkShowMessageForTeam(LuaHandle* luaHandle);
+
+	static int networkSetCameraPositionForFaction(LuaHandle* luaHandle);
+	static int networkSetCameraPositionForTeam(LuaHandle* luaHandle);
+
 	static int showMessage(LuaHandle* luaHandle);
 	static int setDisplayText(LuaHandle* luaHandle);
 	static int addConsoleText(LuaHandle* luaHandle);
@@ -283,6 +442,7 @@ private:
 	static int clearDisplayText(LuaHandle* luaHandle);
 	static int setCameraPosition(LuaHandle* luaHandle);
 	static int createUnit(LuaHandle* luaHandle);
+	static int createUnitNoSpacing(LuaHandle* luaHandle);
 
 	static int destroyUnit(LuaHandle* luaHandle);
 	static int giveKills(LuaHandle* luaHandle);
@@ -294,6 +454,11 @@ private:
 	static int stopStreamingSound(LuaHandle* luaHandle);
 	static int stopAllSound(LuaHandle* luaHandle);
 	static int togglePauseGame(LuaHandle* luaHandle);
+
+	static int playStaticVideo(LuaHandle* luaHandle);
+	static int playStreamingVideo(LuaHandle* luaHandle);
+	static int stopStreamingVideo(LuaHandle* luaHandle);
+	static int stopAllVideo(LuaHandle* luaHandle);
 
 	static int giveResource(LuaHandle* luaHandle);
 	static int givePositionCommand(LuaHandle* luaHandle);
@@ -314,15 +479,31 @@ private:
 	static int registerCellTriggerEventForUnitToLocation(LuaHandle* luaHandle);
 	static int registerCellTriggerEventForFactionToUnit(LuaHandle* luaHandle);
 	static int registerCellTriggerEventForFactionToLocation(LuaHandle* luaHandle);
+
+	static int registerCellAreaTriggerEventForUnitToLocation(LuaHandle* luaHandle);
+	static int registerCellAreaTriggerEventForFactionToLocation(LuaHandle* luaHandle);
+
+	static int registerCellAreaTriggerEvent(LuaHandle* luaHandle);
+
 	static int getCellTriggerEventCount(LuaHandle* luaHandle);
 	static int unregisterCellTriggerEvent(LuaHandle* luaHandle);
 	static int startTimerEvent(LuaHandle* luaHandle);
+	static int startEfficientTimerEvent(LuaHandle* luaHandle);
 	static int resetTimerEvent(LuaHandle* luaHandle);
 	static int stopTimerEvent(LuaHandle* luaHandle);
 	static int getTimerEventSecondsElapsed(LuaHandle* luaHandle);
 
 	static int getCellTriggeredEventId(LuaHandle* luaHandle);
 	static int getTimerTriggeredEventId(LuaHandle* luaHandle);
+
+	static int getCellTriggeredEventAreaEntryUnitId(LuaHandle* luaHandle);
+	static int getCellTriggeredEventAreaExitUnitId(LuaHandle* luaHandle);
+
+	static int getCellTriggeredEventUnitId(LuaHandle* luaHandle);
+
+	static int setRandomGenInit(LuaHandle* luaHandle);
+	static int getRandomGen(LuaHandle* luaHandle);
+	static int getWorldFrameCount(LuaHandle* luaHandle);
 
 	static int setPlayerAsWinner(LuaHandle* luaHandle);
 	static int endGame(LuaHandle* luaHandle);
@@ -332,12 +513,21 @@ private:
 	static int getPerformanceTimerResults(LuaHandle* luaHandle);
 
 	//callbacks, queries
+	static int getIsUnitAlive(LuaHandle* luaHandle);
 	static int getStartLocation(LuaHandle* luaHandle);
 	static int getUnitPosition(LuaHandle* luaHandle);
 	static int getUnitFaction(LuaHandle* luaHandle);
+	static int getUnitName(LuaHandle* luaHandle);
 	static int getResourceAmount(LuaHandle* luaHandle);
 	static int getLastCreatedUnitName(LuaHandle* luaHandle);
 	static int getLastCreatedUnitId(LuaHandle* luaHandle);
+
+	static int setUnitPosition(LuaHandle* luaHandle);
+
+	static int addCellMarker(LuaHandle* luaHandle);
+	static int removeCellMarker(LuaHandle* luaHandle);
+
+	static int showMarker(LuaHandle* luaHandle);
 
 	static int getLastDeadUnitName(LuaHandle* luaHandle);
 	static int getLastDeadUnitId(LuaHandle* luaHandle);
@@ -355,8 +545,55 @@ private:
 	static int getUnitCountOfType(LuaHandle* luaHandle);
 
 	static int getGameWon(LuaHandle* luaHandle);
+	static int getIsGameOver(LuaHandle* luaHandle);
+
+	static int getSystemMacroValue(LuaHandle* luaHandle);
+	static int getPlayerName(LuaHandle* luaHandle);
+	static int scenarioDir(LuaHandle* luaHandle);
 
 	static int loadScenario(LuaHandle* luaHandle);
+
+	static int getUnitsForFaction(LuaHandle* luaHandle);
+	static int getUnitCurrentField(LuaHandle* luaHandle);
+
+	static int isFreeCellsOrHasUnit(LuaHandle* luaHandle);
+	static int isFreeCells(LuaHandle* luaHandle);
+
+	static int getHumanFactionId(LuaHandle* luaHandle);
+
+	static int highlightUnit(LuaHandle* luaHandle);
+	static int unhighlightUnit(LuaHandle* luaHandle);
+
+	static int giveStopCommand(LuaHandle* luaHandle);
+	static int selectUnit(LuaHandle* luaHandle);
+	static int unselectUnit(LuaHandle* luaHandle);
+	static int addUnitToGroupSelection(LuaHandle* luaHandle);
+	static int recallGroupSelection(LuaHandle* luaHandle);
+	static int removeUnitFromGroupSelection(LuaHandle* luaHandle);
+	static int setAttackWarningsEnabled(LuaHandle* luaHandle);
+	static int getAttackWarningsEnabled(LuaHandle* luaHandle);
+
+	static int getIsDayTime(LuaHandle* luaHandle);
+	static int getIsNightTime(LuaHandle* luaHandle);
+	static int getTimeOfDay(LuaHandle* luaHandle);
+	static int registerDayNightEvent(LuaHandle* luaHandle);
+	static int unregisterDayNightEvent(LuaHandle* luaHandle);
+
+	static int registerUnitTriggerEvent(LuaHandle* luaHandle);
+	static int unregisterUnitTriggerEvent(LuaHandle* luaHandle);
+	static int getLastUnitTriggerEventUnitId(LuaHandle* luaHandle);
+	static int getLastUnitTriggerEventType(LuaHandle* luaHandle);
+	static int getUnitProperty(LuaHandle* luaHandle);
+	static int getUnitPropertyName(LuaHandle* luaHandle);
+
+	static int disableSpeedChange(LuaHandle* luaHandle);
+	static int enableSpeedChange(LuaHandle* luaHandle);
+	static int getSpeedChangeEnabled(LuaHandle* luaHandle);
+
+	static int storeSaveGameData(LuaHandle* luaHandle);
+	static int loadSaveGameData(LuaHandle* luaHandle);
+
+	static int getFactionPlayerType(LuaHandle* luaHandle);
 };
 
 }}//end namespace

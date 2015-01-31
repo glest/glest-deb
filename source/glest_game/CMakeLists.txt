@@ -95,6 +95,27 @@ IF(BUILD_MEGAGLEST)
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${GLEW_LIBRARY})
 	ENDIF()
 
+        #SET(LIBVLC_MIN_VERSION "2.0.1")
+	FIND_PACKAGE(LIBVLC)
+
+        IF(LIBVLC_FOUND AND NOT LIBVLC_VERSION STRLESS "${LIBVLC_MIN_VERSION}")
+                MESSAGE(STATUS "**NOTE: LIBVLC found so intro videos are supported.")
+	        INCLUDE_DIRECTORIES(${LIBVLC_INCLUDE_DIR})
+	        IF(UNIX)
+		        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${LIBVLCCORE_LIBRARY} ${LIBVLC_LIBRARY})
+                        ADD_DEFINITIONS(-DHAS_LIBVLC)
+	        ENDIF()
+		IF(LIBVLC_VERSION_PRE_V2)
+			ADD_DEFINITIONS(-DLIBVLC_VERSION_PRE_2)
+		ENDIF()
+		IF(LIBVLC_VERSION_PRE_1_1_13)
+			ADD_DEFINITIONS(-DLIBVLC_VERSION_PRE_1_1_13)
+		ENDIF()
+		
+        ELSE()
+                MESSAGE(STATUS "**WARNING: LIBVLC NOT found so intro videos are NOT supported.")
+        ENDIF()
+
 	#########################################################################################
 	# megaglest game
 
@@ -115,15 +136,17 @@ IF(BUILD_MEGAGLEST)
 
 	SET(GLEST_LIB_INCLUDE_ROOT "../shared_lib/include/")
 	SET(GLEST_LIB_INCLUDE_DIRS
-	    ${GLEST_LIB_INCLUDE_ROOT}platform/common
+                ${GLEST_LIB_INCLUDE_ROOT}compression
+	        ${GLEST_LIB_INCLUDE_ROOT}platform/common
 		${GLEST_LIB_INCLUDE_ROOT}platform/posix
 		${GLEST_LIB_INCLUDE_ROOT}util
 		${GLEST_LIB_INCLUDE_ROOT}graphics
 		${GLEST_LIB_INCLUDE_ROOT}graphics/gl
-		${GLEST_LIB_INCLUDE_ROOT}graphics/md5
+		${GLEST_LIB_INCLUDE_ROOT}graphics/iqm
 		${GLEST_LIB_INCLUDE_ROOT}sound
 		${GLEST_LIB_INCLUDE_ROOT}sound/openal
 		${GLEST_LIB_INCLUDE_ROOT}xml
+                ${GLEST_LIB_INCLUDE_ROOT}xml/rapidxml
 		${GLEST_LIB_INCLUDE_ROOT}glew
 		${GLEST_LIB_INCLUDE_ROOT}lua
 		${GLEST_LIB_INCLUDE_ROOT}map)
@@ -143,7 +166,6 @@ IF(BUILD_MEGAGLEST)
 		INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/win32_deps/include)
 		INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/shared_lib/include/platform/posix)
 		INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/shared_lib/include/platform/win32)
-		INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/shared_lib/include/sound/ds8)
 		INCLUDE_DIRECTORIES( ${GLEST_LIB_INCLUDE_ROOT}platform/sdl )
 	ELSE()
 		INCLUDE_DIRECTORIES( ${GLEST_LIB_INCLUDE_ROOT}platform/sdl )
@@ -191,11 +213,16 @@ IF(BUILD_MEGAGLEST)
 
 	ENDIF()
 
-	IF(UNIX AND NOT APPLE)
-		SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/mk/linux)
-	ELSE()
-		SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/data/glest_game)
-	ENDIF()
+        OPTION(WANT_DEV_OUTPATH "use developer friendly output paths" OFF)
+        IF(WANT_DEV_OUTPATH)
+	        IF(UNIX AND NOT APPLE)
+		        SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/mk/linux/)
+	        ELSE()
+		        SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/data/glest_game/)
+	        ENDIF()
+        ENDIF()
+
+        MESSAGE(STATUS "***Note: The final output path for Megaglest Game will be [${EXECUTABLE_OUTPUT_PATH}]")
 
 	SET_SOURCE_FILES_PROPERTIES(${MG_INCLUDE_FILES} PROPERTIES HEADER_FILE_ONLY 1)
 
@@ -205,6 +232,17 @@ IF(BUILD_MEGAGLEST)
 	IF(WANT_STREFLOP)
 		SET(MG_STREFLOP "streflop")
 	ENDIF()
+
+	find_package( GoogleBreakpad )
+	if(BREAKPAD_EXCEPTION_HANDLER_FOUND AND BREAKPAD_EXCEPTION_HANDLER_LIBRARIES)
+	        add_definitions(-DHAVE_GOOGLE_BREAKPAD)
+
+        	include_directories( ${BREAKPAD_EXCEPTION_HANDLER_INCLUDE_DIR} )
+                SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${BREAKPAD_EXCEPTION_HANDLER_LIBRARIES})
+
+	else()
+		message("** WARNING: Could not find GoogleBreakpad. Disabling GoogleBreakpad support.")
+	endif()
 
 	IF(WIN32)
 		TARGET_LINK_LIBRARIES(${TARGET_NAME} stdc++ gcc odbc32 wsock32 winspool winmm shell32 comctl32 ctl3d32  advapi32 wsock32 opengl32 glu32 ole32 oleaut32 uuid mingw32 ddraw dsound dxguid ws2_32 iphlpapi wsock32 libogg libvorbis libvorbisfile zlib jpeg libpng xerces-c2_8_0 OpenAL32 libcurl winmm gdi32 opengl32 glu32 SDL SDLmain lua5.1 ${MG_STREFLOP} libmegaglest stdc++ moldname mingwex msvcrt user32 kernel32)
@@ -217,8 +255,13 @@ IF(BUILD_MEGAGLEST)
 	ENDIF()
 	TARGET_LINK_LIBRARIES(${TARGET_NAME} ${EXTERNAL_LIBS})
 
+        SET(HELP2MAN_OUT_PATH ${EXECUTABLE_OUTPUT_PATH})
+        IF("${EXECUTABLE_OUTPUT_PATH}" STREQUAL "")
+                SET(HELP2MAN_OUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/")
+        ENDIF()
+
 	IF(EXISTS ${HELP2MAN})
-		MESSAGE("***-- Found help2man: ${HELP2MAN} about to build manpage in [${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE}]")
+		MESSAGE("***-- Found help2man: ${HELP2MAN} about to build manpage in [${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE}]")
 
                 SET(MG_MANPAGE_DESCRIPTION "3D multi-player real time strategy game")
 
@@ -226,79 +269,67 @@ IF(BUILD_MEGAGLEST)
 			MESSAGE("***-- Found xvfb-run: ${XVFB_EXEC} about to build manpage with it.")
 
 		  	add_custom_target(${TARGET_NAME_MANPAGE} ALL
-		    		COMMAND ${XVFB_EXEC} --auto-servernum --server-num=770 ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE} ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}
+		    		COMMAND ${XVFB_EXEC} --auto-servernum --server-num=770 ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE} ${HELP2MAN_OUT_PATH}${TARGET_NAME}
 		    	DEPENDS ${TARGET_NAME})
 		ELSE()
 		  	add_custom_target(${TARGET_NAME_MANPAGE} ALL
-		    		COMMAND ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE} ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}
+		    		COMMAND ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE} ${HELP2MAN_OUT_PATH}${TARGET_NAME}
 		    	DEPENDS ${TARGET_NAME})
 		ENDIF()
 	ENDIF()
-ENDIF()
 
-# Requires an install prefix for the items below to work
-IF(NOT CMAKE_INSTALL_PREFIX STREQUAL "")
-	#IF(NOT WIN32)
-		#set_target_properties(megaglest.bin PROPERTIES OUTPUT_NAME "megaglest")
-		# rename the binary for installation
-	#	MESSAGE(STATUS "Copying [${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}] to [${CMAKE_INSTALL_PREFIX}/${MEGAGLEST_BIN_INSTALL_PATH}/megaglest]")
-	#	install(CODE 
-	#		"EXECUTE_PROCESS(COMMAND \"cmake\" \"-E\" \"copy\" \"${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}\" \"${CMAKE_INSTALL_PREFIX}/${MEGAGLEST_BIN_INSTALL_PATH}/megaglest\")")
+        # Requires an install prefix for the items below to work
+        IF(NOT CMAKE_INSTALL_PREFIX STREQUAL "")
+	        MESSAGE(STATUS "**Source package [${PROJECT_SOURCE_DIR}]")	
 
-	#	install(CODE 
-	#		"EXECUTE_PROCESS(COMMAND \"chmod\" \"+x\" \"${CMAKE_INSTALL_PREFIX}/${MEGAGLEST_BIN_INSTALL_PATH}/megaglest\")")
+	        # Installation of the program
+	        INSTALL(TARGETS 
+		        ${TARGET_NAME} 
+		        DESTINATION ${MEGAGLEST_BIN_INSTALL_PATH})
 
-	#ELSE()
+	        IF(EXISTS ${HELP2MAN})
+         		MESSAGE(STATUS "**NOTE: Will Install manpage [${TARGET_NAME_MANPAGE}] to [${MEGAGLEST_MANPAGE_INSTALL_PATH}]")	
 
-	MESSAGE(STATUS "**Source package [${PROJECT_SOURCE_DIR}]")	
+		        # Installation of the program manpage file
+		        INSTALL(FILES 
+		          "${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE}"
+		          DESTINATION ${MEGAGLEST_MANPAGE_INSTALL_PATH})
+	        ENDIF()
 
-	# Installation of the program
-	INSTALL(TARGETS 
-		${TARGET_NAME} 
-		DESTINATION ${MEGAGLEST_BIN_INSTALL_PATH})
+	        # Check if we are running from an GIT folder structure or tarballs
+	        IF(EXISTS "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop")
+		        MESSAGE(STATUS "**Source package detected git folder structure.")
 
-	IF(EXISTS ${HELP2MAN})
- 		MESSAGE(STATUS "**NOTE: Will Install manpage [${TARGET_NAME_MANPAGE}] to [${MEGAGLEST_MANPAGE_INSTALL_PATH}]")	
+		        # Installation of the program desktop file
+		        INSTALL(FILES 
+		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop"
+		          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
 
-		# Installation of the program manpage file
-		INSTALL(FILES 
-		  "${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE}"
-		  DESTINATION ${MEGAGLEST_MANPAGE_INSTALL_PATH})
-	ENDIF()
+		        # Installation of the program desktop icon file
+		        INSTALL(FILES 
+		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.png"
+		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.xpm"
+		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.bmp"
+		          "${PROJECT_SOURCE_DIR}/data/glest_game/editor.ico"
+		          "${PROJECT_SOURCE_DIR}/mk/linux/glest.ico"
+		          "${PROJECT_SOURCE_DIR}/data/glest_game/g3dviewer.ico"
+		          DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
+	        ELSE()
 
-	# Check if we are running from an SVN folder structure or tarballs
-	IF(EXISTS "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop")
-		MESSAGE(STATUS "**Source package detected svn folder structure.")
+		        # Installation of the program desktop file
+		        INSTALL(FILES 
+		          "${PROJECT_SOURCE_DIR}/megaglest.desktop"
+		          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
 
-		# Installation of the program desktop file
-		INSTALL(FILES 
-		  "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop"
-		  DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
-
-		# Installation of the program desktop icon file
-		INSTALL(FILES 
-		  "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.png"
-		  "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.xpm"
-		  "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.bmp"
-		  "${PROJECT_SOURCE_DIR}/data/glest_game/editor.ico"
-		  "${PROJECT_SOURCE_DIR}/mk/linux/glest.ico"
-		  "${PROJECT_SOURCE_DIR}/data/glest_game/g3dviewer.ico"
-		  DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
-	ELSE()
-
-		# Installation of the program desktop file
-		INSTALL(FILES 
-		  "${PROJECT_SOURCE_DIR}/megaglest.desktop"
-		  DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
-
-		# Installation of the program desktop icon file
-		INSTALL(FILES 
-		  "${PROJECT_SOURCE_DIR}/megaglest.png"
-		  "${PROJECT_SOURCE_DIR}/megaglest.xpm"
-		  "${PROJECT_SOURCE_DIR}/megaglest.bmp"
-		  "${PROJECT_SOURCE_DIR}/editor.ico"
-		  "${PROJECT_SOURCE_DIR}/glest.ico"
-		  "${PROJECT_SOURCE_DIR}/g3dviewer.ico"
-		  DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
-	ENDIF()
+		        # Installation of the program desktop icon file
+		        INSTALL(FILES 
+		          "${PROJECT_SOURCE_DIR}/megaglest.png"
+		          "${PROJECT_SOURCE_DIR}/megaglest.xpm"
+		          "${PROJECT_SOURCE_DIR}/megaglest.bmp"
+		          "${PROJECT_SOURCE_DIR}/editor.ico"
+		          "${PROJECT_SOURCE_DIR}/glest.ico"
+		          "${PROJECT_SOURCE_DIR}/g3dviewer.ico"
+		          DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
+	        ENDIF()
+        ENDIF()
 ENDIF()

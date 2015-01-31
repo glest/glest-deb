@@ -110,7 +110,9 @@ Gui::Gui(){
 	lastQuadCalcFrame=0;
 	selectionCalculationFrameSkip=10;
 	minQuadSize=20;
-	selectedResourceObject=NULL;
+	selectedResourceObjectPos=Vec2i(-1,-1);
+	highlightedResourceObjectPos=Vec2i(-1,-1);
+	highlightedUnitId=-1;
 	hudTexture=NULL;
 	commander=NULL;
 	world=NULL;
@@ -144,6 +146,31 @@ void Gui::end(){
 const UnitType *Gui::getBuilding() const{
     assert(selectingBuilding);
     return choosenBuildingType;
+}
+const Object *Gui::getSelectedResourceObject()	const{
+	if(selectedResourceObjectPos.x==-1){
+		return NULL;
+	}
+	else {
+		return world->getMap()->getSurfaceCell(selectedResourceObjectPos)->getObject();
+	}
+}
+Object *Gui::getHighlightedResourceObject()	const{
+	if(highlightedResourceObjectPos.x==-1){
+		return NULL;
+	}
+	else {
+		return world->getMap()->getSurfaceCell(highlightedResourceObjectPos)->getObject();
+	}
+}
+
+Unit* Gui::getHighlightedUnit()	const{
+	if(highlightedUnitId==-1){
+		return NULL;
+	}
+	else {
+		return world->findUnitById(highlightedUnitId);
+	}
 }
 
 // ==================== is ====================
@@ -318,16 +345,19 @@ void Gui::groupKey(int groupIndex) {
 	else{
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] groupIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,groupIndex);
 
-		Config &config = Config::getInstance();
-		int recallGroupCenterCameraTimeout = config.getInt("RecallGroupCenterCameraTimeoutMilliseconds","1500");
+		int recallGroupCenterCameraTimeout = Config::getInstance().getInt("RecallGroupCenterCameraTimeoutMilliseconds","1500");
+
 		if(lastGroupRecall == groupIndex &&
 			lastGroupRecallTime.getMillis() > 0 &&
 			lastGroupRecallTime.getMillis() <= recallGroupCenterCameraTimeout) {
+
+			selection.recallGroup(groupIndex);
 			centerCameraOnSelection();
 		}
 		else {
 			selection.recallGroup(groupIndex);
 		}
+
 		lastGroupRecallTime.start();
 		lastGroupRecall = groupIndex;
 	}
@@ -396,7 +426,7 @@ void Gui::onSelectionChanged(){
 void Gui::giveOneClickOrders(){
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	CommandResult result;
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	bool queueKeyDown = isKeyDown(queueCommandKey);
 	if(selection.isUniform()){
 		result= commander->tryGiveCommand(&selection, activeCommandType, Vec2i(0), (Unit*)NULL,  queueKeyDown);
@@ -410,15 +440,18 @@ void Gui::giveOneClickOrders(){
 }
 
 void Gui::giveDefaultOrders(int x, int y) {
-
 	//compute target
+	//printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	const Unit *targetUnit= NULL;
 	Vec2i targetPos;
 	if(computeTarget(Vec2i(x, y), targetPos, targetUnit) == false) {
 		console->addStdMessage("InvalidPosition");
 		return;
 	}
+	//printf("In [%s::%s Line: %d] targetUnit = %p\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,targetUnit);
 	giveDefaultOrders(targetPos.x,targetPos.y,targetUnit,true);
+	//printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Gui::givePreparedDefaultOrders(int x, int y){
@@ -430,12 +463,16 @@ void Gui::giveDefaultOrders(int x, int y,const Unit *targetUnit, bool paintMouse
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	bool queueKeyDown = isKeyDown(queueCommandKey);
 	Vec2i targetPos=Vec2i(x, y);
+
 	//give order
-	CommandResult result= commander->tryGiveCommand(&selection, targetPos, targetUnit, queueKeyDown);
+	//printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	std::pair<CommandResult,string> result= commander->tryGiveCommand(&selection, targetPos, targetUnit, queueKeyDown);
+
+	//printf("In [%s::%s Line: %d] selected units = %d result.first = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,selection.getCount(),result.first);
 
 	//graphical result
 	addOrdersResultToConsole(activeCommandClass, result);
-	if(result == crSuccess || result == crSomeFailed) {
+	if(result.first == crSuccess || result.first == crSomeFailed) {
 		if(paintMouse3d)
 			mouse3d.enable();
 
@@ -453,7 +490,7 @@ void Gui::giveDefaultOrders(int x, int y,const Unit *targetUnit, bool paintMouse
 
 void Gui::giveTwoClickOrders(int x, int y , bool prepared) {
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	CommandResult result;
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 
 	//compute target
 	const Unit *targetUnit= NULL;
@@ -489,7 +526,7 @@ void Gui::giveTwoClickOrders(int x, int y , bool prepared) {
 
 	//graphical result
 	addOrdersResultToConsole(activeCommandClass, result);
-	if(result == crSuccess || result == crSomeFailed) {
+	if(result.first == crSuccess || result.first == crSomeFailed) {
 		if(prepared == false) {
 			mouse3d.enable();
 		}
@@ -566,6 +603,7 @@ void Gui::clickCommonCommand(CommandClass commandClass){
 			break;
 		}
 	}
+	computeDisplay();
 }
 
 void Gui::mouseDownDisplayUnitSkills(int posDisplay) {
@@ -577,6 +615,29 @@ void Gui::mouseDownDisplayUnitSkills(int posDisplay) {
 				//uniform selection
 				if(selection.isUniform()) {
 				    const CommandType *ct = display.getCommandType(posDisplay);
+					if(activeCommandClass == ccAttack)
+					{// try to switch to next attack type
+						int maxI=unit->getType()->getCommandTypeCount();
+						int i=activeCommandType->getId();
+						int k=i+1;
+						while(k!=i)
+						{
+							if(k>=maxI)
+							{
+								k=0;
+							}
+							const CommandType *ctype=display.getCommandType(k);
+							if(ctype != NULL && ctype->getClass() == ccAttack)
+							{
+								if(ctype != NULL && unit->getFaction()->reqsOk(ctype)) {
+									posDisplay=k;
+									break;
+								}
+							}
+							k++;
+						}
+					}
+
 					if(ct != NULL && unit->getFaction()->reqsOk(ct)) {
 						activeCommandType= display.getCommandType(posDisplay);
 						activeCommandClass= activeCommandType->getClass();
@@ -654,7 +715,7 @@ string Gui::computeDefaultInfoString() {
 	if(selection.isUniform()) {
 		if(selection.isObserver() || selection.isCommandable()) {
 			// default is the description extension
-			result = selection.getFrontUnit()->getDescExtension();
+			result = selection.getFrontUnit()->getDescExtension(game->showTranslatedTechTree());
 		}
 	}
 	return result;
@@ -672,10 +733,10 @@ void Gui::computeInfoString(int posDisplay){
 	if(posDisplay!=invalidPos && selection.isCommandable()){
 		if(!selectingBuilding){
 			if(posDisplay==cancelPos){
-				display.setInfoText(lang.get("Cancel"));
+				display.setInfoText(lang.getString("Cancel"));
 			}
 			else if(posDisplay==meetingPointPos){
-				display.setInfoText(lang.get("MeetingPoint"));
+				display.setInfoText(lang.getString("MeetingPoint"));
 			}
 			else{
 				//uniform selection
@@ -685,22 +746,22 @@ void Gui::computeInfoString(int posDisplay){
 
 					if(ct!=NULL){
 						if(unit->getFaction()->reqsOk(ct)){
-							display.setInfoText(ct->getDesc(unit->getTotalUpgrade()));
+							display.setInfoText(ct->getDesc(unit->getTotalUpgrade(),game->showTranslatedTechTree()));
 						}
 						else{
 							if(ct->getClass()==ccUpgrade){
 								string text="";
 								const UpgradeCommandType *uct= static_cast<const UpgradeCommandType*>(ct);
 								if(unit->getFaction()->getUpgradeManager()->isUpgrading(uct->getProducedUpgrade())){
-									text=lang.get("Upgrading")+"\n\n";
+									text=lang.getString("Upgrading")+"\n\n";
 								}
 								else if(unit->getFaction()->getUpgradeManager()->isUpgraded(uct->getProducedUpgrade())){
-									text=lang.get("AlreadyUpgraded")+"\n\n";
+									text=lang.getString("AlreadyUpgraded")+"\n\n";
 								}
-								display.setInfoText(text+ct->getReqDesc());
+								display.setInfoText(text+ct->getReqDesc(game->showTranslatedTechTree()));
 							}
 							else{
-								display.setInfoText(ct->getReqDesc());
+								display.setInfoText(ct->getReqDesc(game->showTranslatedTechTree()));
 							}
 						}
 					}
@@ -711,19 +772,19 @@ void Gui::computeInfoString(int posDisplay){
 					const UnitType *ut= selection.getFrontUnit()->getType();
 					CommandClass cc= display.getCommandClass(posDisplay);
 					if(cc!=ccNull){
-						display.setInfoText(lang.get("CommonCommand") + ": " + ut->getFirstCtOfClass(cc)->toString());
+						display.setInfoText(lang.getString("CommonCommand") + ": " + ut->getFirstCtOfClass(cc)->toString(true));
 					}
 				}
 			}
 		}
 		else{
 			if(posDisplay==cancelPos){
-				display.setInfoText(lang.get("Return"));
+				display.setInfoText(lang.getString("Return"));
 			}
 			else{
 				if(activeCommandType!=NULL && activeCommandType->getClass()==ccBuild){
 					const BuildCommandType *bct= static_cast<const BuildCommandType*>(activeCommandType);
-					display.setInfoText(bct->getBuilding(posDisplay)->getReqDesc());
+					display.setInfoText(bct->getBuilding(posDisplay)->getReqDesc(game->showTranslatedTechTree()));
 				}
 			}
 		}
@@ -738,19 +799,19 @@ void Gui::computeDisplay(){
 	display.clear();
 
 	// ================ PART 1 ================
-
-	if(selection.isEmpty() && selectedResourceObject != NULL) {
+	const Object *selectedResourceObject =getSelectedResourceObject();
+	if(selection.isEmpty() && selectedResourceObject != NULL && selectedResourceObject->getResource() != NULL) {
 		Resource *r = selectedResourceObject->getResource();
-		display.setTitle(r->getType()->getName());
-		display.setText(lang.get("Amount")+ ": "+intToStr(r->getAmount())+" / "+intToStr(r->getType()->getDefResPerPatch()));
+		display.setTitle(r->getType()->getName(game->showTranslatedTechTree()));
+		display.setText(lang.getString("Amount")+ ": "+intToStr(r->getAmount())+" / "+intToStr(r->getType()->getDefResPerPatch()));
 		//display.setProgressBar(r->);
 		display.setUpImage(0, r->getType()->getImage());
 	}
 	else {
 		//title, text and progress bar
 		if(selection.getCount() == 1){
-			display.setTitle(selection.getFrontUnit()->getFullName());
-			display.setText(selection.getFrontUnit()->getDesc());
+			display.setTitle(selection.getFrontUnit()->getFullName(game->showTranslatedTechTree()));
+			display.setText(selection.getFrontUnit()->getDesc(game->showTranslatedTechTree()));
 			display.setProgressBar(selection.getFrontUnit()->getProductionPercent());
 		}
 
@@ -922,24 +983,24 @@ int Gui::computePosDisplay(int x, int y){
 	return posDisplay;
 }
 
-void Gui::addOrdersResultToConsole(CommandClass cc, CommandResult result){
+void Gui::addOrdersResultToConsole(CommandClass cc, std::pair<CommandResult,string> result) {
 
-    switch(result){
+    switch(result.first) {
 	case crSuccess:
 		break;
 	case crFailReqs:
         switch(cc){
         case ccBuild:
-            console->addStdMessage("BuildingNoReqs");
+            console->addStdMessage("BuildingNoReqs",result.second);
 		    break;
         case ccProduce:
-            console->addStdMessage("UnitNoReqs");
+            console->addStdMessage("UnitNoReqs",result.second);
             break;
         case ccMorph:
-            console->addStdMessage("MorphNoReqs");
+            console->addStdMessage("MorphNoReqs",result.second);
             break;
         case ccUpgrade:
-            console->addStdMessage("UpgradeNoReqs");
+            console->addStdMessage("UpgradeNoReqs",result.second);
             break;
         default:
             break;
@@ -948,16 +1009,16 @@ void Gui::addOrdersResultToConsole(CommandClass cc, CommandResult result){
 	case crFailRes:
         switch(cc){
         case ccBuild:
-            console->addStdMessage("BuildingNoRes");
+            console->addStdMessage("BuildingNoRes",result.second);
 		    break;
         case ccProduce:
-            console->addStdMessage("UnitNoRes");
+            console->addStdMessage("UnitNoRes",result.second);
             break;
         case ccMorph:
-            console->addStdMessage("MorphNoRes");
+            console->addStdMessage("MorphNoRes",result.second);
             break;
         case ccUpgrade:
-            console->addStdMessage("UpgradeNoRes");
+            console->addStdMessage("UpgradeNoRes",result.second);
             break;
 		default:
 			break;
@@ -965,11 +1026,11 @@ void Gui::addOrdersResultToConsole(CommandClass cc, CommandResult result){
 		break;
 
     case crFailUndefined:
-        console->addStdMessage("InvalidOrder");
+        console->addStdMessage("InvalidOrder",result.second);
         break;
 
     case crSomeFailed:
-        console->addStdMessage("SomeOrdersFailed");
+        console->addStdMessage("SomeOrdersFailed",result.second);
         break;
     }
 }
@@ -989,9 +1050,14 @@ void Gui::computeSelected(bool doubleClick, bool force){
 
 	if( force || ( lastQuadCalcFrame+selectionCalculationFrameSkip < game->getTotalRenderFps() ) ){
 		lastQuadCalcFrame=game->getTotalRenderFps();
-		selectedResourceObject=NULL;
+		const Object *selectedResourceObject=NULL;
+		selectedResourceObjectPos=Vec2i(-1,-1);
 		if(selectionQuad.isEnabled() && selectionQuad.getPosUp().dist(selectionQuad.getPosDown())<minQuadSize){
+			//Renderer::getInstance().computeSelected(units, selectedResourceObject, true, selectionQuad.getPosDown(), selectionQuad.getPosDown());
 			Renderer::getInstance().computeSelected(units, selectedResourceObject, true, selectionQuad.getPosDown(), selectionQuad.getPosDown());
+			if(selectedResourceObject!=NULL){
+				selectedResourceObjectPos=Map::toSurfCoords(selectedResourceObject->getMapPos());
+			}
 		}
 		else{
 			Renderer::getInstance().computeSelected(units, selectedResourceObject, false, selectionQuad.getPosDown(), selectionQuad.getPosUp());
@@ -1005,7 +1071,7 @@ void Gui::computeSelected(bool doubleClick, bool force){
 			int factionIndex= refUnit->getFactionIndex();
 			for(int i=0; i<world->getFaction(factionIndex)->getUnitCount(); ++i){
 				Unit *unit= world->getFaction(factionIndex)->getUnit(i);
-				if(unit->getPos().dist(refUnit->getPos())<doubleClickSelectionRadius &&
+				if(unit->getPos().dist(refUnit->getPosNotThreadSafe())<doubleClickSelectionRadius &&
 					unit->getType()==refUnit->getType())
 				{
 					units.push_back(unit);
@@ -1044,105 +1110,124 @@ bool Gui::computeTarget(const Vec2i &screenPos, Vec2i &targetPos, const Unit *&t
 
 	if(uc.empty() == false){
 		targetUnit= getRelevantObjectFromSelection(&uc);
-		targetPos= targetUnit->getPos();
+		targetPos= targetUnit->getPosNotThreadSafe();
+		highlightedUnitId=targetUnit->getId();
+		getHighlightedUnit()->resetHighlight();
 		return true;
 	}
 	else if(obj != NULL){
 		targetUnit= NULL;
+		highlightedResourceObjectPos=Map::toSurfCoords(obj->getMapPos());
 
-		// get real click pos
-		renderer.computePosition(screenPos, targetPos);
+		Object *selObj = getHighlightedResourceObject();
+		if(selObj != NULL) {
+			selObj->resetHighlight();
+			// get real click pos
+			renderer.computePosition(screenPos, targetPos);
 
-		//validPosObjWorld= true;
-		//posObjWorld = targetPos;
+			//validPosObjWorld= true;
+			//posObjWorld = targetPos;
 
-		int tx= targetPos.x;
-		int ty= targetPos.y;
+			int tx= targetPos.x;
+			int ty= targetPos.y;
 
-		int ox= obj->getMapPos().x;
-		int oy= obj->getMapPos().y;
+			int ox= obj->getMapPos().x;
+			int oy= obj->getMapPos().y;
 
-		Resource* clickedRecource= world->getMap()->getSurfaceCell(Map::toSurfCoords(obj->getMapPos()))->getResource();
+			Resource* clickedRecource= world->getMap()->getSurfaceCell(Map::toSurfCoords(obj->getMapPos()))->getResource();
 
-		// lets see if the click had the same Resource
-		if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()){
-			// same ressource is meant, so use the user selected position
+			// lets see if the click had the same Resource
+			if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()){
+				// same ressource is meant, so use the user selected position
+				return true;
+			}
+			else{// calculate a valid resource position which is as near as possible to the selected position
+				Vec2i testIt= Vec2i(obj->getMapPos());
+				///////////////
+				// test both //
+				///////////////
+				if(ty < oy){
+					testIt.y--;
+				}
+				else if(ty > oy){
+					testIt.y++;
+				}
+				if(tx < ox){
+					testIt.x--;
+				}
+				else if(tx > ox){
+					testIt.x++;
+				}
+
+				if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
+					// same ressource is meant, so use this position
+					targetPos= testIt;
+					//posObjWorld= targetPos;
+					return true;
+				}
+				else{
+					testIt= Vec2i(obj->getMapPos());
+				}
+
+				/////////////////
+				// test y-only //
+				/////////////////
+				if(ty < oy){
+					testIt.y--;
+				}
+				else if(ty > oy){
+					testIt.y++;
+				}
+				if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
+					// same ressource is meant, so use this position
+					targetPos= testIt;
+					//posObjWorld= targetPos;
+					return true;
+				}
+				else{
+					testIt= Vec2i(obj->getMapPos());
+				}
+
+				/////////////////
+				// test x-only //
+				/////////////////
+				if(tx < ox){
+					testIt.x--;
+				}
+				else if(tx > ox){
+					testIt.x++;
+				}
+				if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
+					// same ressource is meant, so use this position
+					targetPos= testIt;
+					//posObjWorld= targetPos;
+					return true;
+				}
+			}
+			// give up and use the object position;
+			targetPos= obj->getMapPos();
+			posObjWorld= targetPos;
 			return true;
 		}
-		else{// calculate a valid resource position which is as near as possible to the selected position
-			Vec2i testIt= Vec2i(obj->getMapPos());
-			///////////////
-			// test both //
-			///////////////
-			if(ty < oy){
-				testIt.y--;
-			}
-			else if(ty > oy){
-				testIt.y++;
-			}
-			if(tx < ox){
-				testIt.x--;
-			}
-			else if(tx > ox){
-				testIt.x++;
-			}
-
-			if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
-				// same ressource is meant, so use this position
-				targetPos= testIt;
-				//posObjWorld= targetPos;
-				return true;
-			}
-			else{
-				testIt= Vec2i(obj->getMapPos());
-			}
-
-			/////////////////
-			// test y-only //
-			/////////////////
-			if(ty < oy){
-				testIt.y--;
-			}
-			else if(ty > oy){
-				testIt.y++;
-			}
-			if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
-				// same ressource is meant, so use this position
-				targetPos= testIt;
-				//posObjWorld= targetPos;
-				return true;
-			}
-			else{
-				testIt= Vec2i(obj->getMapPos());
-			}
-
-			/////////////////
-			// test x-only //
-			/////////////////
-			if(tx < ox){
-				testIt.x--;
-			}
-			else if(tx > ox){
-				testIt.x++;
-			}
-			if(clickedRecource == world->getMap()->getSurfaceCell(Map::toSurfCoords(testIt))->getResource()){
-				// same ressource is meant, so use this position
-				targetPos= testIt;
-				//posObjWorld= targetPos;
-				return true;
-			}
+		else {
+			return false;
 		}
-		// give up and use the object position;
-		targetPos= obj->getMapPos();
-		posObjWorld= targetPos;
-		return true;
-
 	}
 	else{
 		targetUnit= NULL;
 		if(renderer.computePosition(screenPos, targetPos)){
 			validPosObjWorld= true;
 			posObjWorld= targetPos;
+
+			if(world->getMap()->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource() != NULL) {
+				highlightedResourceObjectPos=Map::toSurfCoords(targetPos);
+
+				Object *selObj = getHighlightedResourceObject();
+				if(selObj != NULL) {
+					selObj->resetHighlight();
+				}
+			}
+
 			return true;
 		}
 		else{
@@ -1153,7 +1238,7 @@ bool Gui::computeTarget(const Vec2i &screenPos, Vec2i &targetPos, const Unit *&t
 
 Unit* Gui::getRelevantObjectFromSelection(Selection::UnitContainer *uc){
 	Unit *resultUnit=NULL;
-	for(int i= 0; i < uc->size(); ++i){
+	for(int i= 0; i < (int)uc->size(); ++i) {
 		resultUnit= uc->at(i);
 		if(resultUnit->getType()->hasSkillClass(scMove)){// moving units are more relevant than non moving ones
 			break;
@@ -1162,10 +1247,142 @@ Unit* Gui::getRelevantObjectFromSelection(Selection::UnitContainer *uc){
 	return resultUnit;
 }
 
-void  Gui::removingObjectEvent(Object* o){
-	if(getSelectedResourceObject()==o){
-		selectedResourceObject=NULL;
+void Gui::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *guiNode = rootNode->addChild("Gui");
+
+	//External objects
+//	RandomGen random;
+	guiNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	const Commander *commander;
+//	const World *world;
+//	const Game *game;
+//	GameCamera *gameCamera;
+//	Console *console;
+//
+//	//Positions
+//	Vec2i posObjWorld;		//world coords
+	guiNode->addAttribute("posObjWorld",posObjWorld.getString(), mapTagReplacements);
+//	bool validPosObjWorld;
+	guiNode->addAttribute("validPosObjWorld",intToStr(validPosObjWorld), mapTagReplacements);
+//	//display
+//	const UnitType *choosenBuildingType;
+	if(choosenBuildingType != NULL) {
+		const Faction* thisFaction= world->getThisFaction();
+		guiNode->addAttribute("choosenBuildingType",choosenBuildingType->getName(false), mapTagReplacements);
+		guiNode->addAttribute("choosenBuildingTypeFactionIndex",intToStr(thisFaction->getIndex()), mapTagReplacements);
 	}
+//	const CommandType *activeCommandType;
+	if(activeCommandType != NULL) {
+		guiNode->addAttribute("activeCommandType",activeCommandType->getName(false), mapTagReplacements);
+	}
+
+//	CommandClass activeCommandClass;
+	guiNode->addAttribute("activeCommandClass",intToStr(activeCommandClass), mapTagReplacements);
+//	int activePos;
+	guiNode->addAttribute("activePos",intToStr(activePos), mapTagReplacements);
+//	int lastPosDisplay;
+	guiNode->addAttribute("lastPosDisplay",intToStr(lastPosDisplay), mapTagReplacements);
+//	//composite
+//	Display display;
+	display.saveGame(guiNode);
+//	Mouse3d mouse3d;
+//	Selection selection;
+	selection.saveGame(guiNode);
+//	SelectionQuad selectionQuad;
+//	int lastQuadCalcFrame;
+	guiNode->addAttribute("lastQuadCalcFrame",intToStr(lastQuadCalcFrame), mapTagReplacements);
+//	int selectionCalculationFrameSkip;
+	guiNode->addAttribute("selectionCalculationFrameSkip",intToStr(selectionCalculationFrameSkip), mapTagReplacements);
+//	int minQuadSize;
+	guiNode->addAttribute("minQuadSize",intToStr(minQuadSize), mapTagReplacements);
+//	Chrono lastGroupRecallTime;
+	//guiNode->addAttribute("lastGroupRecallTime",intToStr(lastGroupRecallTime.getMillis()), mapTagReplacements);
+//	int lastGroupRecall;
+	guiNode->addAttribute("lastGroupRecall",intToStr(lastGroupRecall), mapTagReplacements);
+//	//states
+//	bool selectingBuilding;
+	guiNode->addAttribute("selectingBuilding",intToStr(selectingBuilding), mapTagReplacements);
+//	bool selectingPos;
+	guiNode->addAttribute("selectingPos",intToStr(selectingPos), mapTagReplacements);
+//	bool selectingMeetingPoint;
+	guiNode->addAttribute("selectingMeetingPoint",intToStr(selectingMeetingPoint), mapTagReplacements);
+//	CardinalDir selectedBuildingFacing;
+	guiNode->addAttribute("selectedBuildingFacing",intToStr(selectedBuildingFacing), mapTagReplacements);
+//	const Object *selectedResourceObject;
+//
+//	Texture2D* hudTexture;
+}
+
+void Gui::loadGame(const XmlNode *rootNode, World *world) {
+	const XmlNode *guiNode = rootNode->getChild("Gui");
+
+	//External objects
+//	RandomGen random;
+	random.setLastNumber(guiNode->getAttribute("random")->getIntValue());
+//	const Commander *commander;
+//	const World *world;
+//	const Game *game;
+//	GameCamera *gameCamera;
+//	Console *console;
+//
+//	//Positions
+//	Vec2i posObjWorld;		//world coords
+	//guiNode->addAttribute("posObjWorld",posObjWorld.getString(), mapTagReplacements);
+	posObjWorld = Vec2i::strToVec2(guiNode->getAttribute("posObjWorld")->getValue());
+//	bool validPosObjWorld;
+	validPosObjWorld = guiNode->getAttribute("validPosObjWorld")->getIntValue() != 0;
+//	//display
+//	const UnitType *choosenBuildingType;
+//	if(choosenBuildingType != NULL) {
+//		guiNode->addAttribute("choosenBuildingType",choosenBuildingType->getName(), mapTagReplacements);
+//	}
+	if(guiNode->hasAttribute("choosenBuildingType") == true) {
+		string unitType = guiNode->getAttribute("choosenBuildingType")->getValue();
+		int factionIndex = guiNode->getAttribute("choosenBuildingTypeFactionIndex")->getIntValue();
+		choosenBuildingType = world->getFaction(factionIndex)->getType()->getUnitType(unitType);
+	}
+//	const CommandType *activeCommandType;
+	//if(activeCommandType != NULL) {
+	//	guiNode->addAttribute("activeCommandType",activeCommandType->getName(), mapTagReplacements);
+	//}
+
+//	CommandClass activeCommandClass;
+	//guiNode->addAttribute("activeCommandClass",intToStr(activeCommandClass), mapTagReplacements);
+//	int activePos;
+	activePos = guiNode->getAttribute("activePos")->getIntValue();
+//	int lastPosDisplay;
+	lastPosDisplay = guiNode->getAttribute("lastPosDisplay")->getIntValue();
+//	//composite
+//	Display display;
+	display.loadGame(guiNode);
+//	Mouse3d mouse3d;
+//	Selection selection;
+	selection.loadGame(guiNode,world);
+//	SelectionQuad selectionQuad;
+//	int lastQuadCalcFrame;
+	// don't load this! lastQuadCalcFrame = guiNode->getAttribute("lastQuadCalcFrame")->getIntValue();
+	lastQuadCalcFrame = game->getTotalRenderFps();
+//	int selectionCalculationFrameSkip;
+	selectionCalculationFrameSkip = guiNode->getAttribute("selectionCalculationFrameSkip")->getIntValue();
+//	int minQuadSize;
+	minQuadSize = guiNode->getAttribute("minQuadSize")->getIntValue();
+//	Chrono lastGroupRecallTime;
+	//guiNode->addAttribute("lastGroupRecallTime",intToStr(lastGroupRecallTime.getMillis()), mapTagReplacements);
+//	int lastGroupRecall;
+	lastGroupRecall = guiNode->getAttribute("lastGroupRecall")->getIntValue();
+//	//states
+//	bool selectingBuilding;
+	//selectingBuilding = guiNode->getAttribute("selectingBuilding")->getIntValue();
+//	bool selectingPos;
+	//guiNode->addAttribute("selectingPos",intToStr(selectingPos), mapTagReplacements);
+//	bool selectingMeetingPoint;
+	//guiNode->addAttribute("selectingMeetingPoint",intToStr(selectingMeetingPoint), mapTagReplacements);
+//	CardinalDir selectedBuildingFacing;
+	//guiNode->addAttribute("selectedBuildingFacing",intToStr(selectedBuildingFacing), mapTagReplacements);
+//	const Object *selectedResourceObject;
+//
+//	Texture2D* hudTexture;
 }
 
 }}//end namespace

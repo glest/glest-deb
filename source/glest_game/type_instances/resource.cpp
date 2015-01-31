@@ -16,6 +16,7 @@
 #include "checksum.h"
 #include <stdexcept>
 #include "util.h"
+#include "tech_tree.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Graphics;
@@ -56,10 +57,10 @@ void Resource::init(const ResourceType *rt, const Vec2i &pos) {
 	addItemToVault(&this->balance,this->balance);
 }
 
-string Resource::getDescription() const {
+string Resource::getDescription(bool translatedValue) const {
      string str;
 
-     str+= type->getName();
+     str+= type->getName(translatedValue);
      str+="\n";
      str+= intToStr(amount);
      str+="/";
@@ -99,6 +100,56 @@ bool Resource::decAmount(int i) {
          return false;
     }
     return true;
+}
+
+void Resource::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *resourceNode = rootNode->addChild("Resource");
+
+//    int amount;
+	resourceNode->addAttribute("amount",intToStr(amount), mapTagReplacements);
+//    const ResourceType *type;
+	resourceNode->addAttribute("type",type->getName(), mapTagReplacements);
+//	Vec2i pos;
+	resourceNode->addAttribute("pos",pos.getString(), mapTagReplacements);
+//	int balance;
+	resourceNode->addAttribute("balance",intToStr(balance), mapTagReplacements);
+}
+
+void Resource::loadGame(const XmlNode *rootNode, int index,const TechTree *techTree) {
+	vector<XmlNode *> resourceNodeList = rootNode->getChildList("Resource");
+
+	if(index < (int)resourceNodeList.size()) {
+		XmlNode *resourceNode = resourceNodeList[index];
+
+		amount = resourceNode->getAttribute("amount")->getIntValue();
+		type = techTree->getResourceType(resourceNode->getAttribute("type")->getValue());
+		pos = Vec2i::strToVec2(resourceNode->getAttribute("pos")->getValue());
+		balance = resourceNode->getAttribute("balance")->getIntValue();
+	}
+}
+
+std::string Resource::toString() const {
+	std::string result = "resource name = " + this->getDescription(false) + "\n";
+    result += "amount = " + intToStr(this->amount) + "\n";
+    result += "type = " + this->type->getName(false) + "\n";
+    result += "type resources per patch = " + intToStr(type->getDefResPerPatch()) + "\n";
+    result += "pos = " + this->pos.getString() + "\n";
+    result += "balance = " + intToStr(this->balance) + "\n";
+
+    return result;
+}
+
+Checksum Resource::getCRC() {
+	Checksum crcForResource;
+
+	crcForResource.addInt(amount);
+	crcForResource.addString(type->getName(false));
+	crcForResource.addInt(pos.x);
+	crcForResource.addInt(pos.y);
+	crcForResource.addInt(balance);
+
+	return crcForResource;
 }
 
 }}//end namespace

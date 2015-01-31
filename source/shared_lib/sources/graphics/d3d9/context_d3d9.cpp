@@ -1,3 +1,13 @@
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda
+//
+//	You can redistribute this code and/or modify it under
+//	the terms of the GNU General Public License as published
+//	by the Free Software Foundation; either version 2 of the
+//	License, or (at your option) any later version
+// ==============================================================
+
 #include "context_d3d9.h"
 
 #include <cassert>
@@ -18,6 +28,8 @@ namespace Shared{ namespace Graphics{ namespace D3d9{
 ContextD3d9::ContextD3d9(){
 	windowed= true;
 	hardware= true;
+	d3dObject=NULL;
+	d3dDevice=NULL;
 }
 
 void ContextD3d9::init(){
@@ -25,7 +37,7 @@ void ContextD3d9::init(){
 	//create object
 	d3dObject= Direct3DCreate9(D3D_SDK_VERSION);
 	if(d3dObject==NULL){
-		throw runtime_error("Direct3DCreate9==NULL");
+		throw megaglest_runtime_error("Direct3DCreate9==NULL");
 	}
 
 	//present parameters

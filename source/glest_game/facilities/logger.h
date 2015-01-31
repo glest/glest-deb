@@ -12,16 +12,23 @@
 #ifndef _SHARED_UTIL_LOGGER_H_
 #define _SHARED_UTIL_LOGGER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include <deque>
 
 #include "texture.h"
+#include "properties.h"
 #include "components.h"
 #include "leak_dumper.h"
 
 using std::string;
 using std::deque;
 using Shared::Graphics::Texture2D;
+using Shared::Util::Properties;
 
 namespace Glest{ namespace Game{
 
@@ -44,14 +51,17 @@ private:
 	string subtitle;
 	string current;
 	Texture2D *loadingTexture;
+	Properties gameHints;
+	Properties gameHintsTranslation;
+	string gameHintToShow;
 	int progress;
 	bool showProgressBar;
 
 	string statusText;
 	bool cancelSelected;
 	GraphicButton buttonCancel;
-
-	//bool masterserverMode;
+	Vec4f displayColor;
+	GraphicButton buttonNextHint;
 
 private:
 	Logger();
@@ -72,14 +82,19 @@ public:
 
 	void add(const string str, bool renderScreen= false, const string statusText="");
 	void loadLoadingScreen(string filepath);
+	void loadGameHints(string filePathEnglish,string filePathTranslation,bool clearList);
 	void renderLoadingScreen();
 
 	void setCancelLoadingEnabled(bool value);
 	bool getCancelLoading() const { return cancelSelected; }
 	void setCancelLoading(bool value) { cancelSelected = value; }
 	void handleMouseClick(int x, int y);
+	void clearHints();
 
 	void clear();
+
+private:
+	void showNextHint();
 
 };
 

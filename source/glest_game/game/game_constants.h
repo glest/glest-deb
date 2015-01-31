@@ -4,6 +4,10 @@
 #include <cassert>
 #include <stdio.h>
 #include "vec.h"
+#include <map>
+#include <string>
+#include "conversion.h"
+#include <stdexcept>
 
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
@@ -17,8 +21,41 @@
 // ==============================================================
 
 using namespace Shared::Graphics;
+using namespace std;
+using namespace Shared::Util;
 
 namespace Glest{ namespace Game{
+
+template<typename T>
+class EnumParser {
+private:
+	typedef map<string, T> enumMapType;
+	typedef typename enumMapType::const_iterator enumMapTypeIter;
+	EnumParser();
+
+	enumMapType enumMap;
+
+public:
+
+    static T getEnum(const string &value) {
+    	static EnumParser<T> parser;
+    	enumMapTypeIter iValue = parser.enumMap.find(value);
+        if(iValue  == parser.enumMap.end()) {
+        	throw std::runtime_error("unknown enum lookup [" + value + "]");
+        }
+        return iValue->second;
+    }
+    static string getString(const T &value) {
+    	static EnumParser<T> parser;
+    	for(enumMapTypeIter iValue = parser.enumMap.first();
+    			iValue != parser.enumMap.end(); ++iValue) {
+    		if(iValue->second  == value) {
+    			return iValue->first;
+    		}
+    	}
+       	throw std::runtime_error("unknown enum lookup [" + intToStr(value) + "]");
+    }
+};
 
 // =====================================================
 //	class GameConstants
@@ -36,8 +73,7 @@ const Vec4f WHITE(1.0f, 1.0f, 1.0f, 1.0f);
 const Vec4f ORANGE(1.0f, 0.7f, 0.0f, 1.0f);
 
 enum PathFinderType {
-	pfBasic,
-	pfRoutePlanner
+	pfBasic
 };
 
 enum TravelState {
@@ -89,6 +125,7 @@ public:
 	static const int specialFactions = fpt_EndCount - 1;
 	static const int maxPlayers= 8;
 	static const int serverPort= 61357;
+	static const int serverAdminPort= 61355;
 	//static const int updateFps= 40;
 	//static const int cameraFps= 100;
 	static int updateFps;
@@ -96,6 +133,7 @@ public:
 
 	static int networkFramePeriod;
 	static const int networkPingInterval = 5;
+	static const int networkSmoothInterval= 30;
 	//static const int networkExtraLatency= 200;
 	static const int maxClientConnectHandshakeSecs= 10;
 
@@ -115,7 +153,9 @@ public:
 	static const char *OBSERVER_SLOTNAME;
 	static const char *RANDOMFACTION_SLOTNAME;
 
+	static const char *preCacheThreadCacheLookupKey;
 	static const char *playerTextureCacheLookupKey;
+	static const char *ircClientCacheLookupKey;
 	static const char *factionPreviewTextureCacheLookupKey;
 	static const char *characterMenuScreenPositionListCacheLookupKey;
 	static const char *pathCacheLookupKey;
@@ -125,6 +165,14 @@ public:
 
 	static const char *application_name;
 	
+	static const char *saveNetworkGameFileServerCompressed;
+	static const char *saveNetworkGameFileServer;
+	static const char *saveNetworkGameFileClientCompressed;
+	static const char *saveNetworkGameFileClient;
+	static const char *saveGameFileDefault;
+	static const char *saveGameFileAutoTestDefault;
+	static const char *saveGameFilePattern;
+
 	// VC++ Chokes on init of non integral static types
 	static const float normalMultiplier;
 	static const float easyMultiplier;
@@ -132,6 +180,13 @@ public:
 	static const float megaMultiplier;
 	//
 	
+	static const char * LOADING_SCREEN_FILE;
+	static const char * LOADING_SCREEN_FILE_FILTER;
+	static const char * PREVIEW_SCREEN_FILE;
+	static const char * PREVIEW_SCREEN_FILE_FILTER;
+	static const char * HUD_SCREEN_FILE;
+	static const char * HUD_SCREEN_FILE_FILTER;
+
 };
 
 enum PathType {

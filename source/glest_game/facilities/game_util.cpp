@@ -27,52 +27,91 @@ using namespace Shared::Platform;
 namespace Glest { namespace Game {
 
 const char *mailString				= " http://bugs.megaglest.org";
-const string glestVersionString 	= "v3.6.0.3";
-#if defined(SVNVERSION)
-const string SVN_Rev 			= string("Rev: ") + string(SVNVERSION);
-#elif defined(SVNVERSIONHEADER)
-#include "svnversion.h"
-const string SVN_Rev 			= string("Rev: ") + string(SVNVERSION);
+const string glestVersionString 	= "v3.9.1";
+#if defined(GITVERSION)
+    const string GIT_RawRev			= string(GITVERSION);
+    const string GIT_Rev 			= string("Rev: ") + string(GITVERSION);
+#elif defined(GITVERSIONHEADER)
+#include "gitversion.h"
+    const string GIT_RawRev			= string(GITVERSION);
+    const string GIT_Rev 			= string("Rev: ") + string(GITVERSION);
 #else
-const string SVN_Rev 			= "$Rev: 3070 $";
+const string GIT_RawRev			= "$4446.1a8673f$";
+const string GIT_Rev 			= "$Rev$";
 #endif
 
+string getRAWGITRevisionString() {
+	return GIT_RawRev;
+}
 string getCrashDumpFileName(){
 	return "megaglest" + glestVersionString + ".dmp";
 }
 
 string getPlatformNameString() {
-	static string platform = "";
+	static string platform;
 	if(platform == "") {
 #if defined(WIN32)
-	platform = "Windows";
+
 	#if defined(__MINGW32__)
-	platform = "W-MINGW";
+	platform = "W-Ming32";
+	#else
+	platform = "Windows";
 	#endif
 
 #elif defined(__FreeBSD__)
 	platform = "FreeBSD";
+#elif defined(__NetBSD__)
+	platform = "NetBSD";
+#elif defined(__OpenBSD__)
+	platform = "OpenBSD";
+
 #elif defined(__APPLE__)
 	platform = "MacOSX";
+#elif defined(_AIX)
+	platform = "AIX";
+#elif defined(__ANDROID__)
+	platform = "Android";
+#elif defined(__BEOS__)
+	platform = "BEOS";
+#elif defined(__gnu_linux__)
+	platform = "Linux";
+#elif defined(__sun)
+	platform = "Solaris";
+
 #elif defined(__GNUC__)
-	platform = "GNU";
+
 	#if defined(__MINGW32__)
-	platform = "L-MINGW";
+	platform = "L-Ming32";
+	#else
+	platform = "GNU";
 	#endif
 
 #else
 	platform = "???";
 #endif
 
-#if defined(_M_X64) || defined(_M_IA64) || defined(_M_AMD64) || defined(__x86_64__) || defined(_WIN64)
-	platform += "_64bit";
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) || defined(_WIN64)
+	platform += "-X64";
+#elif defined(_M_ALPHA) || defined(__alpha__)
+	platform += "-ALPHA";
+#elif defined(_M_IA64) || defined(__ia64__)
+	platform += "-IA64";
+#elif defined(_M_MRX000) || defined(__mips__)
+	platform += "-MIPS";
+#elif defined(_M_PPC) || defined(__powerpc__)
+	platform += "-POWERPC";
+#elif defined(__sparc__)
+	platform += "-SPARC";
+#elif defined(_M_ARM_FP) || defined(__arm__) || defined(_M_ARM)
+	platform += "-ARM";
+
 #endif
 	}
 	return platform;
 }
 
-string getSVNRevisionString() {
-	return SVN_Rev;
+string getGITRevisionString() {
+	return GIT_Rev;
 }
 
 string getCompilerNameString() {
@@ -123,10 +162,10 @@ string getNetworkVersionString() {
 	return version;
 }
 
-string getNetworkVersionSVNString() {
+string getNetworkVersionGITString() {
 	static string version = "";
 	if(version == "") {
-			version = glestVersionString + "-" + getCompilerNameString() + "-" + getSVNRevisionString();
+			version = glestVersionString + "-" + getCompilerNameString() + "-" + getGITRevisionString();
 	}
 	return version;
 }
@@ -146,17 +185,17 @@ string getNetworkPlatformFreeVersionString() {
 string getAboutString1(int i) {
 	switch(i) {
 	case 0: return "MegaGlest " + glestVersionString + " (" + "Shared Library " + sharedLibVersionString + ")";
-	case 1: return "Built: " + string(__DATE__) + " " + SVN_Rev;
-	case 2: return "Copyright 2001-2011 The MegaGlest Team";
+	case 1: return "Built: " + string(__DATE__) + " " + GIT_Rev;
+	case 2: return "Copyright 2001-2012 The MegaGlest Team";
 	}
 	return "";
 }
 
 string getAboutString2(int i) {
 	switch(i) {
-	case 0: return "Web: http://www.megaglest.org  http://glest.org";
+	case 0: return "Web: http://megaglest.org";
 	case 1: return "Bug reports: " + string(mailString);
-	case 2: return "Irc: irc://irc.freenode.net/glest";
+	case 2: return "IRC: irc://irc.freenode.net/megaglest";
 	}
 	return "";
 }
@@ -182,18 +221,18 @@ string getTeammateName(int i) {
 }
 
 string getTeammateRole(int i) {
-	Lang &l= Lang::getInstance();
+	Lang &lang = Lang::getInstance();
 
-	switch(i){
-	case 0: return l.get("Programming");
-	case 1: return l.get("SoundAndMusic");
-	case 2: return l.get("3dAnd2dArt");
-	case 3: return l.get("2dArtAndWeb");
-	case 4: return l.get("Animation");
-	case 5: return l.get("3dArt");
-	case 6: return l.get("LinuxPort");
-	case 7: return l.get("Megaglest3d2dProgramming");
-	case 8: return l.get("MegaglestProgramming");
+	switch(i) {
+	case 0: return lang.getString("Programming");
+	case 1: return lang.getString("SoundAndMusic");
+	case 2: return lang.getString("3dAnd2dArt");
+	case 3: return lang.getString("2dArtAndWeb");
+	case 4: return lang.getString("Animation");
+	case 5: return lang.getString("3dArt");
+	case 6: return lang.getString("LinuxPort");
+	case 7: return lang.getString("Megaglest3d2dProgramming");
+	case 8: return lang.getString("MegaglestProgramming");
 	}
 	return "";
 }
@@ -206,7 +245,7 @@ string formatString(string str) {
 	}
 
 	bool afterSeparator= false;
-	for(int i= 0; i<str.size(); ++i){
+	for(int i= 0; i < (int)str.size(); ++i){
 		if(outStr[i]=='_'){
 			outStr[i]= ' ';
 		}
@@ -246,6 +285,8 @@ string getGameCustomCoreDataPath(string originalBasePath, string uniqueFilePath)
     // decide which file to use
     string result = "";
 
+    if (SystemFlags::VERBOSE_MODE_ENABLED) printf("Looking for [%s] in\n#1: [%s]\n#2: [%s]\n#3: [%s]\n",uniqueFilePath.c_str(),custom_mod_path.c_str(),data_path.c_str(),originalBasePath.c_str());
+
 	if(custom_mod_path != "" &&
 		(uniqueFilePath == "" || fileExists(custom_mod_path + uniqueFilePath) == true)) {
 		result = custom_mod_path + uniqueFilePath;
@@ -258,7 +299,8 @@ string getGameCustomCoreDataPath(string originalBasePath, string uniqueFilePath)
 		result = originalBasePath + uniqueFilePath;
 	}
 
-	//printf("data_path [%s] result [%s]\n",data_path.c_str(),result.c_str());
+	if (SystemFlags::VERBOSE_MODE_ENABLED) printf("result [%s]\n",result.c_str());
+
     return result;
 }
 
@@ -279,8 +321,8 @@ string getGameReadWritePath(string lookupKey) {
         }
 	}
 
-    if(path == "" && getenv("GLESTHOME") != NULL) {
-        path = getenv("GLESTHOME");
+    if(path == "") {
+        path = safeCharPtrCopy(getenv("GLESTHOME"),8095);
         if(path != "" && EndsWith(path, "/") == false && EndsWith(path, "\\") == false) {
             path += "/";
         }
@@ -294,10 +336,10 @@ string getGameReadWritePath(string lookupKey) {
 void initSpecialStrings() {
 	getCrashDumpFileName();
 	getPlatformNameString();
-	getSVNRevisionString();
+	getGITRevisionString();
 	getCompilerNameString();
 	getNetworkVersionString();
-	getNetworkVersionSVNString();
+	getNetworkVersionGITString();
 	getNetworkPlatformFreeVersionString();
 	getCompileDateTime();
 }

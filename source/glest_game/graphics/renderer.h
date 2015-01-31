@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_RENDERER_H_
 #define _GLEST_GAME_RENDERER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "vec.h"
 #include "math_util.h"
 #include "model.h"
@@ -32,6 +37,7 @@
 #include "graphics_interface.h"
 #include "base_renderer.h"
 #include "simple_threads.h"
+#include "video_player.h"
 
 #ifdef DEBUG_RENDERING_ENABLED
 #	define IF_DEBUG_EDITION(x) x
@@ -49,8 +55,8 @@ enum DebugUILevelType {
 
 namespace Glest{ namespace Game{
 
-using namespace Shared::Graphics;
-using namespace Shared::PlatformCommon;
+using namespace ::Shared::Graphics;
+using namespace ::Shared::PlatformCommon;
 
 //non shared classes
 class Config;
@@ -63,7 +69,7 @@ class ChatManager;
 class Object;
 class ConsoleLineInfo;
 class SurfaceCell;
-
+class Program;
 // =====================================================
 // 	class MeshCallbackTeamColor
 // =====================================================
@@ -91,12 +97,14 @@ public:
 class VisibleQuadContainerCache {
 protected:
 
-	void CopyAll(const VisibleQuadContainerCache &obj) {
+	inline void CopyAll(const VisibleQuadContainerCache &obj) {
 		cacheFrame 			= obj.cacheFrame;
 		visibleObjectList	= obj.visibleObjectList;
 		visibleUnitList		= obj.visibleUnitList;
 		visibleQuadUnitList = obj.visibleQuadUnitList;
+		visibleQuadUnitBuildList = obj.visibleQuadUnitBuildList;
 		visibleScaledCellList = obj.visibleScaledCellList;
+		visibleScaledCellToScreenPosList = obj.visibleScaledCellToScreenPosList;
 		lastVisibleQuad		= obj.lastVisibleQuad;
 		frustumData			= obj.frustumData;
 		proj				= obj.proj;
@@ -106,39 +114,42 @@ protected:
 
 public:
 
-	VisibleQuadContainerCache() {
+	inline VisibleQuadContainerCache() {
 		cacheFrame = 0;
-		clearFrustrumData();
+		clearFrustumData();
 		clearCacheData();
 	}
-	VisibleQuadContainerCache(const VisibleQuadContainerCache &obj) {
+	inline VisibleQuadContainerCache(const VisibleQuadContainerCache &obj) {
 		CopyAll(obj);
 	}
-	VisibleQuadContainerCache & operator=(const VisibleQuadContainerCache &obj) {
+	inline VisibleQuadContainerCache & operator=(const VisibleQuadContainerCache &obj) {
 		CopyAll(obj);
 		return *this;
 	}
 
-	void clearCacheData() {
+	inline void clearCacheData() {
 		clearVolatileCacheData();
 		clearNonVolatileCacheData();
 	}
-	void clearVolatileCacheData() {
+	inline void clearVolatileCacheData() {
 		visibleUnitList.clear();
 		visibleQuadUnitList.clear();
+		visibleQuadUnitBuildList.clear();
 		//inVisibleUnitList.clear();
 
 		visibleUnitList.reserve(500);
 		visibleQuadUnitList.reserve(500);
+		visibleQuadUnitBuildList.reserve(100);
 	}
-	void clearNonVolatileCacheData() {
+	inline void clearNonVolatileCacheData() {
 		visibleObjectList.clear();
 		visibleScaledCellList.clear();
+		visibleScaledCellToScreenPosList.clear();
 
 		visibleObjectList.reserve(500);
 		visibleScaledCellList.reserve(500);
 	}
-	void clearFrustrumData() {
+	inline void clearFrustumData() {
 		frustumData = vector<vector<float> >(6,vector<float>(4,0));
 		proj = vector<float>(16,0);
 		modl = vector<float>(16,0);
@@ -148,8 +159,10 @@ public:
 	Quad2i lastVisibleQuad;
 	std::vector<Object *> visibleObjectList;
 	std::vector<Unit   *> visibleQuadUnitList;
+	std::vector<UnitBuildInfo> visibleQuadUnitBuildList;
 	std::vector<Unit   *> visibleUnitList;
 	std::vector<Vec2i> visibleScaledCellList;
+	std::map<Vec2i,Vec3f> visibleScaledCellToScreenPosList;
 
 	static bool enableFrustumCalcs;
 	vector<vector<float> > frustumData;
@@ -171,7 +184,11 @@ public:
 };
 
 
-class Renderer : public RendererInterface, public BaseRenderer, public SimpleTaskCallbackInterface {
+class Renderer : public RendererInterface,
+				 public BaseRenderer,
+				 // This is for screen saver thread
+				 public SimpleTaskCallbackInterface,
+				 public VideoLoadingCallbackInterface {
 public:
 	//progress bar
 	static const int maxProgressBar;
@@ -231,7 +248,7 @@ private:
     bool photoMode;
 	int shadowTextureSize;
 	int shadowFrameSkip;
-	float shadowAlpha;
+	float shadowIntensity;
 	bool focusArrows;
 	bool textures3D;
 	Shadows shadows;
@@ -241,6 +258,7 @@ private:
 	const Game *game;
 	GameCamera *gameCamera;
 	const MainMenu *menu;
+	Program *program;
 
 	//misc
 	int triangleCount;
@@ -264,13 +282,15 @@ private:
 	ParticleManager *particleManager[rsCount];
 
 	//state lists
-	GLuint list3d;
-	bool list3dValid;
-	GLuint list2d;
-	bool list2dValid;
-	GLuint list3dMenu;
-	bool list3dMenuValid;
-	GLuint *customlist3dMenu;
+	//GLuint list3d;
+	//bool list3dValid;
+	//GLuint list2d;
+	//bool list2dValid;
+	//GLuint list3dMenu;
+	//bool list3dMenuValid;
+	//GLuint *customlist3dMenu;
+	//const MainMenu *mm3d;
+	const MainMenu *custom_mm3d;
 
 	//shadows
 	GLuint shadowMapHandle;
@@ -295,11 +315,13 @@ private:
 	float smoothedRenderFps;
 	bool shadowsOffDueToMinRender;
 
+	std::vector<std::pair<ParticleSystem *, ResourceScope> > deferredParticleSystems;
+
 	SimpleTaskThread *saveScreenShotThread;
-	Mutex saveScreenShotThreadAccessor;
+	Mutex *saveScreenShotThreadAccessor;
 	std::list<std::pair<string,Pixmap2D *> > saveScreenQueue;
 
-	//std::map<Vec3f,Vec3f> worldToScreenPosCache;
+	std::map<Vec3f,Vec3f> worldToScreenPosCache;
 
 	//bool masterserverMode;
 
@@ -307,7 +329,7 @@ private:
 
 	class SurfaceData {
 	public:
-		SurfaceData() {
+		inline SurfaceData() {
 			uniqueId=0;
 			bufferCount=0;
 			textureHandle=0;
@@ -329,8 +351,8 @@ private:
 	
 	class MapRenderer {
 	public:
-		MapRenderer(): map(NULL) {}
-		~MapRenderer() { destroy(); }
+		inline MapRenderer(): map(NULL) {}
+		inline ~MapRenderer() { destroy(); }
 		void render(const Map* map,float coordStep,VisibleQuadContainerCache &qCache);
 		void renderVisibleLayers(const Map* map,float coordStep,VisibleQuadContainerCache &qCache);
 		void destroy();
@@ -340,11 +362,33 @@ private:
 
 		const Map* map;
 		struct Layer {
-			Layer(int th):
+			inline Layer(int th):
 				vbo_vertices(0), vbo_normals(0), 
 				vbo_fowTexCoords(0), vbo_surfTexCoords(0),
 				vbo_indices(0), indexCount(0),
-				textureHandle(th) {}
+				textureHandle(th),textureCRC(0) {}
+
+			inline Layer & operator=(Layer &obj) {
+				this->vertices = obj.vertices;
+				this->normals = obj.normals;
+				this->fowTexCoords = obj.fowTexCoords; 
+				this->surfTexCoords = obj.surfTexCoords;
+				this->indices = obj.indices;
+				this->cellToIndicesMap = obj.cellToIndicesMap;
+				this->rowsToRenderCache = obj.rowsToRenderCache;
+				this->vbo_vertices = obj.vbo_vertices;
+				this->vbo_normals = obj.vbo_normals;
+				this->vbo_fowTexCoords = obj.vbo_fowTexCoords;
+				this->vbo_surfTexCoords = obj.vbo_surfTexCoords;
+				this->vbo_indices = obj.vbo_indices;
+				this->indexCount = obj.indexCount;
+				this->textureHandle = obj.textureHandle;
+				this->texturePath = obj.texturePath;
+				this->textureCRC = obj.textureCRC;
+
+				return *this;
+			}
+
 			~Layer();
 			void load_vbos(bool vboEnabled);
 			void render(VisibleQuadContainerCache &qCache);
@@ -360,9 +404,9 @@ private:
 				vbo_fowTexCoords, vbo_surfTexCoords,
 				vbo_indices;
 			int indexCount;
-			const int textureHandle;
+			int textureHandle;
 			string texturePath;
-			int32 textureCRC;
+			uint32 textureCRC;
 		};
 		typedef std::vector<Layer*> Layers;
 		Layers layers;
@@ -383,6 +427,9 @@ public:
 	static bool isEnded();
 	//bool isMasterserverMode() const { return masterserverMode; }
 
+	void addToDeferredParticleSystemList(std::pair<ParticleSystem *, ResourceScope> deferredParticleSystem);
+	void manageDeferredParticleSystems();
+
 	void reinitAll();
 
     //init
@@ -400,8 +447,8 @@ public:
 	void endGame(bool isFinalEnd);
 
 	//get
-	int getTriangleCount() const	{return triangleCount;}
-	int getPointCount() const		{return pointCount;}
+	inline int getTriangleCount() const	{return triangleCount;}
+	inline int getPointCount() const		{return pointCount;}
 
 	//misc
 	void reloadResources();
@@ -411,7 +458,7 @@ public:
 	void endTexture(ResourceScope rs, Texture *texture,bool mustExistInList=false);
 	void endLastTexture(ResourceScope rs, bool mustExistInList=false);
 
-	Model *newModel(ResourceScope rs);
+	Model *newModel(ResourceScope rs,const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string *sourceLoader=NULL);
 	void endModel(ResourceScope rs, Model *model, bool mustExistInList=false);
 	void endLastModel(ResourceScope rs, bool mustExistInList=false);
 
@@ -419,22 +466,24 @@ public:
 	Texture3D *newTexture3D(ResourceScope rs);
 	Font2D *newFont(ResourceScope rs);
 	Font3D *newFont3D(ResourceScope rs);
-	void endFont(Font *font, ResourceScope rs, bool mustExistInList=false);
+	void endFont(::Shared::Graphics::Font *font, ResourceScope rs, bool mustExistInList=false);
 	void resetFontManager(ResourceScope rs);
 
-	TextRenderer2D *getTextRenderer() const	{return textRenderer;}
-	TextRenderer3D *getTextRenderer3D() const	{return textRenderer3D;}
+	inline TextRenderer2D *getTextRenderer() const	{return textRenderer;}
+	inline TextRenderer3D *getTextRenderer3D() const	{return textRenderer3D;}
 
 	void manageParticleSystem(ParticleSystem *particleSystem, ResourceScope rs);
 	void cleanupParticleSystems(vector<ParticleSystem *> &particleSystems,ResourceScope rs);
 	void cleanupUnitParticleSystems(vector<UnitParticleSystem *> &particleSystems,ResourceScope rs);
 	bool validateParticleSystemStillExists(ParticleSystem * particleSystem,ResourceScope rs) const;
+	void removeParticleSystemsForParticleOwner(ParticleOwner * particleOwner,ResourceScope rs);
 	void updateParticleManager(ResourceScope rs,int renderFps=-1);
 	void renderParticleManager(ResourceScope rs);
 	void swapBuffers();
 
     //lights and camera
 	void setupLighting();
+	void setupLightingForRotatedModel();
 	void loadGameCameraMatrix();
 	void loadCameraMatrix(const Camera *camera);
 	void computeVisibleQuad();
@@ -442,6 +491,9 @@ public:
     //basic rendering
 	void renderMouse2d(int mouseX, int mouseY, int anim, float fade= 0.f);
     void renderMouse3d();
+
+    void renderGhostModel(const UnitType *building, const Vec2i pos,CardinalDir facing,Vec4f *forceColor=NULL);
+
     void renderBackground(const Texture2D *texture);
 	void renderTextureQuad(int x, int y, int w, int h, const Texture2D *texture, float alpha=1.f,const Vec3f *color=NULL);
 	void renderConsole(const Console *console, const bool showAll=false, const bool showMenuConsole=false, int overrideMaxConsoleLines=-1);
@@ -449,6 +501,8 @@ public:
 	void renderConsoleLine(int lineIndex, int xPosition, int yPosition, int lineHeight, Font2D* font, string stringToHightlight, const ConsoleLineInfo *lineInfo);
 
 	void renderChatManager(const ChatManager *chatManager);
+	void renderClock();
+	void renderPerformanceStats();
 	void renderResourceStatus();
 	void renderSelectionQuad();
 	void renderText(const string &text, Font2D *font, float alpha, int x, int y, bool centered= false);
@@ -460,12 +514,14 @@ public:
 	void renderText3D(const string &text, Font3D *font, const Vec3f &color, int x, int y, bool centered);
 	void renderText3D(const string &text, Font3D *font, const Vec4f &color, int x, int y, bool centered);
 	void renderTextShadow3D(const string &text, Font3D *font,const Vec4f &color, int x, int y, bool centered=false);
-	void renderProgressBar3D(int size, int x, int y, Font3D *font, int customWidth=-1, string prefixLabel="", bool centeredText=true);
+	void renderProgressBar3D(int size, int x, int y, Font3D *font, int customWidth=-1, string prefixLabel="", bool centeredText=true,int customHeight=-1);
 
 	Vec2f getCentered3DPos(const string &text, Font3D *font, Vec2f &pos, int w, int h, bool centeredW, bool centeredH);
-	void renderTextBoundingBox3D(const string &text, Font3D *font, const Vec4f &color, int x, int y, int w, int h, bool centeredW, bool centeredH);
-	void renderTextBoundingBox3D(const string &text, Font3D *font, const Vec3f &color, int x, int y, int w, int h, bool centeredW, bool centeredH);
-	void renderTextBoundingBox3D(const string &text, Font3D *font, float alpha, int x, int y, int w, int h, bool centeredW, bool centeredH);
+	void renderTextBoundingBox3D(const string &text, Font3D *font, const Vec4f &color, int x, int y, int w, int h, bool centeredW, bool centeredH, bool editModeEnabled, int maxEditWidth, int maxEditRenderWidth);
+	void renderTextBoundingBox3D(const string &text, Font3D *font, const Vec3f &color, int x, int y, int w, int h, bool centeredW, bool centeredH, bool editModeEnabled,int maxEditWidth, int maxEditRenderWidth);
+	void renderTextBoundingBox3D(const string &text, Font3D *font, float alpha, int x, int y, int w, int h, bool centeredW, bool centeredH, bool editModeEnabled,int maxEditWidth, int maxEditRenderWidth);
+
+	void renderTextSurroundingBox(int x, int y, int w, int h,int maxEditWidth, int maxEditRenderWidth);
 
 	void beginRenderToTexture(Texture2D **renderToTexture);
 	void endRenderToTexture(Texture2D **renderToTexture);
@@ -489,7 +545,8 @@ public:
 	void renderObjects(const int renderFps);
 
 	void renderWater();
-    void renderUnits(const int renderFps);
+    void renderUnits(bool airUnits, const int renderFps);
+    void renderUnitsToBuild(const int renderFps);
 
 	void renderSelectionEffects();
 	void renderWaterEffects();
@@ -501,7 +558,7 @@ public:
 	void renderMenuBackground(Camera *camera, float fade, Model *mainModel, vector<Model *> characterModels,const Vec3f characterPosition, float anim);
 
 	//computing
-    bool computePosition(const Vec2i &screenPos, Vec2i &worldPos);
+    bool computePosition(const Vec2i &screenPos, Vec2i &worldPos,bool exactCoords=false);
 	void computeSelected(Selection::UnitContainer &units, const Object *&obj, const bool withObjectSelection, const Vec2i &posDown, const Vec2i &posUp);
 	void selectUsingColorPicking(Selection::UnitContainer &units, const Object *&obj,const bool withObjectSelection,const Vec2i &posDown, const Vec2i &posUp);
 	void selectUsingSelectionBuffer(Selection::UnitContainer &units,const Object *&obj, const bool withObjectSelection,const Vec2i &posDown, const Vec2i &posUp);
@@ -522,58 +579,76 @@ public:
 
 	//misc
 	void loadConfig();
-	void saveScreen(const string &path);
-	Quad2i getVisibleQuad() const		{return visibleQuad;}
-	Quad2i getVisibleQuadFromCamera() const		{return visibleQuadFromCamera;}
+	void saveScreen(const string &path,int w=0, int h=0);
+	inline Quad2i getVisibleQuad() const		{return visibleQuad;}
+	inline Quad2i getVisibleQuadFromCamera() const		{return visibleQuadFromCamera;}
 	void renderTeamColorPlane();
+	void renderSpecialHighlightUnits(std::map<int,HighlightSpecialUnitInfo> unitHighlightList);
 	void renderTeamColorCircle();
+	void renderMorphEffects();
 
 	//static
 	static Shadows strToShadows(const string &s);
 	static string shadowsToStr(Shadows shadows);
 
-	const Game * getGame() { return game; }
+	inline const Game * getGame() { return game; }
 
 	void setAllowRenderUnitTitles(bool value);
-	bool getAllowRenderUnitTitles() { return allowRenderUnitTitles; }
+	inline bool getAllowRenderUnitTitles() { return allowRenderUnitTitles; }
 	void renderUnitTitles(Font2D *font, Vec3f color);
 	void renderUnitTitles3D(Font3D *font, Vec3f color);
 	Vec3f computeScreenPosition(const Vec3f &worldPos);
 
 	void setPhotoMode(bool value) { photoMode = value; }
 
-	bool getNo2DMouseRendering() const { return no2DMouseRendering; }
+	inline bool getNo2DMouseRendering() const { return no2DMouseRendering; }
 	void setNo2DMouseRendering(bool value) { no2DMouseRendering = value; }
 
-	bool getShowDebugUI() const { return showDebugUI; }
+	inline bool getShowDebugUI() const { return showDebugUI; }
 	void setShowDebugUI(bool value) { showDebugUI = value; }
 
-	int getShowDebugUILevel() const { return showDebugUILevel; }
+	inline int getShowDebugUILevel() const { return showDebugUILevel; }
 	void setShowDebugUILevel(int value) { showDebugUILevel=value; }
 	void cycleShowDebugUILevel();
 
 	void setLastRenderFps(int value);
-	int getLastRenderFps() const { return lastRenderFps;}
+	inline int getLastRenderFps() const { return lastRenderFps;}
 
 	VisibleQuadContainerCache & getQuadCache(bool updateOnDirtyFrame=true,bool forceNew=false);
+	std::pair<bool,Vec3f> posInCellQuadCache(Vec2i pos);
+	Vec3f getMarkedCellScreenPosQuadCache(Vec2i pos);
+	void updateMarkedCellScreenPosQuadCache(Vec2i pos);
+	void forceQuadCacheUpdate();
+	void renderVisibleMarkedCells(bool renderTextHint=false,int x=-1, int y=-1);
+	void renderMarkedCellsOnMinimap();
+
+	void renderHighlightedCellsOnMinimap();
+
 	void removeObjectFromQuadCache(const Object *o);
 	void removeUnitFromQuadCache(const Unit *unit);
 
-	uint64 getCurrentPixelByteCount(ResourceScope rs=rsGame) const;
+	std::size_t getCurrentPixelByteCount(ResourceScope rs=rsGame) const;
 	unsigned int getSaveScreenQueueSize();
 
 	Texture2D *saveScreenToTexture(int x, int y, int width, int height);
 
 	void renderProgressBar(int size, int x, int y, Font2D *font,int customWidth=-1, string prefixLabel="", bool centeredText=true);
 
-	static Texture2D * findFactionLogoTexture(string logoFilename);
+	static Texture2D * findTexture(string logoFilename);
 	static Texture2D * preloadTexture(string logoFilename);
-	int getCachedSurfaceDataSize() const { return mapSurfaceData.size(); }
+	inline int getCachedSurfaceDataSize() const { return (int)mapSurfaceData.size(); }
 
-	void setCustom3dMenuList(GLuint *customlist3dMenu) { this->customlist3dMenu = customlist3dMenu; }
-	GLuint * getCustom3dMenuList() const { return this->customlist3dMenu; }
+	//void setCustom3dMenuList(GLuint *customlist3dMenu) { this->customlist3dMenu = customlist3dMenu; }
+	//inline GLuint * getCustom3dMenuList() const { return this->customlist3dMenu; }
+	void setCustom3dMenu(const MainMenu *mm) { this->custom_mm3d = mm; }
+	const MainMenu * getCustom3dMenu() { return this->custom_mm3d; }
 
 	void init3dListMenu(const MainMenu *mm);
+
+	void setProgram(Program *program) { this->program = program; }
+
+	void setupRenderForVideo();
+	virtual void renderVideoLoading(int progressPercent);
 
 private:
 	//private misc
@@ -581,7 +656,10 @@ private:
 	float computeMoonAngle(float time);
 	Vec4f computeSunPos(float time);
 	Vec4f computeMoonPos(float time);
-	Vec4f computeWaterColor(float waterLevel, float cellHeight);
+	inline Vec4f computeWaterColor(float waterLevel, float cellHeight) {
+		const float waterFactor= 1.5f;
+		return Vec4f(1.f, 1.f, 1.f, clamp((waterLevel-cellHeight) * waterFactor, 0.f, 1.f));
+	}
 	void checkExtension(const string &extension, const string &msg);
 
 	//selection render
@@ -607,12 +685,15 @@ private:
 	void renderTile(const Vec2i &pos);
 	void renderQuad(int x, int y, int w, int h, const Texture2D *texture);
 
-	void simpleTask(BaseThread *callingThread);
+	void simpleTask(BaseThread *callingThread,void *userdata);
 
 	//static
     static Texture2D::Filter strToTextureFilter(const string &s);
     void cleanupScreenshotThread();
 
+    void render2dMenuSetup();
+    void render3dSetup();
+    void render3dMenuSetup(const MainMenu *mm);
 };
 
 }} //end namespace

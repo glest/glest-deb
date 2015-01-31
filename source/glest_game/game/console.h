@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_CONSOLE_H_
 #define _GLEST_GAME_CONSOLE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <utility>
 #include <string>
 #include <vector>
@@ -70,12 +75,16 @@ private:
 	int lineHeight;
 	Font2D *font;
 	Font3D *font3D;
+	bool onlyChatMessagesInStoredLines;
 
 public:
 	Console();
 
-	int getStoredLineCount() const		{return storedLines.size();}
-	int getLineCount() const			{return lines.size();}
+	int getStoredLineCount() const		{return (int)storedLines.size();}
+	int getLineCount() const			{return (int)lines.size();}
+	bool getOnlyChatMessagesInStoredLines() const { return onlyChatMessagesInStoredLines ;}
+	void setOnlyChatMessagesInStoredLines(bool value)	{this->onlyChatMessagesInStoredLines= value;}
+
 	int getXPos() const {return xPos;}
 	void setXPos(int xPos)	{this->xPos= xPos;}
 	int getYPos() const {return yPos;}
@@ -97,9 +106,12 @@ public:
 	ConsoleLineInfo getStoredLineItem(int i) const;
 
 	void clearStoredLines();
-	void addStdMessage(const string &s);
-	void addStdScenarioMessage(const string &s);
-	void addLine(string line, bool playSound= false,int playerIndex=-1,Vec3f textColor=Vec3f(1.f, 1.f, 1.f),bool teamMode=false);
+	void addStdMessage(const string &s, bool clearOtherLines=false);
+	void addStdMessage(const string &s, string failText, bool clearOtherLines=false);
+
+	void addStdScenarioMessage(const string &s,bool clearOtherLines=false);
+	void addLineOnly(string line);
+	void addLine(string line, bool playSound= false,int playerIndex=-1,Vec3f textColor=Vec3f(1.f, 1.f, 1.f),bool teamMode=false,bool clearOtherLines=false);
 	void addLine(string line, bool playSound,string playerName, Vec3f textColor=Vec3f(1.f, 1.f, 1.f),bool teamMode=false);
 	void addLine(string line, bool playSound, Vec3f textColor) { addLine(line,playSound,"",textColor,false); }
 	void update();

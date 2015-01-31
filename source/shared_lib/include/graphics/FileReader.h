@@ -1,12 +1,8 @@
 // ==============================================================
-//	This file is part of Glest Shared Library (www.glest.org)
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
 //
-//	Copyright (C) 2001-2010 Martiño Figueroa and others
-//
-//	You can redistribute this code and/or modify it under
-//	the terms of the GNU General Public License as published
-//	by the Free Software Foundation; either version 2 of the
-//	License, or (at your option) any later version
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//	The Megaglest Team, under GNU GPL v3.0
 // ==============================================================
 
 #ifndef FILE_READER_H
@@ -99,6 +95,8 @@ public:
 	 * can be read or not depending on the file content*/
 	virtual bool canRead(ifstream& file) const;
 
+	virtual void cleanupExtensions();
+
 	/**Reads a file
 	 * This method tries to read the file with the specified filepath
 	 * If it fails, either <code>null</code> is returned or an exception
@@ -137,6 +135,7 @@ public:
 	virtual T* read(ifstream& file, const string& path, T* former) const = 0;
 
 	virtual ~FileReader() {
+		cleanupExtensions();
 	}; //Well ... these objects aren't supposed to be destroyed
 };
 
@@ -149,8 +148,8 @@ static inline T* readFromFileReaders(vector<FileReader<T> const *>* readers, con
 #else
 	ifstream file(filepath.c_str(), ios::in | ios::binary);
 #endif
-	if (!file.is_open()) { //An error occured; TODO: Which one - throw an exception, print error message?
-		throw runtime_error("Could not open file " + filepath);
+	if (!file.is_open()) {
+		throw megaglest_runtime_error("[#1] Could not open file " + filepath);
 	}
 	for (typename vector<FileReader<T> const *>::const_iterator i = readers->begin(); i != readers->end(); ++i) {
 		T* ret = NULL;
@@ -159,20 +158,27 @@ static inline T* readFromFileReaders(vector<FileReader<T> const *>* readers, con
 			FileReader<T> const * reader = *i;
 			ret = reader->read(file, filepath); //It is guaranteed that at least the filepath matches ...
 		}
-		catch (...) { //TODO: Specific exceptions
+#if defined(WIN32)
+		catch (megaglest_runtime_error) {
+#else
+		catch (megaglest_runtime_error &ex) {
+#endif
+			throw;
+		}
+		catch (...) {
 			continue;
 		}
 		if (ret != NULL) {
 			file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-			fclose(fp);
+			if(fp) fclose(fp);
 #endif
 			return ret;
 		}
 	}
 	file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 
 	return NULL;
@@ -189,12 +195,12 @@ static inline T* readFromFileReaders(vector<FileReader<T> const *>* readers, con
 #else
 	ifstream file(filepath.c_str(), ios::in | ios::binary);
 #endif
-	if (!file.is_open()) { //An error occured; TODO: Which one - throw an exception, print error message?
+	if (!file.is_open()) {
 #if defined(WIN32) && !defined(__MINGW32__)
 		DWORD error = GetLastError();
-		throw runtime_error("Could not open file, result: " + intToStr(error) + " - " + intToStr(fileErrno) + " [" + filepath + "]");
+		throw megaglest_runtime_error("[#2] Could not open file, result: " + intToStr(error) + " - " + intToStr(fileErrno) + " [" + filepath + "]");
 #else
-		throw runtime_error("Could not open file [" + filepath + "]");
+		throw megaglest_runtime_error("[#2] Could not open file [" + filepath + "]");
 #endif
 	}
 	for (typename vector<FileReader<T> const *>::const_iterator i = readers->begin(); i != readers->end(); ++i) {
@@ -203,20 +209,28 @@ static inline T* readFromFileReaders(vector<FileReader<T> const *>* readers, con
 		try {
 			FileReader<T> const * reader = *i;
 			ret = reader->read(file, filepath, object); //It is guaranteed that at least the filepath matches ...
-		} catch (...) { //TODO: Specific exceptions
+		}
+#if defined(WIN32)
+		catch (megaglest_runtime_error) {
+#else
+		catch (megaglest_runtime_error &ex) {
+#endif
+			throw;
+		}
+		catch (...) {
 			continue;
 		}
 		if (ret != NULL) {
 			file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-			fclose(fp);
+			if(fp) fclose(fp);
 #endif
 			return ret;
 		}
 	}
 	file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 	return NULL;
 }
@@ -239,7 +253,7 @@ T* FileReader<T>::readPath(const string& filepath) {
 	T* ret = readFromFileReaders(&(getFileReaders()), filepath); //Try all other
 	if (ret == NULL) {
 		std::cerr << "ERROR #1 - Could not parse filepath: " << filepath << std::endl;
-		throw runtime_error(string("Could not parse ") + filepath + " as object of type " + typeid(T).name());
+		throw megaglest_runtime_error(string("Could not parse ") + filepath + " as object of type " + typeid(T).name());
 	}
 	return ret;
 }
@@ -264,7 +278,7 @@ T* FileReader<T>::readPath(const string& filepath, T* object) {
 		std::cerr << "ERROR #2 - Could not parse filepath: " << filepath << std::endl;
 		ret = readFromFileReaders(&(getLowPriorityFileReaders()), filepath); //Try to get dummy file
 		if (ret == NULL) {
-			throw runtime_error(string("Could not parse ") + filepath + " as object of type " + typeid(T).name());
+			throw megaglest_runtime_error(string("Could not parse ") + filepath + " as object of type " + typeid(T).name());
 		}
 	}
 	return ret;
@@ -280,6 +294,18 @@ FileReader<T>::FileReader(std::vector<string> extensions): extensions(extensions
 			(getFileReadersMap())[nextExtension[i]] = (curPossibleReaders = new vector<FileReader<T> const *>());
 		}
 		curPossibleReaders->push_back(this);
+	}
+}
+
+template <typename T>
+void FileReader<T>::cleanupExtensions() {
+	std::vector<string> nextExtension = extensions;
+	for(unsigned int i = 0; i < nextExtension.size(); ++i) {
+		vector<FileReader<T> const* >* curPossibleReaders = (getFileReadersMap())[nextExtension[i]];
+		if (curPossibleReaders != NULL) {
+			delete curPossibleReaders;
+			(getFileReadersMap())[nextExtension[i]] = NULL;
+		}
 	}
 }
 
@@ -310,7 +336,15 @@ bool FileReader<T>::canRead(ifstream& file) const {
 		bool ret = (wouldRead != NULL);
 		delete wouldRead;
 		return ret;
-	} catch (...) {
+	}
+#if defined(WIN32)
+	catch (megaglest_runtime_error) {
+#else
+	catch (megaglest_runtime_error &ex) {
+#endif
+		throw;
+	}
+	catch (...) {
 		return false;
 	}
 }
@@ -328,13 +362,13 @@ T* FileReader<T>::read(const string& filepath) const {
 #else
 	ifstream file(filepath.c_str(), ios::in | ios::binary);
 #endif
-	if (!file.is_open()) { //An error occured; TODO: Which one - throw an exception, print error message?
-		throw runtime_error("Could not open file " + filepath);
+	if (!file.is_open()) {
+		throw megaglest_runtime_error("[#3] Could not open file " + filepath);
 	}
 	T* ret = read(file,filepath);
 	file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 
 	return ret;
@@ -353,13 +387,13 @@ T* FileReader<T>::read(const string& filepath, T* object) const {
 #else
 	ifstream file(filepath.c_str(), ios::in | ios::binary);
 #endif
-	if (!file.is_open()) { //An error occured; TODO: Which one - throw an exception, print error message?
-		throw runtime_error("Could not open file " + filepath);
+	if (!file.is_open()) {
+		throw megaglest_runtime_error("[#4] Could not open file " + filepath);
 	}
 	T* ret = read(file,filepath,object);
 	file.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 
 	return ret;

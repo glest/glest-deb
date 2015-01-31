@@ -32,46 +32,196 @@ namespace Glest{ namespace Game{
 // 	class TechTree
 // =====================================================
 
-TechTree::TechTree() {
+TechTree::TechTree(const vector<string> pathList) {
 	SkillType::resetNextAttackBoostId();
 
 	name="";
 	treePath="";
+	this->pathList.assign(pathList.begin(), pathList.end());
 
     resourceTypes.clear();
     factionTypes.clear();
 	armorTypes.clear();
 	attackTypes.clear();
+	translatedTechNames.clear();
+	translatedTechFactionNames.clear();
+	languageUsedForCache = "";
+	isValidationModeEnabled = false;
 }
 
-Checksum TechTree::loadTech(const vector<string> pathList, const string &techName,
-		set<string> &factions, Checksum* checksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
-	name = "";
-    Checksum techtreeChecksum;
-    for(int idx = 0; idx < pathList.size(); idx++) {
-    	string currentPath = pathList[idx];
-    	endPathWithSlash(currentPath);
+string TechTree::getNameUntranslated() const {
+	return name;
+}
 
-        string path = currentPath + techName;
-        if(isdir(path.c_str()) == true) {
-            load(path, factions, checksum, &techtreeChecksum, loadedFileList);
-            break;
-        }
+string TechTree::getName(bool translatedValue) {
+	if(translatedValue == false) {
+		return getNameUntranslated();
+	}
+
+	bool foundTranslation = false;
+	Lang &lang = Lang::getInstance();
+	if(lang.getTechNameLoaded() != name ||
+		lang.getLanguage() != languageUsedForCache) {
+		//printf("Line: %d Tech [%s]\n",__LINE__,name.c_str());
+
+		foundTranslation = lang.loadTechTreeStrings(name,lang.getLanguage() != languageUsedForCache);
+		languageUsedForCache = lang.getLanguage();
+		translatedTechFactionNames.erase(name);
+		translatedTechNames.erase(name);
+	}
+
+	string result = name;
+	if(foundTranslation == true) {
+		result = lang.getTechTreeString("TechTreeName",name.c_str());
+	}
+	else {
+		result = formatString(result);
+	}
+
+
+	//printf("Line: %d Tech [%s] result [%s]\n",__LINE__,name.c_str(),result.c_str());
+	return result;
+}
+
+string TechTree::getTranslatedName(string techName, bool forceLoad, bool forceTechtreeActiveFile) {
+	string result = techName;
+
+	//printf("Line: %d Tech [%s] forceLoad = %d forceTechtreeActiveFile = %d\n",__LINE__,techName.c_str(),forceLoad,forceTechtreeActiveFile);
+
+	Lang &lang = Lang::getInstance();
+	if(forceTechtreeActiveFile == false &&
+			translatedTechNames.find(techName) != translatedTechNames.end() &&
+			lang.getLanguage() == languageUsedForCache) {
+		result = translatedTechNames[techName];
+	}
+	else {
+		name = "";
+		string path = findPath(techName);
+		if(path != "") {
+			string currentPath = path;
+			endPathWithSlash(currentPath);
+			treePath = currentPath;
+			name= lastDir(currentPath);
+
+			lang.loadTechTreeStrings(name,lang.getLanguage() != languageUsedForCache);
+			languageUsedForCache = lang.getLanguage();
+
+			translatedTechFactionNames.erase(techName);
+			translatedTechNames.erase(techName);
+
+			result = getName(true);
+
+			//printf("techName [%s] name [%s] result [%s]\n",techName.c_str(),name.c_str(),result.c_str());
+			translatedTechNames[name] = result;
+		}
+
+	}
+	return result;
+}
+
+string TechTree::getTranslatedFactionName(string techName, string factionName) {
+	//printf("Line: %d Tech [%s] name [%s] factionName [%s]\n",__LINE__,techName.c_str(),name.c_str(),factionName.c_str());
+
+	Lang &lang = Lang::getInstance();
+	if(lang.getTechNameLoaded() != techName ||
+		lang.getLanguage() != languageUsedForCache) {
+		//printf("Line: %d Tech [%s] name [%s] lang.getTechNameLoaded() [%s] factionName [%s]\n",__LINE__,techName.c_str(),name.c_str(),lang.getTechNameLoaded().c_str(),factionName.c_str());
+
+		lang.loadTechTreeStrings(techName,lang.getLanguage() != languageUsedForCache);
+		languageUsedForCache = lang.getLanguage();
+
+		translatedTechFactionNames.erase(techName);
+	}
+
+	std::map<string,std::map<string,string> >::iterator iterMap = translatedTechFactionNames.find(techName);
+	if(iterMap != translatedTechFactionNames.end()) {
+		if(iterMap->second.find(factionName) != iterMap->second.end()) {
+			//printf("Line: %d Tech [%s] factionName [%s]\n",__LINE__,techName.c_str(),factionName.c_str());
+
+			return iterMap->second.find(factionName)->second;
+		}
+	}
+
+	//printf("Line: %d Tech [%s] factionName [%s]\n",__LINE__,techName.c_str(),factionName.c_str());
+
+	getTranslatedName(techName,false,true);
+
+	string result = lang.getTechTreeString("FactionName_" + factionName,formatString(factionName).c_str());
+	//printf(">>result = %s\n",result.c_str());
+	translatedTechFactionNames[techName][factionName] = result;
+
+	//printf("Line: %d Translated faction for Tech [%s] faction [%s] result [%s]\n",__LINE__,techName.c_str(),factionName.c_str(),result.c_str());
+
+	return result;
+}
+
+Checksum TechTree::loadTech(const string &techName,
+		set<string> &factions, Checksum* checksum,
+		std::map<string,vector<pair<string, string> > > &loadedFileList,
+		bool validationMode) {
+	name = "";
+	isValidationModeEnabled = validationMode;
+    Checksum techtreeChecksum;
+    string path=findPath(techName);
+    if(path!="") {
+    	//printf(">>> path=%s\n",path.c_str());
+        load(path, factions, checksum, &techtreeChecksum, loadedFileList,
+        		validationMode);
+    }
+    else {
+    	printf(">>> techtree [%s] path not found.\n",techName.c_str());
     }
     return techtreeChecksum;
 }
 
+bool TechTree::exists(const string &techName, const vector<string> &pathTechList) {
+	bool techFound = false;
+	std::auto_ptr<TechTree> techTree(new TechTree(pathTechList));
+    string path = techTree->findPath(techName);
+    if(path != "") {
+    	techFound = true;
+    }
+	return techFound;
+}
+
+string TechTree::findPath(const string &techName) const {
+	return findPath(techName,pathList);
+}
+string TechTree::findPath(const string &techName, const vector<string> &pathTechList) {
+    for(unsigned int idx = 0; idx < pathTechList.size(); ++idx) {
+    	string currentPath = (pathTechList)[idx];
+    	endPathWithSlash(currentPath);
+
+        string path = currentPath + techName;
+
+        //printf(">>> test path=%s\n",path.c_str());
+        if(isdir(path.c_str()) == true) {
+            return path;
+            //break;
+        }
+    }
+    //return "no path found for tech: \""+techname+"\"";
+    return "";
+}
+
+
 void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum,
-		Checksum *techtreeChecksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		Checksum *techtreeChecksum,
+		std::map<string,vector<pair<string, string> > > &loadedFileList,
+		bool validationMode) {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	string currentPath = dir;
 	endPathWithSlash(currentPath);
 	treePath = currentPath;
 	name= lastDir(currentPath);
 
-	char szBuf[1024]="";
-	sprintf(szBuf,Lang::getInstance().get("LogScreenGameLoadingTechtree","",true).c_str(),formatString(name).c_str());
+    Lang &lang = Lang::getInstance();
+    lang.loadTechTreeStrings(name, true);
+    languageUsedForCache = lang.getLanguage();
+
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingTechtree","",true).c_str(),formatString(getName(true)).c_str());
 	Logger::getInstance().add(szBuf, true);
 
 	vector<string> filenames;
@@ -82,7 +232,7 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
         findAll(str, filenames);
 		resourceTypes.resize(filenames.size());
 
-        for(int i=0; i<filenames.size(); ++i){
+        for(int i = 0; i < (int)filenames.size(); ++i){
             str= currentPath + "resources/" + filenames[i];
             resourceTypes[i].load(str, checksum, &checksumValue, loadedFileList,
             					treePath);
@@ -91,13 +241,13 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
         }
 
         // Cleanup pixmap memory
-        for(int i = 0; i < filenames.size(); ++i) {
+        for(int i = 0; i < (int)filenames.size(); ++i) {
         	resourceTypes[i].deletePixels();
         }
     }
     catch(const exception &e){
-    	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading Resource Types in: [" + currentPath + "]\n" + e.what());
+    	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		throw megaglest_runtime_error("Error loading Resource Types in: [" + currentPath + "]\n" + e.what(),isValidationModeEnabled);
     }
 
     // give CPU time to update other things to avoid apperance of hanging
@@ -120,12 +270,15 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 		xmlTree.load(path, Properties::getTagReplacementValues(&mapExtraTagReplacementValues));
 		loadedFileList[path].push_back(make_pair(currentPath,currentPath));
 
+		Properties::setTechtreePath(currentPath);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("==> Set techtree path to [%s]\n",currentPath.c_str());
+
 		const XmlNode *techTreeNode= xmlTree.getRootNode();
 
 		//attack types
 		const XmlNode *attackTypesNode= techTreeNode->getChild("attack-types");
 		attackTypes.resize(attackTypesNode->getChildCount());
-		for(int i = 0; i < attackTypes.size(); ++i) {
+		for(int i = 0; i < (int)attackTypes.size(); ++i) {
 			const XmlNode *attackTypeNode= attackTypesNode->getChild("attack-type", i);
 			attackTypes[i].setName(attackTypeNode->getAttribute("name")->getRestrictedValue());
 			attackTypes[i].setId(i);
@@ -141,7 +294,7 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 		//armor types
 		const XmlNode *armorTypesNode= techTreeNode->getChild("armor-types");
 		armorTypes.resize(armorTypesNode->getChildCount());
-		for(int i = 0; i < armorTypes.size(); ++i) {
+		for(int i = 0; i < (int)armorTypes.size(); ++i) {
 			const XmlNode *armorTypeNode= armorTypesNode->getChild("armor-type", i);
 			armorTypes[i].setName(armorTypeNode->getAttribute("name")->getRestrictedValue());
 			armorTypes[i].setId(i);
@@ -151,13 +304,13 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 		}
 
 		//damage multipliers
-		damageMultiplierTable.init(attackTypes.size(), armorTypes.size());
+		damageMultiplierTable.init((int)attackTypes.size(), (int)armorTypes.size());
 		const XmlNode *damageMultipliersNode= techTreeNode->getChild("damage-multipliers");
-		for(int i = 0; i < damageMultipliersNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)damageMultipliersNode->getChildCount(); ++i) {
 			const XmlNode *damageMultiplierNode= damageMultipliersNode->getChild("damage-multiplier", i);
 			const AttackType *attackType= getAttackType(damageMultiplierNode->getAttribute("attack")->getRestrictedValue());
 			const ArmorType *armorType= getArmorType(damageMultiplierNode->getAttribute("armor")->getRestrictedValue());
-			float multiplier= damageMultiplierNode->getAttribute("value")->getFloatValue();
+			double multiplier= damageMultiplierNode->getAttribute("value")->getFloatValue();
 			damageMultiplierTable.setDamageMultiplier(attackType, armorType, multiplier);
 
 			Window::handleEvent();
@@ -165,8 +318,8 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 		}
     }
     catch(const exception &e){
-    	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading Tech Tree: "+ currentPath + "\n" + e.what());
+    	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		throw megaglest_runtime_error("Error loading Tech Tree: "+ currentPath + "\n" + e.what(),isValidationModeEnabled);
     }
 
     // give CPU time to update other things to avoid apperance of hanging
@@ -174,7 +327,6 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 	//SDL_PumpEvents();
 
 	//load factions
-	str = currentPath + "factions/*.";
     try{
 		factionTypes.resize(factions.size());
 
@@ -182,18 +334,18 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 		for ( set<string>::iterator it = factions.begin(); it != factions.end(); ++it ) {
 			string factionName = *it;
 
-		    char szBuf[1024]="";
-		    sprintf(szBuf,"%s %s [%d / %d] - %s",Lang::getInstance().get("Loading").c_str(),
-		    		Lang::getInstance().get("Faction").c_str(),
+		    char szBuf[8096]="";
+		    snprintf(szBuf,8096,"%s %s [%d / %d] - %s",Lang::getInstance().getString("Loading").c_str(),
+		    		Lang::getInstance().getString("Faction").c_str(),
 		    		i+1,
 		    		(int)factions.size(),
-		    		factionName.c_str());
+		    		formatString(this->getTranslatedFactionName(name,factionName)).c_str());
 		    Logger &logger= Logger::getInstance();
 		    logger.setState(szBuf);
 		    logger.setProgress((int)((((double)i) / (double)factions.size()) * 100.0));
 
-			str = currentPath + "factions/" + factionName;
-			factionTypes[i++].load(str, this, checksum,&checksumValue,loadedFileList);
+			factionTypes[i++].load(factionName, this, checksum,&checksumValue,
+					loadedFileList,validationMode);
 
 		    // give CPU time to update other things to avoid apperance of hanging
 		    sleep(0);
@@ -201,26 +353,34 @@ void TechTree::load(const string &dir, set<string> &factions, Checksum* checksum
 			SDL_PumpEvents();
         }
     }
+    catch(megaglest_runtime_error& ex) {
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
+		throw megaglest_runtime_error("Error loading Faction Types: "+ currentPath + "\nMessage: " + ex.what(),!ex.wantStackTrace() || isValidationModeEnabled);
+    }
 	catch(const exception &e){
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading Faction Types: "+ currentPath + "\n" + e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		throw megaglest_runtime_error("Error loading Faction Types: "+ currentPath + "\nMessage: " + e.what(),isValidationModeEnabled);
     }
 
     if(techtreeChecksum != NULL) {
         *techtreeChecksum = checksumValue;
     }
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 TechTree::~TechTree() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingTechtree","",true), true);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingTechtree","",true), true);
+	resourceTypes.clear();
+	factionTypes.clear();
+	armorTypes.clear();
+	attackTypes.clear();
 }
 
 std::vector<std::string> TechTree::validateFactionTypes() {
 	std::vector<std::string> results;
-	for (int i = 0; i < factionTypes.size(); ++i) {
+	for (int i = 0; i < (int)factionTypes.size(); ++i) {
 		std::vector<std::string> factionResults = factionTypes[i].validateFactionType();
 		if(factionResults.empty() == false) {
 			results.insert(results.end(), factionResults.begin(), factionResults.end());
@@ -238,6 +398,10 @@ std::vector<std::string> TechTree::validateFactionTypes() {
 std::vector<std::string> TechTree::validateResourceTypes() {
 	std::vector<std::string> results;
 	ResourceTypes resourceTypesNotUsed = resourceTypes;
+	for (unsigned int i = 0; i < resourceTypesNotUsed.size(); ++i) {
+		ResourceType &rt = resourceTypesNotUsed[i];
+		rt.setCleanupMemory(false);
+	}
 	for (unsigned int i = 0; i < factionTypes.size(); ++i) {
 		//printf("Validating [%d / %d] faction [%s]\n",i,(int)factionTypes.size(),factionTypes[i].getName().c_str());
 
@@ -248,7 +412,7 @@ std::vector<std::string> TechTree::validateResourceTypes() {
 
 		// Check if the faction uses the resources in this techtree
 		// Now lets find a matching faction resource type for the unit
-		for(int j = resourceTypesNotUsed.size() -1; j >= 0; --j) {
+		for(int j = (int)resourceTypesNotUsed.size() -1; j >= 0; --j) {
 			const ResourceType &rt = resourceTypesNotUsed[j];
 			//printf("Validating [%d / %d] resourcetype [%s]\n",j,(int)resourceTypesNotUsed.size(),rt.getName().c_str());
 
@@ -264,8 +428,8 @@ std::vector<std::string> TechTree::validateResourceTypes() {
 
 		for (unsigned int i = 0; i < resourceTypesNotUsed.size(); ++i) {
 			const ResourceType &rt = resourceTypesNotUsed[i];
-			char szBuf[4096]="";
-			sprintf(szBuf,"The Resource type [%s] is not used by any units in this techtree!",rt.getName().c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"The Resource type [%s] is not used by any units in this techtree!",rt.getName().c_str());
 			results.push_back(szBuf);
 		}
 	}
@@ -275,23 +439,23 @@ std::vector<std::string> TechTree::validateResourceTypes() {
 // ==================== get ====================
 
 FactionType *TechTree::getTypeByName(const string &name) {
-    for(int i=0; i < factionTypes.size(); ++i) {
-          if(factionTypes[i].getName() == name) {
+    for(int i=0; i < (int)factionTypes.size(); ++i) {
+          if(factionTypes[i].getName(false) == name) {
                return &factionTypes[i];
           }
     }
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    throw runtime_error("Faction not found: "+name);
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+    throw megaglest_runtime_error("Faction not found: " + name,isValidationModeEnabled);
 }
 
 const FactionType *TechTree::getType(const string &name) const {
-    for(int i=0; i < factionTypes.size(); ++i) {
-          if(factionTypes[i].getName() == name) {
+    for(int i=0; i < (int)factionTypes.size(); ++i) {
+          if(factionTypes[i].getName(false) == name) {
                return &factionTypes[i];
           }
     }
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    throw runtime_error("Faction not found: "+name);
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+    throw megaglest_runtime_error("Faction not found: " + name,isValidationModeEnabled);
 }
 
 const ResourceType *TechTree::getTechResourceType(int i) const{
@@ -299,7 +463,7 @@ const ResourceType *TechTree::getTechResourceType(int i) const{
           const ResourceType *rt= getResourceType(j);
           assert(rt != NULL);
           if(rt == NULL) {
-        	  throw runtime_error("rt == NULL");
+        	  throw megaglest_runtime_error("rt == NULL");
           }
           if(rt->getResourceNumber() == i && rt->getClass() == rcTech)
                return getResourceType(j);
@@ -316,42 +480,88 @@ const ResourceType *TechTree::getFirstTechResourceType() const{
                return getResourceType(i);
      }
 
-	 throw runtime_error("This tech tree has not tech resources, one at least is required");
+     char szBuf[8096]="";
+     snprintf(szBuf,8096,"The referenced tech tree [%s] is either missing or has no resources defined but at least one resource is required.",this->name.c_str());
+     throw megaglest_runtime_error(szBuf,isValidationModeEnabled);
 }
 
 const ResourceType *TechTree::getResourceType(const string &name) const{
 
-	for(int i=0; i<resourceTypes.size(); ++i){
+	for(int i=0; i < (int)resourceTypes.size(); ++i){
 		if(resourceTypes[i].getName()==name){
 			return &resourceTypes[i];
 		}
 	}
 
-	throw runtime_error("Resource Type not found: "+name);
+	throw megaglest_runtime_error("Resource Type not found: " + name,isValidationModeEnabled);
 }
 
 const ArmorType *TechTree::getArmorType(const string &name) const{
-	for(int i=0; i<armorTypes.size(); ++i){
-		if(armorTypes[i].getName()==name){
+	for(int i=0; i < (int)armorTypes.size(); ++i){
+		if(armorTypes[i].getName(false)==name){
 			return &armorTypes[i];
 		}
 	}
 
-	throw runtime_error("Armor Type not found: "+name);
+	throw megaglest_runtime_error("Armor Type not found: " + name,isValidationModeEnabled);
 }
 
 const AttackType *TechTree::getAttackType(const string &name) const{
-	for(int i=0; i<attackTypes.size(); ++i){
-		if(attackTypes[i].getName()==name){
+	for(int i=0; i < (int)attackTypes.size(); ++i){
+		if(attackTypes[i].getName(false)==name){
 			return &attackTypes[i];
 		}
 	}
 
-	throw runtime_error("Attack Type not found: "+name);
+	throw megaglest_runtime_error("Attack Type not found: " + name,isValidationModeEnabled);
 }
 
-float TechTree::getDamageMultiplier(const AttackType *att, const ArmorType *art) const{
+double TechTree::getDamageMultiplier(const AttackType *att, const ArmorType *art) const {
 	return damageMultiplierTable.getDamageMultiplier(att, art);
+}
+
+void TechTree::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *techTreeNode = rootNode->addChild("TechTree");
+
+//	string name;
+	techTreeNode->addAttribute("name",name, mapTagReplacements);
+//    //string desc;
+//	string treePath;
+	//techTreeNode->addAttribute("treePath",treePath, mapTagReplacements);
+//	vector<string> pathList;
+//	for(unsigned int i = 0; i < pathList.size(); ++i) {
+//		XmlNode *pathListNode = techTreeNode->addChild("pathList");
+//		pathListNode->addAttribute("value",pathList[i], mapTagReplacements);
+//	}
+//    ResourceTypes resourceTypes;
+//	for(unsigned int i = 0; i < resourceTypes.size(); ++i) {
+//		ResourceType &rt = resourceTypes[i];
+//		rt.saveGame(techTreeNode);
+//	}
+//    FactionTypes factionTypes;
+//	for(unsigned int i = 0; i < factionTypes.size(); ++i) {
+//		FactionType &ft = factionTypes[i];
+//		ft.saveGame(techTreeNode);
+//	}
+
+//	ArmorTypes armorTypes;
+//	for(unsigned int i = 0; i < armorTypes.size(); ++i) {
+//		ArmorType &at = armorTypes[i];
+//		at.saveGame(techTreeNode);
+//	}
+
+//	AttackTypes attackTypes;
+//	for(unsigned int i = 0; i < attackTypes.size(); ++i) {
+//		AttackType &at = attackTypes[i];
+//		at.saveGame(techTreeNode);
+//	}
+
+//	DamageMultiplierTable damageMultiplierTable;
+//	damageMultiplierTable.saveGame(techTreeNode);
+
+//	Checksum checksumValue;
+	techTreeNode->addAttribute("checksumValue",intToStr(checksumValue.getSum()), mapTagReplacements);
 }
 
 }}//end namespace

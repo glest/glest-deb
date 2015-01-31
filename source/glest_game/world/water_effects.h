@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_WATER_EFFECTS_H_
 #define _GLEST_GAME_WATER_EFFECTS_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <vector>
 #include "vec.h"
 #include "leak_dumper.h"
@@ -68,7 +73,7 @@ public:
 	float getAmin() const	{return anim;}
 
 	void addWaterSplash(const Vec2f &pos, int size);
-	int getWaterSplashCount() const					{return waterSplashes.size();}
+	int getWaterSplashCount() const					{return (int)waterSplashes.size();}
 	const WaterSplash *getWaterSplash(int i) const	{return &waterSplashes[i];}
 };
 

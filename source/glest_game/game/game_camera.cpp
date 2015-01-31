@@ -17,6 +17,7 @@
 #include "game_constants.h"
 #include "xml_parser.h"
 #include "conversion.h"
+#include "platform_common.h"
 #include "leak_dumper.h"
 
 
@@ -45,19 +46,21 @@ const float GameCamera::centerOffsetZ= 8.0f;
 
 GameCamera::GameCamera() : pos(0.f, defaultHeight, 0.f),
 		destPos(0.f, defaultHeight, 0.f), destAng(startingVAng, startingHAng) {
-	Config &config = Config::getInstance();
+	//Config &config = Config::getInstance();
 	calculatedDefault=defaultHeight;
     state= sGame;
 
     cacheVisibleQuad.clear();
-    MaxVisibleQuadItemCache = config.getInt("MaxVisibleQuadItemCache",intToStr(-1).c_str());
-    if(Config::getInstance().getBool("DisableCaching","false") == true) {
-    	MaxVisibleQuadItemCache = 0;
-    }
+    //MaxVisibleQuadItemCache = config.getInt("MaxVisibleQuadItemCache",intToStr(-1).c_str());
+    MaxVisibleQuadItemCache = -1;
+    //if(Config::getInstance().getBool("DisableCaching","false") == true) {
+    //	MaxVisibleQuadItemCache = 0;
+    //}
 
 	//config
-	speed= 15.f / GameConstants::cameraFps;
+	speed= Config::getInstance().getFloat("CameraMoveSpeed","15") / GameConstants::cameraFps;
 	clampBounds= !Config::getInstance().getBool("PhotoMode");
+	clampDisable = false;
 
 	vAng= startingVAng;
     hAng= startingHAng;
@@ -86,8 +89,8 @@ GameCamera::~GameCamera() {
 }
 
 std::string GameCamera::getCameraMovementKey() const {
-	char szBuf[1024]="";
-	sprintf(szBuf,"%s_%f_%f_%f_%s,%f",pos.getString().c_str(),hAng,vAng,rotate,move.getString().c_str(),fov);
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"%s_%f_%f_%f_%s,%f",pos.getString().c_str(),hAng,vAng,rotate,move.getString().c_str(),fov);
 	return szBuf;
 }
 
@@ -122,6 +125,14 @@ void GameCamera::setPos(Vec2f pos){
 	destPos.z = pos.y;
 }
 
+void GameCamera::setPos(Vec3f pos){
+	this->pos= pos;
+	//clampPosXZ(0.0f, (float)limitX, 0.0f, (float)limitY);
+	destPos.x = pos.x;
+	destPos.y = pos.y;
+	destPos.z = pos.z;
+}
+
 void GameCamera::update(){
 
 	//move XZ
@@ -133,23 +144,19 @@ void GameCamera::update(){
 	}
 
 	//free state
-	if(state==sFree){
-#ifdef USE_STREFLOP
-		if(streflop::fabs(rotate) == 1){
-#else
-		if(fabs(rotate) == 1){
-#endif
+	if(state==sFree ){
+		if(std::fabs(rotate) == 1){
 			rotateHV(speed*5*rotate, 0);
 		}
 		if(move.y>0){
 			moveUp(speed * move.y);
-			if(clampBounds && pos.y<maxHeight){
+			if(clampDisable == false && clampBounds && pos.y<maxHeight){
 				rotateHV(0.f, -speed * 1.7f * move.y);
 			}
 		}
 		if(move.y<0){
 			moveUp(speed * move.y);
-			if(clampBounds && pos.y>minHeight){
+			if(clampDisable == false && clampBounds && pos.y>minHeight){
 				rotateHV(0.f, -speed * 1.7f * move.y);
 			}
 		}
@@ -182,7 +189,7 @@ void GameCamera::update(){
 
 	clampAng();
 
-	if(clampBounds){
+	if(clampDisable == false && clampBounds){
 		clampPosXYZ(0.0f, (float)limitX, minHeight, maxHeight, 0.0f, (float)limitY);
 	}
 }
@@ -203,27 +210,14 @@ Quad2i GameCamera::computeVisibleQuad() {
 		}
 	}
 
-	//const float nearDist= 20.f;
-	//const float farDist= 90.f;
-	//const float dist= 20.f;
-
-//	float nearDist = 20.f;
-//	float dist = pos.y > 20.f ? pos.y * 1.2f : 20.f;
-//	float farDist = 90.f * (pos.y > 20.f ? pos.y / 15.f : 1.f);
 	float nearDist = 15.f;
 	float dist = pos.y > nearDist ? pos.y * 1.2f : nearDist;
 	float farDist = 90.f * (pos.y > nearDist ? pos.y / 15.f : 1.f);
 	const float viewDegree = 180.f;
 
-#ifdef USE_STREFLOP
-	Vec2f v(streflop::sinf(degToRad(viewDegree - hAng)), streflop::cosf(degToRad(viewDegree - hAng)));
-	Vec2f v1(streflop::sinf(degToRad(viewDegree - hAng - fov)), streflop::cosf(degToRad(viewDegree - hAng - fov)));
-	Vec2f v2(streflop::sinf(degToRad(viewDegree - hAng + fov)), streflop::cosf(degToRad(viewDegree - hAng + fov)));
-#else
-	Vec2f v(sinf(degToRad(viewDegree - hAng)), cosf(degToRad(viewDegree - hAng)));
-	Vec2f v1(sinf(degToRad(viewDegree - hAng - fov)), cosf(degToRad(viewDegree - hAng - fov)));
-	Vec2f v2(sinf(degToRad(viewDegree - hAng + fov)), cosf(degToRad(viewDegree - hAng + fov)));
-#endif
+	Vec2f v(std::sin(degToRad(viewDegree - hAng)), std::cos(degToRad(viewDegree - hAng)));
+	Vec2f v1(std::sin(degToRad(viewDegree - hAng - fov)), std::cos(degToRad(viewDegree - hAng - fov)));
+	Vec2f v2(std::sin(degToRad(viewDegree - hAng + fov)), std::cos(degToRad(viewDegree - hAng + fov)));
 
 	v.normalize();
 	v1.normalize();
@@ -243,7 +237,7 @@ Quad2i GameCamera::computeVisibleQuad() {
 
 		result = Quad2i(p1, p2, p3, p4);
 		if(MaxVisibleQuadItemCache != 0 &&
-		   (MaxVisibleQuadItemCache < 0 || cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
+		   (MaxVisibleQuadItemCache < 0 || (int)cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
 			cacheVisibleQuad[fov][hAng][pos] = result;
 		}
 	}
@@ -252,7 +246,7 @@ Quad2i GameCamera::computeVisibleQuad() {
 
 		result = Quad2i(p3, p1, p4, p2);
 		if(MaxVisibleQuadItemCache != 0 &&
-		   (MaxVisibleQuadItemCache < 0 || cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
+		   (MaxVisibleQuadItemCache < 0 || (int)cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
 			cacheVisibleQuad[fov][hAng][pos] = result;
 		}
 	}
@@ -261,7 +255,7 @@ Quad2i GameCamera::computeVisibleQuad() {
 
 		result = Quad2i(p2, p4, p1, p3);
 		if(MaxVisibleQuadItemCache != 0 &&
-		   (MaxVisibleQuadItemCache < 0 || cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
+		   (MaxVisibleQuadItemCache < 0 || (int)cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
 			cacheVisibleQuad[fov][hAng][pos] = result;
 		}
 	}
@@ -270,7 +264,7 @@ Quad2i GameCamera::computeVisibleQuad() {
 
 		result = Quad2i(p4, p3, p2, p1);
 		if(MaxVisibleQuadItemCache != 0 &&
-		   (MaxVisibleQuadItemCache < 0 || cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
+		   (MaxVisibleQuadItemCache < 0 || (int)cacheVisibleQuad[fov][hAng].size() <= MaxVisibleQuadItemCache)) {
 			cacheVisibleQuad[fov][hAng][pos] = Quad2i(p4, p3, p2, p1);
 		}
 	}
@@ -278,20 +272,27 @@ Quad2i GameCamera::computeVisibleQuad() {
 	return result;
 }
 
-void GameCamera::switchState(){
-	if(state==sGame){
-		state= sFree;
+void GameCamera::setState(State s){
+	if(s==sGame){
+		state = sGame;
+		setClampDisabled(false);
+		resetPosition();
 	}
-	else{
-		state= sGame;
-		destAng.x = startingVAng;
-		destAng.y = startingHAng;
-		destPos.y = calculatedDefault;
+	else if(s==sUnit){
+		state = sUnit;
+		setClampDisabled(true);
+	}
+	else if(s==sFree){
+		state = sFree;
+		setClampDisabled(false);
+		resetPosition();
+	}
+	else {
+		abort();//"unknown camera state"
 	}
 }
 
 void GameCamera::resetPosition(){
-	state= sGame;
 	destAng.x = startingVAng;
 	destAng.y = startingHAng;
 	destPos.y = calculatedDefault;
@@ -316,14 +317,15 @@ void GameCamera::transitionVH(float v, float h) {
 	clampAng();
 }
 
+void GameCamera::rotateToVH(float v, float h) {
+	destAng.x = v;
+	destAng.y = h;
+	clampAng();
+}
+
 void GameCamera::zoom(float dist) {
-#ifdef USE_STREFLOP
-	float flatDist = dist * streflop::cosf(degToRad(vAng));
-	Vec3f offset(flatDist * streflop::sinf(degToRad(hAng)), dist * streflop::sinf(degToRad(vAng)), flatDist  * -streflop::cosf(degToRad(hAng)));
-#else
-	float flatDist = dist * cosf(degToRad(vAng));
-	Vec3f offset(flatDist * sinf(degToRad(hAng)), dist * sinf(degToRad(vAng)), flatDist  * -cosf(degToRad(hAng)));
-#endif
+	float flatDist = dist * std::cos(degToRad(vAng));
+	Vec3f offset(flatDist * std::sin(degToRad(hAng)), dist * std::sin(degToRad(vAng)), flatDist  * -std::cos(degToRad(hAng)));
 
 	destPos += offset;
 }
@@ -341,6 +343,10 @@ void GameCamera::save(XmlNode *node) const {
 // ==================== PRIVATE ====================
 
 void GameCamera::clampPosXZ(float x1, float x2, float z1, float z2){
+	if(clampDisable == true) {
+		return;
+	}
+
 	if(pos.x < x1)		pos.x = x1;
 	if(destPos.x < x1)	destPos.x = x1;
 	if(pos.z < z1)		pos.z = z1;
@@ -352,6 +358,10 @@ void GameCamera::clampPosXZ(float x1, float x2, float z1, float z2){
 }
 
 void GameCamera::clampPosXYZ(float x1, float x2, float y1, float y2, float z1, float z2){
+	if(clampDisable == true) {
+		return;
+	}
+
 	if(pos.x < x1)		pos.x = x1;
 	if(destPos.x < x1)	destPos.x = x1;
 	if(pos.y < y1)		pos.y = y1;
@@ -373,6 +383,10 @@ void GameCamera::rotateHV(float h, float v){
 }
 
 void GameCamera::clampAng() {
+	if(clampDisable == true && state != sUnit ) {
+		return;
+	}
+
 	if(vAng > maxVAng)		vAng = maxVAng;
 	if(destAng.x > maxVAng)	destAng.x = maxVAng;
 	if(vAng < minVAng)		vAng = minVAng;
@@ -385,11 +399,7 @@ void GameCamera::clampAng() {
 
 //move camera forwad but never change heightFactor
 void GameCamera::moveForwardH(float d, float response) {
-#ifdef USE_STREFLOP
-	Vec3f offset(streflop::sinf(degToRad(hAng)) * d, 0.f, -streflop::cosf(degToRad(hAng)) * d);
-#else
-	Vec3f offset(sinf(degToRad(hAng)) * d, 0.f, -cosf(degToRad(hAng)) * d);
-#endif
+	Vec3f offset(std::sin(degToRad(hAng)) * d, 0.f, -std::cos(degToRad(hAng)) * d);
 	destPos += offset;
 	pos.x += offset.x * response;
 	pos.z += offset.z * response;
@@ -397,11 +407,7 @@ void GameCamera::moveForwardH(float d, float response) {
 
 //move camera to a side but never change heightFactor
 void GameCamera::moveSideH(float d, float response){
-#ifdef USE_STREFLOP
-	Vec3f offset(streflop::sinf(degToRad(hAng+90)) * d, 0.f, -streflop::cosf(degToRad(hAng+90)) * d);
-#else
-	Vec3f offset(sinf(degToRad(hAng+90)) * d, 0.f, -cosf(degToRad(hAng+90)) * d);
-#endif
+	Vec3f offset(std::sin(degToRad(hAng+90)) * d, 0.f, -std::cos(degToRad(hAng+90)) * d);
 	destPos += offset;
 	pos.x += (destPos.x - pos.x) * response;
 	pos.z += (destPos.z - pos.z) * response;
@@ -410,6 +416,118 @@ void GameCamera::moveSideH(float d, float response){
 void GameCamera::moveUp(float d){
 //	pos.y+= d;
 	destPos.y += d;
+}
+
+void GameCamera::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *gamecameraNode = rootNode->addChild("GameCamera");
+
+//	Vec3f pos;
+	gamecameraNode->addAttribute("pos",pos.getString(), mapTagReplacements);
+//	Vec3f destPos;
+	gamecameraNode->addAttribute("destPos",destPos.getString(), mapTagReplacements);
+//
+//    float hAng;	//YZ plane positive -Z axis
+	gamecameraNode->addAttribute("hAng",floatToStr(hAng,6), mapTagReplacements);
+//    float vAng;	//XZ plane positive +Z axis
+	gamecameraNode->addAttribute("vAng",floatToStr(vAng,6), mapTagReplacements);
+//	float lastHAng;
+	gamecameraNode->addAttribute("lastHAng",floatToStr(lastHAng,6), mapTagReplacements);
+
+//    float lastVAng;
+	gamecameraNode->addAttribute("lastVAng",floatToStr(lastVAng,6), mapTagReplacements);
+//	Vec2f destAng;
+	gamecameraNode->addAttribute("destAng",destAng.getString(), mapTagReplacements);
+//	float rotate;
+	gamecameraNode->addAttribute("rotate",floatToStr(rotate,6), mapTagReplacements);
+//	Vec3f move;
+	gamecameraNode->addAttribute("move",move.getString(), mapTagReplacements);
+//	State state;
+	gamecameraNode->addAttribute("state",intToStr(state), mapTagReplacements);
+//	int limitX;
+	gamecameraNode->addAttribute("limitX",intToStr(limitX), mapTagReplacements);
+//	int limitY;
+	gamecameraNode->addAttribute("limitY",intToStr(limitY), mapTagReplacements);
+//	//config
+//	float speed;
+	gamecameraNode->addAttribute("speed",floatToStr(speed,6), mapTagReplacements);
+//	bool clampBounds;
+	gamecameraNode->addAttribute("clampBounds",intToStr(clampBounds), mapTagReplacements);
+//	//float maxRenderDistance;
+//	float maxHeight;
+	gamecameraNode->addAttribute("maxHeight",floatToStr(maxHeight,6), mapTagReplacements);
+//	float minHeight;
+	gamecameraNode->addAttribute("minHeight",floatToStr(minHeight,6), mapTagReplacements);
+//	//float maxCameraDist;
+//	//float minCameraDist;
+//	float minVAng;
+	gamecameraNode->addAttribute("minVAng",floatToStr(minVAng,6), mapTagReplacements);
+//	float maxVAng;
+	gamecameraNode->addAttribute("maxVAng",floatToStr(maxVAng,6), mapTagReplacements);
+//	float fov;
+	gamecameraNode->addAttribute("fov",floatToStr(fov,6), mapTagReplacements);
+//	float calculatedDefault;
+	gamecameraNode->addAttribute("calculatedDefault",floatToStr(calculatedDefault,6), mapTagReplacements);
+//	std::map<float, std::map<float, std::map<Vec3f, Quad2i> > > cacheVisibleQuad;
+//	int MaxVisibleQuadItemCache;
+	gamecameraNode->addAttribute("MaxVisibleQuadItemCache",intToStr(MaxVisibleQuadItemCache), mapTagReplacements);
+}
+
+void GameCamera::loadGame(const XmlNode *rootNode) {
+	const XmlNode *gamecameraNode = rootNode->getChild("GameCamera");
+
+	//firstTime = timeflowNode->getAttribute("firstTime")->getFloatValue();
+
+	//	Vec3f pos;
+	pos = Vec3f::strToVec3(gamecameraNode->getAttribute("pos")->getValue());
+	//	Vec3f destPos;
+	destPos = Vec3f::strToVec3(gamecameraNode->getAttribute("destPos")->getValue());
+	//
+	//    float hAng;	//YZ plane positive -Z axis
+	hAng = gamecameraNode->getAttribute("hAng")->getFloatValue();
+	//    float vAng;	//XZ plane positive +Z axis
+	vAng = gamecameraNode->getAttribute("vAng")->getFloatValue();
+	//	float lastHAng;
+	lastHAng = gamecameraNode->getAttribute("lastHAng")->getFloatValue();
+
+	//    float lastVAng;
+	lastVAng = gamecameraNode->getAttribute("lastVAng")->getFloatValue();
+	//	Vec2f destAng;
+	destAng = Vec2f::strToVec2(gamecameraNode->getAttribute("destAng")->getValue());
+	//	float rotate;
+	rotate = gamecameraNode->getAttribute("rotate")->getFloatValue();
+	//	Vec3f move;
+	move = Vec3f::strToVec3(gamecameraNode->getAttribute("move")->getValue());
+	//	State state;
+	state = static_cast<State>(gamecameraNode->getAttribute("state")->getIntValue());
+	//	int limitX;
+	limitX = gamecameraNode->getAttribute("limitX")->getIntValue();
+	//	int limitY;
+	limitY = gamecameraNode->getAttribute("limitY")->getIntValue();
+	//	//config
+	//	float speed;
+	speed = gamecameraNode->getAttribute("speed")->getFloatValue();
+	//	bool clampBounds;
+	clampBounds = gamecameraNode->getAttribute("clampBounds")->getIntValue() != 0;
+	//	//float maxRenderDistance;
+	//	float maxHeight;
+	maxHeight = gamecameraNode->getAttribute("maxHeight")->getFloatValue();
+	//	float minHeight;
+	minHeight = gamecameraNode->getAttribute("minHeight")->getFloatValue();
+	//	//float maxCameraDist;
+	//	//float minCameraDist;
+	//	float minVAng;
+	minVAng = gamecameraNode->getAttribute("minVAng")->getFloatValue();
+	//	float maxVAng;
+	maxVAng = gamecameraNode->getAttribute("maxVAng")->getFloatValue();
+	//	float fov;
+	fov = gamecameraNode->getAttribute("fov")->getFloatValue();
+	//	float calculatedDefault;
+	calculatedDefault = gamecameraNode->getAttribute("calculatedDefault")->getFloatValue();
+	//	std::map<float, std::map<float, std::map<Vec3f, Quad2i> > > cacheVisibleQuad;
+	//	int MaxVisibleQuadItemCache;
+	MaxVisibleQuadItemCache = gamecameraNode->getAttribute("MaxVisibleQuadItemCache")->getIntValue();
+
 }
 
 }}//end namespace

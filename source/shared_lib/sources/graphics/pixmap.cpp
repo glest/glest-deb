@@ -85,9 +85,9 @@ struct TargaFileHeader{
 const int tgaUncompressedRgb= 2;
 const int tgaUncompressedBw= 3;
 
-void CalculatePixelsCRC(uint8 *pixels,uint64 pixelByteCount, Checksum &crc) {
+void CalculatePixelsCRC(uint8 *pixels,std::size_t pixelByteCount, Checksum &crc) {
 //	crc = Checksum();
-//	for(uint64 i = 0; i < pixelByteCount; ++i) {
+//	for(std::size_t i = 0; i < pixelByteCount; ++i) {
 //		crc.addByte(pixels[i]);
 //	}
 }
@@ -108,36 +108,66 @@ PixmapIoTga::~PixmapIoTga() {
 }
 
 void PixmapIoTga::openRead(const string &path) {
-#ifdef WIN32
-	file= _wfopen(utf8_decode(path).c_str(), L"rb");
-#else
-	file= fopen(path.c_str(),"rb");
-#endif
-	if (file == NULL) {
-		throw runtime_error("Can't open TGA file: "+ path);
+
+	try {
+	#ifdef WIN32
+		file= _wfopen(utf8_decode(path).c_str(), L"rb");
+	#else
+		file= fopen(path.c_str(),"rb");
+	#endif
+		if (file == NULL) {
+			throw megaglest_runtime_error("Can't open TGA file: "+ path,true);
+		}
+
+		//read header
+		TargaFileHeader fileHeader;
+		size_t readBytes = fread(&fileHeader, sizeof(TargaFileHeader), 1, file);
+		if(readBytes != 1) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+		if(bigEndianSystem == true) {
+			fileHeader.bitsPerPixel = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.bitsPerPixel);
+			fileHeader.colourMapDepth = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.colourMapDepth);
+			fileHeader.colourMapLength = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.colourMapDepth);
+			fileHeader.colourMapOrigin = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.colourMapOrigin);
+			fileHeader.colourMapType = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.colourMapType);
+			fileHeader.dataTypeCode = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.dataTypeCode);
+			fileHeader.height = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.height);
+			fileHeader.idLength = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.idLength);
+			fileHeader.imageDescriptor = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.imageDescriptor);
+			fileHeader.width = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.width);
+		}
+		//check that we can load this tga file
+		if(fileHeader.idLength != 0) {
+			throw megaglest_runtime_error(path + ": id field is not 0",true);
+		}
+
+		if(fileHeader.dataTypeCode != tgaUncompressedRgb && fileHeader.dataTypeCode != tgaUncompressedBw) {
+			throw megaglest_runtime_error(path + ": only uncompressed BW and RGB targa images are supported",true);
+		}
+
+		//check bits per pixel
+		if(fileHeader.bitsPerPixel != 8 && fileHeader.bitsPerPixel != 24 && fileHeader.bitsPerPixel !=32) {
+			throw megaglest_runtime_error(path + ": only 8, 24 and 32 bit targa images are supported",true);
+		}
+
+		h= fileHeader.height;
+		w= fileHeader.width;
+		components= fileHeader.bitsPerPixel / 8;
 	}
-
-	//read header
-	TargaFileHeader fileHeader;
-	size_t readBytes = fread(&fileHeader, sizeof(TargaFileHeader), 1, file);
-
-	//check that we can load this tga file
-	if(fileHeader.idLength != 0) {
-		throw runtime_error(path + ": id field is not 0");
+	catch(megaglest_runtime_error& ex) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error in [%s] on line: %d msg: %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,ex.what());
+		throw megaglest_runtime_error(szBuf,!ex.wantStackTrace());
 	}
-
-	if(fileHeader.dataTypeCode != tgaUncompressedRgb && fileHeader.dataTypeCode != tgaUncompressedBw) {
-		throw runtime_error(path + ": only uncompressed BW and RGB targa images are supported");
+	catch(exception& ex) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error in [%s] on line: %d msg: %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,ex.what());
+		throw megaglest_runtime_error(szBuf);
 	}
-
-	//check bits per pixel
-	if(fileHeader.bitsPerPixel != 8 && fileHeader.bitsPerPixel != 24 && fileHeader.bitsPerPixel !=32) {
-		throw runtime_error(path + ": only 8, 24 and 32 bit targa images are supported");
-	}
-
-	h= fileHeader.height;
-    w= fileHeader.width;
-	components= fileHeader.bitsPerPixel / 8;
 }
 
 void PixmapIoTga::read(uint8 *pixels) {
@@ -145,45 +175,103 @@ void PixmapIoTga::read(uint8 *pixels) {
 }
 
 void PixmapIoTga::read(uint8 *pixels, int components) {
-	for(int i=0; i<h*w*components; i+=components) {
-		uint8 r=0, g=0, b=0, a=0, l=0;
+	try {
+		static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
 
-		if(this->components == 1) {
-			size_t readBytes = fread(&l, 1, 1, file);
-			r= l;
-			g= l;
-			b= l;
-			a= 255;
-		}
-		else {
-			size_t readBytes = fread(&b, 1, 1, file);
-			readBytes = fread(&g, 1, 1, file);
-			readBytes = fread(&r, 1, 1, file);
-			if(this->components == 4) {
-				readBytes = fread(&a, 1, 1, file);
-			}
-			else {
+		for(int i=0; i<h*w*components; i+=components) {
+			uint8 r=0, g=0, b=0, a=0, l=0;
+
+			if(this->components == 1) {
+				size_t readBytes = fread(&l, 1, 1, file);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				if(bigEndianSystem == true) {
+					l = Shared::PlatformByteOrder::fromCommonEndian(l);
+				}
+				r= l;
+				g= l;
+				b= l;
 				a= 255;
 			}
-			l= (r+g+b)/3;
-		}
+			else {
+				size_t readBytes = fread(&b, 1, 1, file);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				if(bigEndianSystem == true) {
+					b = Shared::PlatformByteOrder::fromCommonEndian(b);
+				}
 
-		switch(components) {
-		case 1:
-			pixels[i]= l;
-			break;
-		case 3:
-			pixels[i]= r;
-			pixels[i+1]= g;
-			pixels[i+2]= b;
-			break;
-		case 4:
-			pixels[i]= r;
-			pixels[i+1]= g;
-			pixels[i+2]= b;
-			pixels[i+3]= a;
-			break;
+				readBytes = fread(&g, 1, 1, file);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				if(bigEndianSystem == true) {
+					g = Shared::PlatformByteOrder::fromCommonEndian(g);
+				}
+
+				readBytes = fread(&r, 1, 1, file);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				if(bigEndianSystem == true) {
+					r = Shared::PlatformByteOrder::fromCommonEndian(r);
+				}
+
+				if(this->components == 4) {
+					readBytes = fread(&a, 1, 1, file);
+					if(readBytes != 1) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+						throw megaglest_runtime_error(szBuf);
+					}
+					if(bigEndianSystem == true) {
+						a = Shared::PlatformByteOrder::fromCommonEndian(a);
+					}
+
+				}
+				else {
+					a= 255;
+				}
+				l= (r+g+b)/3;
+			}
+
+			switch(components) {
+			case 1:
+				pixels[i]= l;
+				break;
+			case 3:
+				pixels[i]= r;
+				pixels[i+1]= g;
+				pixels[i+2]= b;
+				break;
+			case 4:
+				pixels[i]= r;
+				pixels[i+1]= g;
+				pixels[i+2]= b;
+				pixels[i+3]= a;
+				break;
+			}
 		}
+	}
+	catch(megaglest_runtime_error& ex) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error in [%s] on line: %d msg: %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,ex.what());
+		throw megaglest_runtime_error(szBuf,!ex.wantStackTrace());
+	}
+	catch(exception& ex) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error in [%s] on line: %d msg: %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,ex.what());
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 
@@ -198,7 +286,7 @@ void PixmapIoTga::openWrite(const string &path, int w, int h, int components) {
     file= fopen(path.c_str(),"wb");
 #endif
 	if (file == NULL) {
-		throw runtime_error("Can't open TGA file: "+ path);
+		throw megaglest_runtime_error("Can't open TGA file: "+ path,true);
 	}
 
 	TargaFileHeader fileHeader;
@@ -209,14 +297,39 @@ void PixmapIoTga::openWrite(const string &path, int w, int h, int components) {
 	fileHeader.height= h;
 	fileHeader.imageDescriptor= components==4? 8: 0;
 
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		fileHeader.bitsPerPixel = Shared::PlatformByteOrder::toCommonEndian(fileHeader.bitsPerPixel);
+		fileHeader.colourMapDepth = Shared::PlatformByteOrder::toCommonEndian(fileHeader.colourMapDepth);
+		fileHeader.colourMapLength = Shared::PlatformByteOrder::toCommonEndian(fileHeader.colourMapDepth);
+		fileHeader.colourMapOrigin = Shared::PlatformByteOrder::toCommonEndian(fileHeader.colourMapOrigin);
+		fileHeader.colourMapType = Shared::PlatformByteOrder::toCommonEndian(fileHeader.colourMapType);
+		fileHeader.dataTypeCode = Shared::PlatformByteOrder::toCommonEndian(fileHeader.dataTypeCode);
+		fileHeader.height = Shared::PlatformByteOrder::toCommonEndian(fileHeader.height);
+		fileHeader.idLength = Shared::PlatformByteOrder::toCommonEndian(fileHeader.idLength);
+		fileHeader.imageDescriptor = Shared::PlatformByteOrder::toCommonEndian(fileHeader.imageDescriptor);
+		fileHeader.width = Shared::PlatformByteOrder::toCommonEndian(fileHeader.width);
+	}
+
 	fwrite(&fileHeader, sizeof(TargaFileHeader), 1, file);
 }
 
 void PixmapIoTga::write(uint8 *pixels) {
 	if(components == 1) {
+
+		static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+		if(bigEndianSystem == true) {
+			Shared::PlatformByteOrder::toEndianTypeArray<uint8>(pixels,h*w);
+		}
+
 		fwrite(pixels, h*w, 1, file);
 	}
 	else {
+		static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+		if(bigEndianSystem == true) {
+			Shared::PlatformByteOrder::toEndianTypeArray<uint8>(pixels,h*w*components);
+		}
+
 		for(int i=0; i<h*w*components; i+=components) {
 			fwrite(&pixels[i+2], 1, 1, file);
 			fwrite(&pixels[i+1], 1, 1, file);
@@ -250,21 +363,54 @@ void PixmapIoBmp::openRead(const string &path){
     file= fopen(path.c_str(),"rb");
 #endif
 	if (file==NULL){
-		throw runtime_error("Can't open BMP file: "+ path);
+		throw megaglest_runtime_error("Can't open BMP file: "+ path,true);
 	}
 
 	//read file header
     BitmapFileHeader fileHeader;
     size_t readBytes = fread(&fileHeader, sizeof(BitmapFileHeader), 1, file);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		fileHeader.offsetBits = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.offsetBits);
+		fileHeader.reserved1 = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.reserved1);
+		fileHeader.reserved2 = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.reserved2);
+		fileHeader.size = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.size);
+		fileHeader.type1 = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.type1);
+		fileHeader.type2 = Shared::PlatformByteOrder::fromCommonEndian(fileHeader.type2);
+	}
+
 	if(fileHeader.type1!='B' || fileHeader.type2!='M'){
-		throw runtime_error(path +" is not a bitmap");
+		throw megaglest_runtime_error(path +" is not a bitmap",true);
 	}
 
 	//read info header
 	BitmapInfoHeader infoHeader;
 	readBytes = fread(&infoHeader, sizeof(BitmapInfoHeader), 1, file);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	if(bigEndianSystem == true) {
+		infoHeader.bitCount = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.bitCount);
+		infoHeader.clrImportant = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.clrImportant);
+		infoHeader.clrUsed = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.clrUsed);
+		infoHeader.compression = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.compression);
+		infoHeader.height = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.height);
+		infoHeader.planes = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.planes);
+		infoHeader.size = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.size);
+		infoHeader.sizeImage = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.sizeImage);
+		infoHeader.width = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.width);
+		infoHeader.xPelsPerMeter = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.xPelsPerMeter);
+		infoHeader.yPelsPerMeter = Shared::PlatformByteOrder::fromCommonEndian(infoHeader.yPelsPerMeter);
+	}
 	if(infoHeader.bitCount!=24){
-        throw runtime_error(path+" is not a 24 bit bitmap");
+        throw megaglest_runtime_error(path+" is not a 24 bit bitmap",true);
 	}
 
     h= infoHeader.height;
@@ -277,11 +423,39 @@ void PixmapIoBmp::read(uint8 *pixels) {
 }
 
 void PixmapIoBmp::read(uint8 *pixels, int components) {
-    for(int i=0; i<h*w*components; i+=components) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+
+	for(int i=0; i<h*w*components; i+=components) {
 		uint8 r, g, b;
 		size_t readBytes = fread(&b, 1, 1, file);
+		if(readBytes != 1) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		if(bigEndianSystem == true) {
+			b = Shared::PlatformByteOrder::fromCommonEndian(b);
+		}
 		readBytes = fread(&g, 1, 1, file);
+		if(readBytes != 1) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		if(bigEndianSystem == true) {
+			g = Shared::PlatformByteOrder::fromCommonEndian(g);
+		}
+
 		readBytes = fread(&r, 1, 1, file);
+		if(readBytes != 1) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		if(bigEndianSystem == true) {
+			r = Shared::PlatformByteOrder::fromCommonEndian(r);
+		}
+
 
 		switch(components){
 		case 1:
@@ -313,7 +487,7 @@ void PixmapIoBmp::openWrite(const string &path, int w, int h, int components) {
 	file= fopen(path.c_str(),"wb");
 #endif
 	if (file == NULL) {
-		throw runtime_error("Can't open BMP file for writing: "+ path);
+		throw megaglest_runtime_error("Can't open BMP file for writing: "+ path);
 	}
 
 	BitmapFileHeader fileHeader;
@@ -321,6 +495,18 @@ void PixmapIoBmp::openWrite(const string &path, int w, int h, int components) {
 	fileHeader.type2='M';
 	fileHeader.offsetBits=sizeof(BitmapFileHeader)+sizeof(BitmapInfoHeader);
 	fileHeader.size=sizeof(BitmapFileHeader)+sizeof(BitmapInfoHeader)+3*h*w;
+	fileHeader.reserved1 = 0;
+	fileHeader.reserved2 = 0;
+
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		fileHeader.offsetBits = Shared::PlatformByteOrder::toCommonEndian(fileHeader.offsetBits);
+		fileHeader.reserved1 = Shared::PlatformByteOrder::toCommonEndian(fileHeader.reserved1);
+		fileHeader.reserved2 = Shared::PlatformByteOrder::toCommonEndian(fileHeader.reserved2);
+		fileHeader.size = Shared::PlatformByteOrder::toCommonEndian(fileHeader.size);
+		fileHeader.type1 = Shared::PlatformByteOrder::toCommonEndian(fileHeader.type1);
+		fileHeader.type2 = Shared::PlatformByteOrder::toCommonEndian(fileHeader.type2);
+	}
 
     fwrite(&fileHeader, sizeof(BitmapFileHeader), 1, file);
 
@@ -338,10 +524,29 @@ void PixmapIoBmp::openWrite(const string &path, int w, int h, int components) {
 	infoHeader.xPelsPerMeter= 0;
 	infoHeader.yPelsPerMeter= 0;
 
+	if(bigEndianSystem == true) {
+		infoHeader.bitCount = Shared::PlatformByteOrder::toCommonEndian(infoHeader.bitCount);
+		infoHeader.clrImportant = Shared::PlatformByteOrder::toCommonEndian(infoHeader.clrImportant);
+		infoHeader.clrUsed = Shared::PlatformByteOrder::toCommonEndian(infoHeader.clrUsed);
+		infoHeader.compression = Shared::PlatformByteOrder::toCommonEndian(infoHeader.compression);
+		infoHeader.height = Shared::PlatformByteOrder::toCommonEndian(infoHeader.height);
+		infoHeader.planes = Shared::PlatformByteOrder::toCommonEndian(infoHeader.planes);
+		infoHeader.size = Shared::PlatformByteOrder::toCommonEndian(infoHeader.size);
+		infoHeader.sizeImage = Shared::PlatformByteOrder::toCommonEndian(infoHeader.sizeImage);
+		infoHeader.width = Shared::PlatformByteOrder::toCommonEndian(infoHeader.width);
+		infoHeader.xPelsPerMeter = Shared::PlatformByteOrder::toCommonEndian(infoHeader.xPelsPerMeter);
+		infoHeader.yPelsPerMeter = Shared::PlatformByteOrder::toCommonEndian(infoHeader.yPelsPerMeter);
+	}
+
 	fwrite(&infoHeader, sizeof(BitmapInfoHeader), 1, file);
 }
 
 void PixmapIoBmp::write(uint8 *pixels) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		Shared::PlatformByteOrder::toEndianTypeArray<uint8>(pixels,h*w*components);
+	}
+
     for (int i=0; i<h*w*components; i+=components){
         fwrite(&pixels[i+2], 1, 1, file);
 		fwrite(&pixels[i+1], 1, 1, file);
@@ -365,69 +570,16 @@ PixmapIoPng::~PixmapIoPng() {
 }
 
 void PixmapIoPng::openRead(const string &path) {
-
-	throw runtime_error("PixmapIoPng::openRead not implemented!");
-
-/*
-    file= fopen(path.c_str(),"rb");
-	if (file==NULL){
-		throw runtime_error("Can't open BMP file: "+ path);
-	}
-
-	//read file header
-    BitmapFileHeader fileHeader;
-    size_t readBytes = fread(&fileHeader, sizeof(BitmapFileHeader), 1, file);
-	if(fileHeader.type1!='B' || fileHeader.type2!='M'){
-		throw runtime_error(path +" is not a bitmap");
-	}
-
-	//read info header
-	BitmapInfoHeader infoHeader;
-	readBytes = fread(&infoHeader, sizeof(BitmapInfoHeader), 1, file);
-	if(infoHeader.bitCount!=24){
-        throw runtime_error(path+" is not a 24 bit bitmap");
-	}
-
-    h= infoHeader.height;
-    w= infoHeader.width;
-	components= 3;
-*/
+	throw megaglest_runtime_error("PixmapIoPng::openRead not implemented!");
 }
 
 void PixmapIoPng::read(uint8 *pixels) {
-	throw runtime_error("PixmapIoPng::read not implemented!");
-	//read(pixels, 3);
+	throw megaglest_runtime_error("PixmapIoPng::read not implemented!");
 }
 
 void PixmapIoPng::read(uint8 *pixels, int components) {
 
-	throw runtime_error("PixmapIoPng::read #2 not implemented!");
-
-/*
-    for(int i=0; i<h*w*components; i+=components) {
-		uint8 r, g, b;
-		size_t readBytes = fread(&b, 1, 1, file);
-		readBytes = fread(&g, 1, 1, file);
-		readBytes = fread(&r, 1, 1, file);
-
-		switch(components){
-		case 1:
-			pixels[i]= (r+g+b)/3;
-			break;
-		case 3:
-			pixels[i]= r;
-			pixels[i+1]= g;
-			pixels[i+2]= b;
-			break;
-		case 4:
-			pixels[i]= r;
-			pixels[i+1]= g;
-			pixels[i+2]= b;
-			pixels[i+3]= 255;
-			break;
-		}
-    }
-*/
+	throw megaglest_runtime_error("PixmapIoPng::read #2 not implemented!");
 }
 
 void PixmapIoPng::openWrite(const string &path, int w, int h, int components) {
@@ -442,16 +594,16 @@ void PixmapIoPng::openWrite(const string &path, int w, int h, int components) {
 	file= fopen(path.c_str(),"wb");
 #endif
 	if (file == NULL) {
-		throw runtime_error("Can't open PNG file for writing: "+ path);
+		throw megaglest_runtime_error("Can't open PNG file for writing: "+ path);
 	}
 }
 
 void PixmapIoPng::write(uint8 *pixels) {
-
     // initialize stuff
-    std::auto_ptr<png_byte*> imrow(new png_byte*[h]);
+    png_bytep *imrow = new png_bytep[h];
+	//png_bytep *imrow = (png_bytep*) malloc(sizeof(png_bytep) * height);
     for(int i = 0; i < h; ++i) {
-        imrow.get()[i] = pixels+(h-1-i) * w * components;
+        imrow[i] = pixels + (h-1-i) * w * components;
     }
 
     png_structp imgp = png_create_write_struct(PNG_LIBPNG_VER_STRING,0,0,0);
@@ -468,131 +620,11 @@ void PixmapIoPng::write(uint8 *pixels) {
 
     // write file
     png_write_info(imgp, infop);
-    png_write_image(imgp, imrow.get());
+    png_write_image(imgp, imrow);
     png_write_end(imgp, NULL);
 
-
-
-/*
-	// Allocate write & info structures
-   png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-   if(!png_ptr) {
-	 fclose(file);
-	 throw runtime_error("OpenGlDevice::saveImageAsPNG() - out of memory creating write structure");
-   }
-
-   png_infop info_ptr = png_create_info_struct(png_ptr);
-   if(!info_ptr) {
-	 png_destroy_write_struct(&png_ptr,
-							  (png_infopp)NULL);
-	 fclose(file);
-	 throw runtime_error("OpenGlDevice::saveImageAsPNG() - out of memery creating info structure");
-   }
-
-   // setjmp() must be called in every function that calls a PNG-writing
-   // libpng function, unless an alternate error handler was installed--
-   // but compatible error handlers must either use longjmp() themselves
-   // (as in this program) or exit immediately, so here we go:
-
-   if(setjmp(png_jmpbuf(png_ptr))) {
-	 png_destroy_write_struct(&png_ptr, &info_ptr);
-	 fclose(file);
-	 throw runtime_error("OpenGlDevice::saveImageAsPNG() - setjmp problem");
-   }
-
-   // make sure outfile is (re)opened in BINARY mode
-   png_init_io(png_ptr, file);
-
-   // set the compression levels--in general, always want to leave filtering
-   // turned on (except for palette images) and allow all of the filters,
-   // which is the default; want 32K zlib window, unless entire image buffer
-   // is 16K or smaller (unknown here)--also the default; usually want max
-   // compression (NOT the default); and remaining compression flags should
-   // be left alone
-
-   //png_set_compression_level(png_ptr, Z_BEST_COMPRESSION);
-   png_set_compression_level(png_ptr, Z_DEFAULT_COMPRESSION);
-
-   //
-   // this is default for no filtering; Z_FILTERED is default otherwise:
-   // png_set_compression_strategy(png_ptr, Z_DEFAULT_STRATEGY);
-   //  these are all defaults:
-   //   png_set_compression_mem_level(png_ptr, 8);
-   //   png_set_compression_window_bits(png_ptr, 15);
-   //   png_set_compression_method(png_ptr, 8);
-
-
-   // Set some options: color_type, interlace_type
-   int color_type=0, interlace_type=0, numChannels=0;
-
-   //  color_type = PNG_COLOR_TYPE_GRAY;
-   //  color_type = PNG_COLOR_TYPE_GRAY_ALPHA;
-   color_type = PNG_COLOR_TYPE_RGBA;
-   numChannels = 4;
-   // color_type = PNG_COLOR_TYPE_RGB_ALPHA;
-
-   interlace_type =  PNG_INTERLACE_NONE;
-   // interlace_type = PNG_INTERLACE_ADAM7;
-
-   int bit_depth = 8;
-   png_set_IHDR(png_ptr, info_ptr, this->w, this->h,
-                bit_depth,
-				color_type,
-				interlace_type,
-				PNG_COMPRESSION_TYPE_BASE,
-				PNG_FILTER_TYPE_BASE);
-
-   // Optional gamma chunk is strongly suggested if you have any guess
-   // as to the correct gamma of the image. (we don't have a guess)
-   //
-   // png_set_gAMA(png_ptr, info_ptr, image_gamma);
-   //png_set_strip_alpha(png_ptr);
-
-   // write all chunks up to (but not including) first IDAT
-   png_write_info(png_ptr, info_ptr);
-
-   //png_write_png(png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, NULL );
-
-
-   // set up the row pointers for the image so we can use png_write_image
-   png_bytep* row_pointers = new png_bytep[this->h];
-   if (row_pointers == 0) {
-	 png_destroy_write_struct(&png_ptr, &info_ptr);
-	 fclose(file);
-	 throw runtime_error("OpenGlDevice::failed to allocate memory for row pointers");
-   }
-
-   unsigned int row_stride = this->w * numChannels;
-   unsigned char *rowptr = (unsigned char*) pixels;
-   for (int row = this->h-1; row >=0 ; row--) {
-	 row_pointers[row] = rowptr;
-	 rowptr += row_stride;
-   }
-
-   // now we just write the whole image; libpng takes care of interlacing for us
-   png_write_image(png_ptr, row_pointers);
-
-   // since that's it, we also close out the end of the PNG file now--if we
-   // had any text or time info to write after the IDATs, second argument
-   // would be info_ptr, but we optimize slightly by sending NULL pointer:
-
-   png_write_end(png_ptr, info_ptr);
-
-   //
-   // clean up after the write
-   //    free any memory allocated & close the file
-   //
-   png_destroy_write_struct(&png_ptr, &info_ptr);
-
-   delete [] row_pointers;
-*/
+    delete [] imrow;
 }
-
-
-
-
-
-
 
 // =====================================================
 //	class PixmapIoJpg
@@ -610,17 +642,16 @@ PixmapIoJpg::~PixmapIoJpg() {
 }
 
 void PixmapIoJpg::openRead(const string &path) {
-
-	throw runtime_error("PixmapIoJpg::openRead not implemented!");
+	throw megaglest_runtime_error("PixmapIoJpg::openRead not implemented!");
 }
 
 void PixmapIoJpg::read(uint8 *pixels) {
-	throw runtime_error("PixmapIoJpg::read not implemented!");
+	throw megaglest_runtime_error("PixmapIoJpg::read not implemented!");
 }
 
 void PixmapIoJpg::read(uint8 *pixels, int components) {
 
-	throw runtime_error("PixmapIoJpg::read #2 not implemented!");
+	throw megaglest_runtime_error("PixmapIoJpg::read #2 not implemented!");
 }
 
 void PixmapIoJpg::openWrite(const string &path, int w, int h, int components) {
@@ -635,7 +666,7 @@ void PixmapIoJpg::openWrite(const string &path, int w, int h, int components) {
 	file= fopen(path.c_str(),"wb");
 #endif
 	if (file == NULL) {
-		throw runtime_error("Can't open JPG file for writing: "+ path);
+		throw megaglest_runtime_error("Can't open JPG file for writing: "+ path);
 	}
 }
 
@@ -647,12 +678,14 @@ void PixmapIoJpg::write(uint8 *pixels) {
 	if(components == 4) {
 		int n = w * h;
 		unsigned char *dst = tmpbytes = (unsigned char *) malloc(n*3);
-		const unsigned char *src = pixels;
-		for (int i = 0; i < n; i++) {
-			*dst++ = *src++;
-			*dst++ = *src++;
-			*dst++ = *src++;
-			src++;
+		if(dst != NULL) {
+			const unsigned char *src = pixels;
+			for (int i = 0; i < n; i++) {
+				*dst++ = *src++;
+				*dst++ = *src++;
+				*dst++ = *src++;
+				src++;
+			}
 		}
 		components = 3;
 	}
@@ -687,25 +720,29 @@ void PixmapIoJpg::write(uint8 *pixels) {
     // flip lines.
 	uint8 *flip = (uint8 *)malloc(sizeof(uint8) * w * h * 3);
 
-	for (int y = 0;y < h; ++y) {
-		for (int x = 0;x < w; ++x) {
-			flip[(y * w + x) * 3] = pixels[((h - 1 - y) * w + x) * 3];
-			flip[(y * w + x) * 3 + 1] = pixels[((h - 1 - y) * w + x) * 3 + 1];
-			flip[(y * w + x) * 3 + 2] = pixels[((h - 1 - y) * w + x) * 3 + 2];
+	if(pixels != NULL && flip != NULL) {
+		for (int y = 0;y < h; ++y) {
+			for (int x = 0;x < w; ++x) {
+				flip[(y * w + x) * 3] = pixels[((h - 1 - y) * w + x) * 3];
+				flip[(y * w + x) * 3 + 1] = pixels[((h - 1 - y) * w + x) * 3 + 1];
+				flip[(y * w + x) * 3 + 2] = pixels[((h - 1 - y) * w + x) * 3 + 2];
+			}
 		}
-	 }
-
-	/* like reading a file, this time write one row at a time */
-	while( cinfo.next_scanline < cinfo.image_height ) {
-		row_pointer[0] = &flip[ cinfo.next_scanline * cinfo.image_width *  cinfo.input_components];
-		jpeg_write_scanlines( &cinfo, row_pointer, 1 );
+	
+		/* like reading a file, this time write one row at a time */
+		while( cinfo.next_scanline < cinfo.image_height ) {
+			row_pointer[0] = &flip[ cinfo.next_scanline * cinfo.image_width *  cinfo.input_components];
+			jpeg_write_scanlines( &cinfo, row_pointer, 1 );
+		}
 	}
 	if (tmpbytes) {
 		free(tmpbytes);
 		tmpbytes=NULL;
 	}
-	free(flip);
-	flip=NULL;
+	if(flip) {
+		free(flip);
+		flip=NULL;
+	}
 
 	/* similar to read file, clean up after we're done compressing */
 	jpeg_finish_compress( &cinfo );
@@ -722,7 +759,10 @@ void PixmapIoJpg::write(uint8 *pixels) {
 // ===================== PUBLIC ========================
 
 Pixmap1D::Pixmap1D() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 
     w= -1;
 	components= -1;
@@ -730,13 +770,19 @@ Pixmap1D::Pixmap1D() {
 }
 
 Pixmap1D::Pixmap1D(int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 
 	init(components);
 }
 
 Pixmap1D::Pixmap1D(int w, int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 
 	init(w, components);
 }
@@ -751,11 +797,11 @@ void Pixmap1D::init(int components){
 void Pixmap1D::init(int w, int components){
 	this->w= w;
 	this->components= components;
-	pixels= new uint8[(std::size_t)getPixelByteCount()];
+	pixels= new uint8[getPixelByteCount()];
 	CalculatePixelsCRC(pixels,0, crc);
 }
 
-uint64 Pixmap1D::getPixelByteCount() const {
+std::size_t Pixmap1D::getPixelByteCount() const {
 	return (w * components);
 }
 
@@ -777,7 +823,7 @@ void Pixmap1D::load(const string &path) {
 		loadTga(path);
 	}
 	else {
-		throw runtime_error("Unknown pixmap extension: " + extension);
+		throw megaglest_runtime_error("Unknown pixmap extension: " + extension);
 	}
 	this->path = path;
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
@@ -797,14 +843,14 @@ void Pixmap1D::loadBmp(const string &path) {
 		w= plb.getH();
 	}
 	else {
-		throw runtime_error("One of the texture dimensions must be 1");
+		throw megaglest_runtime_error("One of the texture dimensions must be 1");
 	}
 
 	if(components == -1) {
 		components= 3;
 	}
 	if(pixels == NULL) {
-		pixels= new uint8[(std::size_t)getPixelByteCount()];
+		pixels= new uint8[getPixelByteCount()];
 	}
 
 	//data
@@ -825,7 +871,7 @@ void Pixmap1D::loadTga(const string &path) {
 		w= plt.getH();
 	}
 	else {
-		throw runtime_error("One of the texture dimensions must be 1");
+		throw megaglest_runtime_error("One of the texture dimensions must be 1");
 	}
 
 	int fileComponents= plt.getComponents();
@@ -834,7 +880,7 @@ void Pixmap1D::loadTga(const string &path) {
 		components= fileComponents;
 	}
 	if(pixels == NULL) {
-		pixels= new uint8[(std::size_t)getPixelByteCount()];
+		pixels= new uint8[getPixelByteCount()];
 	}
 
 	//read data
@@ -848,7 +894,10 @@ void Pixmap1D::loadTga(const string &path) {
 // ===================== PUBLIC ========================
 
 Pixmap2D::Pixmap2D() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
     h= -1;
     w= -1;
 	components= -1;
@@ -856,7 +905,10 @@ Pixmap2D::Pixmap2D() {
 }
 
 Pixmap2D::Pixmap2D(int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
     h= -1;
     w= -1;
 	this->components= -1;
@@ -866,7 +918,10 @@ Pixmap2D::Pixmap2D(int components) {
 }
 
 Pixmap2D::Pixmap2D(int w, int h, int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
     this->h= 0;
     this->w= -1;
     this->components= -1;
@@ -891,15 +946,15 @@ void Pixmap2D::init(int w, int h, int components) {
 	deletePixels();
 
 	if(getPixelByteCount() <= 0 || (h <= 0 || w <= 0 || components <= 0)) {
-		char szBuf[1024];
-		sprintf(szBuf,"Invalid pixmap dimensions for [%s], h = %d, w = %d, components = %d\n",path.c_str(),h,w,components);
-		throw runtime_error(szBuf);
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap dimensions for [%s], h = %d, w = %d, components = %d\n",path.c_str(),h,w,components);
+		throw megaglest_runtime_error(szBuf);
 	}
-	pixels= new uint8[(std::size_t)getPixelByteCount()];
+	pixels= new uint8[getPixelByteCount()];
 	CalculatePixelsCRC(pixels,0, crc);
 }
 
-uint64 Pixmap2D::getPixelByteCount() const {
+std::size_t Pixmap2D::getPixelByteCount() const {
 	return (h * w * components);
 }
 
@@ -921,22 +976,21 @@ void Pixmap2D::Scale(int format, int newW, int newH) {
 	uint8 *newpixels= new uint8[newW * newH * useComponents];
 
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	int error = gluScaleImage(	format,
+	GLenum glErr = gluScaleImage(	format,
 				w, h, GL_UNSIGNED_BYTE, pixels,
 				newW, newH, GL_UNSIGNED_BYTE, newpixels);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-	if(error == GL_NO_ERROR) {
+	if(glErr == GL_NO_ERROR) {
 		init(newW,newH,this->components);
 		pixels = newpixels;
 
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Scaled image from [%d x %d] to [%d x %d]\n",originalW,originalH,w,h);
 	}
 	else {
-		const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-		printf("ERROR Scaling image from [%d x %d] to [%d x %d] error: %d [%s]\n",originalW,originalH,w,h,error,errorString);
+		const char *errorString= reinterpret_cast<const char*>(gluErrorString(glErr));
+		printf("ERROR Scaling image from [%d x %d] to [%d x %d] error: %u [%s]\n",originalW,originalH,w,h,glErr,errorString);
 
-		GLenum glErr = error;
 		assertGlWithErrorNumber(glErr);
 	}
 
@@ -977,7 +1031,7 @@ void Pixmap2D::save(const string &path) {
 		savePng(path);
 	}
 	else {
-		throw runtime_error("Unknown pixmap extension: " + extension);
+		throw megaglest_runtime_error("Unknown pixmap extension: " + extension);
 	}
 }
 
@@ -1007,29 +1061,64 @@ void Pixmap2D::savePng(const string &path) {
 
 void Pixmap2D::getPixel(int x, int y, uint8 *value) const {
 	for(int i=0; i<components; ++i){
-		value[i]= pixels[(w*y+x)*components+i];
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+
+		value[i]= pixels[index];
 	}
 }
 
 void Pixmap2D::getPixel(int x, int y, float32 *value) const {
-	for(int i=0; i<components; ++i) {
-		value[i]= pixels[(w*y+x)*components+i]/255.f;
+	for(int i = 0; i < components; ++i) {
+		std::size_t index = (w * y + x) * components + i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+
+		value[i] = pixels[index] / 255.f;
 	}
 }
 
 void Pixmap2D::getComponent(int x, int y, int component, uint8 &value) const {
-	value= pixels[(w*y+x)*components+component];
+	std::size_t index = (w*y+x)*components+component;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	value = pixels[index];
 }
 
 void Pixmap2D::getComponent(int x, int y, int component, float32 &value) const {
-	value= pixels[(w*y+x)*components+component]/255.f;
+	std::size_t index = (w*y+x)*components+component;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	value= pixels[index] / 255.f;
 }
 
 //vector get
 Vec4f Pixmap2D::getPixel4f(int x, int y) const {
 	Vec4f v(0.f);
 	for(int i=0; i<components && i<4; ++i){
-		v.ptr()[i]= pixels[(w*y+x)*components+i]/255.f;
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+
+		v.ptr()[i]= pixels[index] / 255.f;
 	}
 	return v;
 }
@@ -1037,14 +1126,26 @@ Vec4f Pixmap2D::getPixel4f(int x, int y) const {
 Vec3f Pixmap2D::getPixel3f(int x, int y) const {
 	Vec3f v(0.f);
 	for(int i=0; i<components && i<3; ++i){
-		v.ptr()[i]= pixels[(w*y+x)*components+i]/255.f;
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+
+		v.ptr()[i]= pixels[index] / 255.f;
 	}
 	return v;
 }
 
 float Pixmap2D::getPixelf(int x, int y) const {
-	int index = (w*y+x)*components;
-	return pixels[index]/255.f;
+	std::size_t index = (w * y + x) * components;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+	return pixels[index] / 255.f;
 }
 
 float Pixmap2D::getComponentf(int x, int y, int component) const {
@@ -1053,70 +1154,120 @@ float Pixmap2D::getComponentf(int x, int y, int component) const {
 	return c;
 }
 
-void Pixmap2D::setPixel(int x, int y, const uint8 *value) {
-	for(int i=0; i<components; ++i) {
-		int index = (w*y+x)*components+i;
+void Pixmap2D::setPixel(int x, int y, const uint8 *value, int arraySize) {
+	if(arraySize > components) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap arraySize: %d for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",arraySize,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+	for(int i = 0; i < components; ++i) {
+		std::size_t index = (w * y + x) * components + i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+
 		pixels[index]= value[i];
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
-void Pixmap2D::setPixel(int x, int y, const float32 *value) {
-	for(int i=0; i<components; ++i) {
-		int index = (w*y+x)*components+i;
-		pixels[index]= static_cast<uint8>(value[i]*255.f);
+void Pixmap2D::setPixel(int x, int y, const float32 *value, int arraySize) {
+	if(arraySize > components) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap arraySize: %d for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",arraySize,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	for(int i = 0; i < components; ++i) {
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+		pixels[index] = static_cast<uint8>(value[i] * 255.f);
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
 void Pixmap2D::setComponent(int x, int y, int component, uint8 value) {
-	int index = (w*y+x)*components+component;
+	std::size_t index = (w*y+x)*components+component;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 	pixels[index] = value;
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
 void Pixmap2D::setComponent(int x, int y, int component, float32 value) {
-	int index = (w*y+x)*components+component;
-	pixels[index]= static_cast<uint8>(value*255.f);
+	std::size_t index = (w*y+x)*components+component;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	pixels[index] = static_cast<uint8>(value * 255.f);
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
 //vector set
 void Pixmap2D::setPixel(int x, int y, const Vec3f &p) {
 	for(int i = 0; i < components  && i < 3; ++i) {
-		int index = (w*y+x)*components+i;
-		pixels[index]= static_cast<uint8>(p.ptr()[i]*255.f);
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+		pixels[index] = static_cast<uint8>(p.ptr()[i] * 255.f);
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
 void Pixmap2D::setPixel(int x, int y, const Vec4f &p) {
 	for(int i = 0; i < components && i < 4; ++i) {
-		int index = (w*y+x)*components+i;
-		pixels[index]= static_cast<uint8>(p.ptr()[i]*255.f);
+		std::size_t index = (w*y+x)*components+i;
+		if(index >= getPixelByteCount()) {
+			char szBuf[8096];
+			snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+			throw megaglest_runtime_error(szBuf);
+		}
+		pixels[index] = static_cast<uint8>(p.ptr()[i] * 255.f);
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
 void Pixmap2D::setPixel(int x, int y, float p) {
-	int index = (w*y+x)*components;
-	pixels[index]= static_cast<uint8>(p*255.f);
+	std::size_t index = (w * y + x) * components;
+	if(index >= getPixelByteCount()) {
+		char szBuf[8096];
+		snprintf(szBuf,8096,"Invalid pixmap index: " MG_SIZE_T_SPECIFIER " for [%s], h = %d, w = %d, components = %d x = %d y = %d\n",index,path.c_str(),h,w,components,x,y);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+	pixels[index] = static_cast<uint8>(p * 255.f);
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
-void Pixmap2D::setPixels(const uint8 *value){
-	for(int i=0; i<w; ++i){
-		for(int j=0; j<h; ++j){
-			setPixel(i, j, value);
+void Pixmap2D::setPixels(const uint8 *value, int arraySize) {
+	for(int i = 0; i < w; ++i) {
+		for(int j = 0; j < h; ++j) {
+			setPixel(i, j, value, arraySize);
 		}
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
 }
 
-void Pixmap2D::setPixels(const float32 *value){
-	for(int i=0; i<w; ++i){
-		for(int j=0; j<h; ++j){
-			setPixel(i, j, value);
+void Pixmap2D::setPixels(const float32 *value, int arraySize) {
+	for(int i = 0; i < w; ++i) {
+		for(int j = 0; j < h; ++j) {
+			setPixel(i, j, value, arraySize);
 		}
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
@@ -1158,7 +1309,7 @@ void Pixmap2D::splat(const Pixmap2D *leftUp, const Pixmap2D *rightUp, const Pixm
 		!doDimensionsAgree(leftDown) ||
 		!doDimensionsAgree(rightDown))
 	{
-		throw runtime_error("Pixmap2D::splat: pixmap dimensions don't agree");
+		throw megaglest_runtime_error("Pixmap2D::splat: pixmap dimensions don't agree");
 	}
 
 	for(int i=0; i<w; ++i){
@@ -1172,19 +1323,13 @@ void Pixmap2D::splat(const Pixmap2D *leftUp, const Pixmap2D *rightUp, const Pixm
 			float distRd= splatDist(Vec2i(i, j), Vec2i(w, h));
 
 			const float powFactor= 2.0f;
-#ifdef USE_STREFLOP
-			distLu= streflop::pow(distLu, powFactor);
-			distRu= streflop::pow(distRu, powFactor);
-			distLd= streflop::pow(distLd, powFactor);
-			distRd= streflop::pow(distRd, powFactor);
-			avg= streflop::pow(avg, powFactor);
-#else
-			distLu= pow(distLu, powFactor);
-			distRu= pow(distRu, powFactor);
-			distLd= pow(distLd, powFactor);
-			distRd= pow(distRd, powFactor);
-			avg= pow(avg, powFactor);
-#endif
+
+			distLu	= std::pow(distLu, powFactor);
+			distRu	= std::pow(distRu, powFactor);
+			distLd	= std::pow(distLd, powFactor);
+			distRd	= std::pow(distRd, powFactor);
+			avg		= std::pow(avg, powFactor);
+
 			float lu= distLu>avg? 0: ((avg-distLu))*random.randRange(0.5f, 1.0f);
 			float ru= distRu>avg? 0: ((avg-distRu))*random.randRange(0.5f, 1.0f);
 			float ld= distLd>avg? 0: ((avg-distLd))*random.randRange(0.5f, 1.0f);
@@ -1207,7 +1352,7 @@ void Pixmap2D::lerp(float t, const Pixmap2D *pixmap1, const Pixmap2D *pixmap2){
 		!doDimensionsAgree(pixmap1) ||
 		!doDimensionsAgree(pixmap2))
 	{
-		throw runtime_error("Pixmap2D::lerp: pixmap dimensions don't agree");
+		throw megaglest_runtime_error("Pixmap2D::lerp: pixmap dimensions don't agree");
 	}
 
 	for(int i=0; i<w; ++i){
@@ -1222,7 +1367,7 @@ void Pixmap2D::copy(const Pixmap2D *sourcePixmap){
 	assert(components==sourcePixmap->getComponents());
 
 	if(w!=sourcePixmap->getW() || h!=sourcePixmap->getH()){
-		throw runtime_error("Pixmap2D::copy() dimensions must agree");
+		throw megaglest_runtime_error("Pixmap2D::copy() dimensions must agree");
 	}
 	memcpy(pixels, sourcePixmap->getPixels(), w*h*sourcePixmap->getComponents());
 	this->path = sourcePixmap->path;
@@ -1233,15 +1378,36 @@ void Pixmap2D::subCopy(int x, int y, const Pixmap2D *sourcePixmap){
 	assert(components==sourcePixmap->getComponents());
 
 	if(w<sourcePixmap->getW() && h<sourcePixmap->getH()){
-		throw runtime_error("Pixmap2D::subCopy(), bad dimensions");
+		throw megaglest_runtime_error("Pixmap2D::subCopy(), bad dimensions");
 	}
 
 	uint8 *pixel= new uint8[components];
 
-	for(int i=0; i<sourcePixmap->getW(); ++i){
-		for(int j=0; j<sourcePixmap->getH(); ++j){
+	for(int i = 0; i < sourcePixmap->getW(); ++i) {
+		for(int j = 0; j < sourcePixmap->getH(); ++j) {
 			sourcePixmap->getPixel(i, j, pixel);
-			setPixel(i+x, j+y, pixel);
+			setPixel(i+x, j+y, pixel, components);
+		}
+	}
+	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
+
+	delete [] pixel;
+}
+
+// uses a a part of a bigger source image to fill this image.
+void Pixmap2D::copyImagePart(int x, int y, const Pixmap2D *sourcePixmap){
+	assert(components==sourcePixmap->getComponents());
+
+	if(x+w>sourcePixmap->getW() && y+h>sourcePixmap->getH()){
+		throw megaglest_runtime_error("Pixmap2D::copyImagePart(), bad dimensions");
+	}
+
+	uint8 *pixel= new uint8[components];
+
+	for(int i = x; i < x + w; ++i) {
+		for(int j = y; j < y + h; ++j) {
+			sourcePixmap->getPixel(i, j, pixel);
+			setPixel(i-x, j-y, pixel, components);
 		}
 	}
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
@@ -1258,7 +1424,10 @@ bool Pixmap2D::doDimensionsAgree(const Pixmap2D *pixmap){
 // =====================================================
 
 Pixmap3D::Pixmap3D() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 
 	w= -1;
 	h= -1;
@@ -1269,14 +1438,20 @@ Pixmap3D::Pixmap3D() {
 }
 
 Pixmap3D::Pixmap3D(int w, int h, int d, int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	pixels = NULL;
 	slice=0;
 	init(w, h, d, components);
 }
 
 Pixmap3D::Pixmap3D(int d, int components) {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	pixels = NULL;
 	slice=0;
 	init(d, components);
@@ -1287,11 +1462,11 @@ void Pixmap3D::init(int w, int h, int d, int components){
 	this->h= h;
 	this->d= d;
 	this->components= components;
-	pixels= new uint8[(std::size_t)getPixelByteCount()];
+	pixels= new uint8[getPixelByteCount()];
 	CalculatePixelsCRC(pixels,0, crc);
 }
 
-uint64 Pixmap3D::getPixelByteCount() const {
+std::size_t Pixmap3D::getPixelByteCount() const {
 	return (h * w * d * components);
 }
 
@@ -1335,7 +1510,7 @@ void Pixmap3D::loadSlice(const string &path, int slice) {
 		loadSliceTga(path, slice);
 	}
 	else {
-		throw runtime_error("Unknown pixmap extension: "+extension);
+		throw megaglest_runtime_error("Unknown pixmap extension: "+extension);
 	}
 	this->path = path;
 	CalculatePixelsCRC(pixels,getPixelByteCount(), crc);
@@ -1363,7 +1538,7 @@ void Pixmap3D::loadSliceBmp(const string &path, int slice){
 		components= 3;
 	}
 	if(pixels==NULL){
-		pixels= new uint8[(std::size_t)getPixelByteCount()];
+		pixels= new uint8[getPixelByteCount()];
 	}
 
 	//data
@@ -1376,34 +1551,16 @@ void Pixmap3D::loadSliceTga(const string &path, int slice){
 	//deletePixels();
 	FileReader<Pixmap3D>::readPath(path,this);
 	//printf("Loading 3D pixmap TGA [%s] this [%p]\n",path.c_str(),this);
-
-/*
-	PixmapIoTga plt;
-	plt.openRead(path);
-
-	//header
-	int fileComponents= plt.getComponents();
-
-	//init
-	w= plt.getW();
-	h= plt.getH();
-	if(components==-1){
-		components= fileComponents;
-	}
-	if(pixels==NULL){
-		pixels= new uint8[(std::size_t)getPixelByteCount()];
-	}
-
-	//read data
-	plt.read(&pixels[slice*w*h*components], components);
-*/
 }
 
 // =====================================================
 //	class PixmapCube
 // =====================================================
 PixmapCube::PixmapCube() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 }
 
 PixmapCube::~PixmapCube() {
@@ -1422,8 +1579,8 @@ void PixmapCube::init(int components) {
 	}
 }
 
-uint64 PixmapCube::getPixelByteCount() const {
-	uint64 result = 0;
+std::size_t PixmapCube::getPixelByteCount() const {
+	std::size_t result = 0;
 	for(int i=0; i<6; ++i) {
 		result += faces[i].getPixelByteCount();
 	}

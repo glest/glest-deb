@@ -32,9 +32,163 @@ using namespace Shared::Graphics;
 
 namespace Glest{ namespace Game{
 
-AiInterface::AiInterface(Game &game, int factionIndex, int teamIndex, int useStartLocation) {
+// =====================================================
+//	class FactionThread
+// =====================================================
+
+AiInterfaceThread::AiInterfaceThread(AiInterface *aiIntf) : BaseThread() {
+	this->masterController = NULL;
+	this->triggerIdMutex = new Mutex(CODE_AT_LINE);
+	this->aiIntf = aiIntf;
+	uniqueID = "AiInterfaceThread";
+}
+
+AiInterfaceThread::~AiInterfaceThread() {
+	delete triggerIdMutex;
+	triggerIdMutex = NULL;
+}
+
+void AiInterfaceThread::setQuitStatus(bool value) {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d value = %d\n",__FILE__,__FUNCTION__,__LINE__,value);
+
+	BaseThread::setQuitStatus(value);
+	if(value == true) {
+		signal(-1);
+	}
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+void AiInterfaceThread::signal(int frameIndex) {
+	if(frameIndex >= 0) {
+		static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+		MutexSafeWrapper safeMutex(triggerIdMutex,mutexOwnerId);
+		this->frameIndex.first = frameIndex;
+		this->frameIndex.second = false;
+
+		safeMutex.ReleaseLock();
+	}
+	semTaskSignalled.signal();
+}
+
+void AiInterfaceThread::setTaskCompleted(int frameIndex) {
+	if(frameIndex >= 0) {
+		static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+		MutexSafeWrapper safeMutex(triggerIdMutex,mutexOwnerId);
+		if(this->frameIndex.first == frameIndex) {
+			this->frameIndex.second = true;
+		}
+		safeMutex.ReleaseLock();
+	}
+}
+
+bool AiInterfaceThread::canShutdown(bool deleteSelfIfShutdownDelayed) {
+	bool ret = (getExecutingTask() == false);
+	if(ret == false && deleteSelfIfShutdownDelayed == true) {
+	    setDeleteSelfOnExecutionDone(deleteSelfIfShutdownDelayed);
+	    deleteSelfIfRequired();
+	    signalQuit();
+	}
+
+	return ret;
+}
+
+bool AiInterfaceThread::isSignalCompleted(int frameIndex) {
+	if(getRunningStatus() == false) {
+		return true;
+	}
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(triggerIdMutex,mutexOwnerId);
+	//bool result = (event != NULL ? event->eventCompleted : true);
+	bool result = (this->frameIndex.first == frameIndex && this->frameIndex.second == true);
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] worker thread this = %p, this->frameIndex.first = %d, this->frameIndex.second = %d\n",__FILE__,__FUNCTION__,__LINE__,this,this->frameIndex.first,this->frameIndex.second);
+
+	safeMutex.ReleaseLock();
+	return result;
+}
+
+void AiInterfaceThread::signalQuit() {
+	if(this->aiIntf != NULL) {
+		MutexSafeWrapper safeMutex(this->aiIntf->getMutex(),string(__FILE__) + "_" + intToStr(__LINE__));
+		this->aiIntf = NULL;
+	}
+
+	BaseThread::signalQuit();
+}
+void AiInterfaceThread::execute() {
+    RunningStatusSafeWrapper runningStatus(this);
+	try {
+		//setRunningStatus(true);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] ****************** STARTING worker thread this = %p\n",__FILE__,__FUNCTION__,__LINE__,this);
+
+		//bool minorDebugPerformance = false;
+		Chrono chrono;
+
+		//unsigned int idx = 0;
+		for(;this->aiIntf != NULL;) {
+			if(getQuitStatus() == true) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				break;
+			}
+
+			semTaskSignalled.waitTillSignalled();
+
+			static string masterSlaveOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+			MasterSlaveThreadControllerSafeWrapper safeMasterController(masterController,20000,masterSlaveOwnerId);
+
+			if(getQuitStatus() == true) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				break;
+			}
+
+			static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+            MutexSafeWrapper safeMutex(triggerIdMutex,mutexOwnerId);
+            bool executeTask = (frameIndex.first >= 0);
+
+            //if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] frameIndex = %d this = %p executeTask = %d\n",__FILE__,__FUNCTION__,__LINE__,frameIndex.first, this, executeTask);
+
+            safeMutex.ReleaseLock();
+
+            if(executeTask == true) {
+				ExecutingTaskSafeWrapper safeExecutingTaskMutex(this);
+
+				MutexSafeWrapper safeMutex(this->aiIntf->getMutex(),string(__FILE__) + "_" + intToStr(__LINE__));
+
+				this->aiIntf->update();
+
+				safeMutex.ReleaseLock();
+
+				setTaskCompleted(frameIndex.first);
+            }
+
+			if(getQuitStatus() == true) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				break;
+			}
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] ****************** ENDING worker thread this = %p\n",__FILE__,__FUNCTION__,__LINE__,this);
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+AiInterface::AiInterface(Game &game, int factionIndex, int teamIndex,
+		int useStartLocation) : fp(NULL) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+	this->aiMutex = new Mutex(CODE_AT_LINE);
+	this->workerThread = NULL;
 	this->world= game.getWorld();
 	this->commander= game.getCommander();
 	this->console= game.getConsole();
@@ -51,26 +205,103 @@ AiInterface::AiInterface(Game &game, int factionIndex, int teamIndex, int useSta
 	logLevel= Config::getInstance().getInt("AiLog");
 	redir= Config::getInstance().getBool("AiRedir");
 
-	//clear log file
-	if(logLevel>0){
-#ifdef WIN32
-		FILE *f= _wfopen(Shared::Platform::utf8_decode(getLogFilename()).c_str(), L"wt");
-#else
-		FILE *f= fopen(getLogFilename().c_str(), "wt");
-#endif
-		if(f==NULL){
-			throw runtime_error("Can't open file: "+getLogFilename());
-		}
-		fprintf(f, "%s", "MegaGlest AI log file\n\n");
-		fclose(f);
+	aiLogFile = getLogFilename();
+	if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+		aiLogFile = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + aiLogFile;
 	}
+	else {
+        string userData = Config::getInstance().getString("UserData_Root","");
+        if(userData != "") {
+        	endPathWithSlash(userData);
+        }
+        aiLogFile = userData + aiLogFile;
+	}
+
+	//clear log file
+	if(logLevel > 0) {
+#ifdef WIN32
+		fp = _wfopen(::Shared::Platform::utf8_decode(aiLogFile).c_str(), L"wt");
+#else
+		fp = fopen(aiLogFile.c_str(), "wt");
+#endif
+		if(fp == NULL) {
+			throw megaglest_runtime_error("Can't open file: [" + aiLogFile + "]");
+		}
+		fprintf(fp, "MegaGlest AI log file for Tech [%s] Faction [%s] #%d\n\n",this->gameSettings->getTech().c_str(),this->world->getFaction(this->factionIndex)->getType()->getName().c_str(),this->factionIndex);
+	}
+
+
+	if( Config::getInstance().getBool("EnableAIWorkerThreads","true") == true) {
+		if(workerThread != NULL) {
+			workerThread->signalQuit();
+			if(workerThread->shutdownAndWait() == true) {
+				delete workerThread;
+			}
+			workerThread = NULL;
+		}
+		static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
+		this->workerThread = new AiInterfaceThread(this);
+		this->workerThread->setUniqueID(mutexOwnerId);
+		this->workerThread->start();
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+void AiInterface::init() {
+    world=NULL;;
+    commander=NULL;;
+    console=NULL;;
+    gameSettings=NULL;;
+    timer=0;
+    factionIndex=0;
+    teamIndex=0;
+	redir=false;
+    logLevel=0;
+    fp=NULL;;
+    aiMutex=NULL;
+    workerThread=NULL;
 }
 
 AiInterface::~AiInterface() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] deleting AI factionIndex = %d, teamIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,this->factionIndex,this->teamIndex);
     cacheUnitHarvestResourceLookup.clear();
+
+	if(workerThread != NULL) {
+		workerThread->signalQuit();
+    	sleep(0);
+    	if(workerThread->canShutdown(true) == true &&
+    			workerThread->shutdownAndWait() == true) {
+			delete workerThread;
+		}
+		workerThread = NULL;
+	}
+
+    if(fp) {
+    	fclose(fp);
+    	fp = NULL;
+    }
+
+	delete aiMutex;
+	aiMutex = NULL;
 }
+
+void AiInterface::signalWorkerThread(int frameIndex) {
+	if(workerThread != NULL) {
+		workerThread->signal(frameIndex);
+	}
+	else {
+		this->update();
+	}
+}
+
+bool AiInterface::isWorkerThreadSignalCompleted(int frameIndex) {
+	if(workerThread != NULL) {
+		return workerThread->isSignalCompleted(frameIndex);
+	}
+	return true;
+}
+
 // ==================== main ====================
 
 void AiInterface::update() {
@@ -80,21 +311,19 @@ void AiInterface::update() {
 
 // ==================== misc ====================
 
+bool AiInterface::isLogLevelEnabled(int level) {
+	return (this->logLevel >= level);
+}
+
 void AiInterface::printLog(int logLevel, const string &s){
-    if(this->logLevel>=logLevel){
+    if(isLogLevelEnabled(logLevel) == true) {
 		string logString= "(" + intToStr(factionIndex) + ") " + s;
 
+		MutexSafeWrapper safeMutex(aiMutex,string(__FILE__) + "_" + intToStr(__LINE__));
 		//print log to file
-#ifdef WIN32
-		FILE *f= _wfopen(utf8_decode(getLogFilename()).c_str(), L"at");
-#else
-		FILE *f= fopen(getLogFilename().c_str(), "at");
-#endif
-		if(f==NULL){
-			throw runtime_error("Can't open file: "+getLogFilename());
+		if(fp != NULL) {
+			fprintf(fp, "%s\n", logString.c_str());
 		}
-		fprintf(f, "%s\n", logString.c_str());
-		fclose(f);
 
 		//redirect to console
 		if(redir) {
@@ -117,69 +346,70 @@ bool AiInterface::executeCommandOverNetwork() {
 	return faction->getCpuControl(enableServerControlledAI,isNetworkGame,role);
 }
 
-CommandResult AiInterface::giveCommandSwitchTeamVote(const Faction* faction, SwitchTeamVote *vote) {
+std::pair<CommandResult,string> AiInterface::giveCommandSwitchTeamVote(const Faction* faction, SwitchTeamVote *vote) {
 	assert(this->gameSettings != NULL);
 
 	commander->trySwitchTeamVote(faction,vote);
-	return crSuccess;
+	return std::pair<CommandResult,string>(crSuccess,"");
 }
 
-CommandResult AiInterface::giveCommand(int unitIndex, CommandClass commandClass, const Vec2i &pos){
+std::pair<CommandResult,string> AiInterface::giveCommand(int unitIndex, CommandClass commandClass, const Vec2i &pos){
 	assert(this->gameSettings != NULL);
 
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	if(executeCommandOverNetwork() == true) {
 		const Unit *unit = getMyUnit(unitIndex);
-		CommandResult result = commander->tryGiveCommand(unit, unit->getType()->getFirstCtOfClass(commandClass), pos, unit->getType(),CardinalDir::NORTH);
-
+		result = commander->tryGiveCommand(unit, unit->getType()->getFirstCtOfClass(commandClass), pos, unit->getType(),CardinalDir::NORTH);
 		return result;
 	}
 	else {
 		Command *c= new Command (world->getFaction(factionIndex)->getUnit(unitIndex)->getType()->getFirstCtOfClass(commandClass), pos);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-		CommandResult result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(c);
+		result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(c);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		return result;
 	}
 }
 
-CommandResult AiInterface::giveCommand(const Unit *unit, const CommandType *commandType, const Vec2i &pos, int unitGroupCommandId) {
+std::pair<CommandResult,string> AiInterface::giveCommand(const Unit *unit, const CommandType *commandType, const Vec2i &pos, int unitGroupCommandId) {
 	assert(this->gameSettings != NULL);
 
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	if(unit == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unit in AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unit in AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const UnitType* unitType= unit->getType();
 	if(unitType == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unittype with unit id: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unit->getId(),factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unittype with unit id: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unit->getId(),factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
 	if(commandType == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] commandType == NULL, unit id: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unit->getId(),factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] commandType == NULL, unit id: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unit->getId(),factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const CommandType* ct= unit->getType()->findCommandTypeById(commandType->getId());
 	if(ct == NULL) {
-	    char szBuf[4096]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
             __FILE__,__FUNCTION__,__LINE__,
-            unit->getId(), unit->getFullName().c_str(),unit->getDesc().c_str(),
+            unit->getId(), unit->getFullName(false).c_str(),unit->getDesc(false).c_str(),
             unit->getFaction()->getIndex());
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",szBuf);
 
 	    std::string worldLog = world->DumpWorldToLog();
 	    std::string sError = "worldLog = " + worldLog + " " + string(szBuf);
-		throw runtime_error(sError);
+		throw megaglest_runtime_error(sError);
 	}
 
 	if(executeCommandOverNetwork() == true) {
-		CommandResult result = commander->tryGiveCommand(unit, commandType, pos,
+		result = commander->tryGiveCommand(unit, commandType, pos,
 				unit->getType(),CardinalDir::NORTH, false, NULL,unitGroupCommandId);
 		return result;
 	}
@@ -190,46 +420,47 @@ CommandResult AiInterface::giveCommand(const Unit *unit, const CommandType *comm
 		Unit *unitToCommand = faction->findUnit(unit->getId());
 		Command *cmd = new Command(commandType, pos);
 		cmd->setUnitCommandGroupId(unitGroupCommandId);
-		CommandResult result = unitToCommand->giveCommand(cmd);
+		result = unitToCommand->giveCommand(cmd);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		return result;
 	}
 }
 
-CommandResult AiInterface::giveCommand(int unitIndex, const CommandType *commandType, const Vec2i &pos, int unitGroupCommandId) {
+std::pair<CommandResult,string> AiInterface::giveCommand(int unitIndex, const CommandType *commandType, const Vec2i &pos, int unitGroupCommandId) {
 	assert(this->gameSettings != NULL);
 
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	const Unit *unit = getMyUnit(unitIndex);
 	if(unit == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const UnitType* unitType= unit->getType();
 	if(unitType == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const CommandType* ct= unit->getType()->findCommandTypeById(commandType->getId());
 	if(ct == NULL) {
-	    char szBuf[4096]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
             __FILE__,__FUNCTION__,__LINE__,
-            unit->getId(), unit->getFullName().c_str(),unit->getDesc().c_str(),
+            unit->getId(), unit->getFullName(false).c_str(),unit->getDesc(false).c_str(),
             unit->getFaction()->getIndex());
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",szBuf);
 
 	    std::string worldLog = world->DumpWorldToLog();
 	    std::string sError = "worldLog = " + worldLog + " " + string(szBuf);
-		throw runtime_error(sError);
+		throw megaglest_runtime_error(sError);
 	}
 
 	if(executeCommandOverNetwork() == true) {
 		const Unit *unit = getMyUnit(unitIndex);
-		CommandResult result = commander->tryGiveCommand(unit, commandType, pos, unit->getType(),CardinalDir::NORTH);
+		result = commander->tryGiveCommand(unit, commandType, pos, unit->getType(),CardinalDir::NORTH);
 		return result;
 	}
 	else {
@@ -237,52 +468,53 @@ CommandResult AiInterface::giveCommand(int unitIndex, const CommandType *command
 
 		Command *cmd = new Command(commandType, pos);
 		cmd->setUnitCommandGroupId(unitGroupCommandId);
-		CommandResult result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(cmd);
+		result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(cmd);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		return result;
 	}
 }
 
-CommandResult AiInterface::giveCommand(int unitIndex, const CommandType *commandType, const Vec2i &pos, const UnitType *ut) {
+std::pair<CommandResult,string> AiInterface::giveCommand(int unitIndex, const CommandType *commandType, const Vec2i &pos, const UnitType *ut) {
 	assert(this->gameSettings != NULL);
 
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	const Unit *unit = getMyUnit(unitIndex);
 	if(unit == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const UnitType* unitType= unit->getType();
 	if(unitType == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const CommandType* ct= unit->getType()->findCommandTypeById(commandType->getId());
 	if(ct == NULL) {
-	    char szBuf[4096]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
             __FILE__,__FUNCTION__,__LINE__,
-            unit->getId(), unit->getFullName().c_str(),unit->getDesc().c_str(),
+            unit->getId(), unit->getFullName(false).c_str(),unit->getDesc(false).c_str(),
             unit->getFaction()->getIndex());
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",szBuf);
 
 	    std::string worldLog = world->DumpWorldToLog();
 	    std::string sError = "worldLog = " + worldLog + " " + string(szBuf);
-		throw runtime_error(sError);
+		throw megaglest_runtime_error(sError);
 	}
 
 	if(executeCommandOverNetwork() == true) {
 		const Unit *unit = getMyUnit(unitIndex);
-		CommandResult result = commander->tryGiveCommand(unit, commandType, pos, ut,CardinalDir::NORTH);
+		result = commander->tryGiveCommand(unit, commandType, pos, ut,CardinalDir::NORTH);
 		return result;
 	}
 	else {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-		CommandResult result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(new Command(commandType, pos, ut, CardinalDir::NORTH));
+		result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(new Command(commandType, pos, ut, CardinalDir::NORTH));
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -290,49 +522,50 @@ CommandResult AiInterface::giveCommand(int unitIndex, const CommandType *command
 	}
 }
 
-CommandResult AiInterface::giveCommand(int unitIndex, const CommandType *commandType, Unit *u){
+std::pair<CommandResult,string> AiInterface::giveCommand(int unitIndex, const CommandType *commandType, Unit *u){
 	assert(this->gameSettings != NULL);
 	assert(this->commander != NULL);
 
+	std::pair<CommandResult,string> result(crFailUndefined,"");
 	const Unit *unit = getMyUnit(unitIndex);
 	if(unit == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unit with index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const UnitType* unitType= unit->getType();
 	if(unitType == NULL) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
-		throw runtime_error(szBuf);
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d] Can not find AI unittype with unit index: %d, AI factionIndex = %d. Game out of synch.",__FILE__,__FUNCTION__,__LINE__,unitIndex,factionIndex);
+		throw megaglest_runtime_error(szBuf);
 	}
     const CommandType* ct= (commandType != NULL ? unit->getType()->findCommandTypeById(commandType->getId()) : NULL);
 	if(ct == NULL) {
-	    char szBuf[4096]="";
-	    sprintf(szBuf,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
+	    char szBuf[8096]="";
+	    snprintf(szBuf,8096,"In [%s::%s Line: %d]\nCan not find AI command type for:\nunit = %d\n[%s]\n[%s]\nactual local factionIndex = %d.\nGame out of synch.",
             __FILE__,__FUNCTION__,__LINE__,
-            unit->getId(), unit->getFullName().c_str(),unit->getDesc().c_str(),
+            unit->getId(), unit->getFullName(false).c_str(),unit->getDesc(false).c_str(),
             unit->getFaction()->getIndex());
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",szBuf);
 
 	    std::string worldLog = world->DumpWorldToLog();
 	    std::string sError = "worldLog = " + worldLog + " " + string(szBuf);
-		throw runtime_error(sError);
+		throw megaglest_runtime_error(sError);
 	}
 
 	if(executeCommandOverNetwork() == true) {
 		Unit *targetUnit = u;
 		const Unit *unit = getMyUnit(unitIndex);
 
-		CommandResult result = commander->tryGiveCommand(unit, commandType, Vec2i(0), unit->getType(),CardinalDir::NORTH,false,targetUnit);
+		result = commander->tryGiveCommand(unit, commandType, Vec2i(0), unit->getType(),CardinalDir::NORTH,false,targetUnit);
 
 		return result;
 	}
 	else {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-		CommandResult result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(new Command(commandType, u));
+		result = world->getFaction(factionIndex)->getUnit(unitIndex)->giveCommand(new Command(commandType, u));
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -390,9 +623,9 @@ const Resource *AiInterface::getResource(const ResourceType *rt){
 
 Unit *AiInterface::getMyUnitPtr(int unitIndex) {
 	if(unitIndex >= world->getFaction(factionIndex)->getUnitCount()) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s Line: %d] unitIndex >= world->getFaction(factionIndex)->getUnitCount(), unitIndex = %d, world->getFaction(factionIndex)->getUnitCount() = %d",__FILE__,__FUNCTION__,__LINE__,unitIndex,world->getFaction(factionIndex)->getUnitCount());
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d] unitIndex >= world->getFaction(factionIndex)->getUnitCount(), unitIndex = %d, world->getFaction(factionIndex)->getUnitCount() = %d",__FILE__,__FUNCTION__,__LINE__,unitIndex,world->getFaction(factionIndex)->getUnitCount());
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	return world->getFaction(factionIndex)->getUnit(unitIndex);
@@ -484,15 +717,6 @@ bool AiInterface::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i
 					if(r->getType() == rt) {
 						resourcePos= pos + Vec2i(i,j);
 
-						//if(faction != NULL) {
-						//	char szBuf[4096]="";
-						//				sprintf(szBuf,"[%s::%s Line: %d] [isresourcenear] pos [%s] resourcePos [%s] fallbackToPeersHarvestingSameResource [%d] rt [%s]",
-						//						__FILE__,__FUNCTION__,__LINE__,pos.getString().c_str(),resourcePos.getString().c_str(),fallbackToPeersHarvestingSameResource,rt->getName().c_str());
-
-						//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"----------------------------------- START [%d] ------------------------------------------------\n",faction->getFrameCount());
-						//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s",szBuf);
-						//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"------------------------------------ END [%d] -------------------------------------------------\n",faction->getFrameCount());
-						//}
 						return true;
 					}
 				}
@@ -510,29 +734,11 @@ bool AiInterface::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i
 		if(result.x >= 0) {
 			resourcePos = result;
 
-		  	//char szBuf[4096]="";
-			//	    	sprintf(szBuf,"[%s::%s Line: %d] [isresourcenear] pos [%s] resourcePos [%s] fallbackToPeersHarvestingSameResource [%d] rt [%s]",
-			//	    			__FILE__,__FUNCTION__,__LINE__,pos.getString().c_str(),resourcePos.getString().c_str(),fallbackToPeersHarvestingSameResource,rt->getName().c_str());
-
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"----------------------------------- START [%d] ------------------------------------------------\n",faction->getFrameCount());
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s",szBuf);
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"------------------------------------ END [%d] -------------------------------------------------\n",faction->getFrameCount());
-
 			if(pos.dist(resourcePos) <= size) {
 				return true;
 			}
 		}
 	}
-
-	//if(faction != NULL) {
-	//	char szBuf[4096]="";
-	//				sprintf(szBuf,"[%s::%s Line: %d] [isresourcenear] pos [%s] resourcePos [%s] fallbackToPeersHarvestingSameResource [%d] rt [%s] getCacheResourceTargetListSize() [%d]",
-	//						__FILE__,__FUNCTION__,__LINE__,pos.getString().c_str(),resourcePos.getString().c_str(),fallbackToPeersHarvestingSameResource,rt->getName().c_str(),faction->getCacheResourceTargetListSize());
-
-	//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"----------------------------------- START [%d] ------------------------------------------------\n",faction->getFrameCount());
-	//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s",szBuf);
-	//	SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"------------------------------------ END [%d] -------------------------------------------------\n",faction->getFrameCount());
-	//}
 
 	return false;
 }
@@ -571,7 +777,6 @@ bool AiInterface::getNearestSightedResource(const ResourceType *rt, const Vec2i 
 
 	if(canUseResourceType == true) {
 		bool isResourceClose = isResourceNear(pos, rt, resultPos, faction, true);
-		//bool isResourceClose = false;
 
 		// Found a resource
 		if(isResourceClose == true || resultPos.x >= 0) {
@@ -579,8 +784,6 @@ bool AiInterface::getNearestSightedResource(const ResourceType *rt, const Vec2i 
 		}
 		else {
 			const Map *map		= world->getMap();
-			//Faction *faction 	= world->getFaction(factionIndex);
-
 			for(int i = 0; i < map->getW(); ++i) {
 				for(int j = 0; j < map->getH(); ++j) {
 					Vec2i resPos = Vec2i(i, j);
@@ -601,8 +804,6 @@ bool AiInterface::getNearestSightedResource(const ResourceType *rt, const Vec2i 
 									resultPos= resPos;
 								}
 							}
-
-							//faction->addResourceTargetToCache(resPos,false);
 						}
 					}
 				}
@@ -623,16 +824,30 @@ bool AiInterface::reqsOk(const CommandType *ct){
     return world->getFaction(factionIndex)->reqsOk(ct);
 }
 
-bool AiInterface::checkCosts(const ProducibleType *pt){
-	return world->getFaction(factionIndex)->checkCosts(pt);
+bool AiInterface::checkCosts(const ProducibleType *pt, const CommandType *ct) {
+	return world->getFaction(factionIndex)->checkCosts(pt,ct);
 }
 
 bool AiInterface::isFreeCells(const Vec2i &pos, int size, Field field){
     return world->getMap()->isFreeCells(pos, size, field);
 }
 
+void AiInterface::removeEnemyWarningPositionFromList(Vec2i &checkPos) {
+	for(int i = (int)enemyWarningPositionList.size() - 1; i >= 0; --i) {
+		Vec2i &pos = enemyWarningPositionList[i];
+
+		if(checkPos == pos) {
+			enemyWarningPositionList.erase(enemyWarningPositionList.begin()+i);
+			break;
+		}
+	}
+}
+
 const Unit *AiInterface::getFirstOnSightEnemyUnit(Vec2i &pos, Field &field, int radius) {
 	Map *map= world->getMap();
+
+	const int CHECK_RADIUS = 12;
+	const int WARNING_ENEMY_COUNT = 6;
 
 	for(int i = 0; i < world->getFactionCount(); ++i) {
         for(int j = 0; j < world->getFaction(i)->getUnitCount(); ++j) {
@@ -649,6 +864,37 @@ const Unit *AiInterface::getFirstOnSightEnemyUnit(Vec2i &pos, Field &field, int 
                 if(pos.dist(getHomeLocation()) < radius) {
                     printLog(2, "Being attacked at pos "+intToStr(pos.x)+","+intToStr(pos.y)+"\n");
 
+                    // Now check if there are more than x enemies in sight and if
+                    // so make note of the position
+                    int foundEnemies = 0;
+                    std::map<int,bool> foundEnemyList;
+                	for(int aiX = pos.x-CHECK_RADIUS; aiX < pos.x + CHECK_RADIUS; ++aiX) {
+                		for(int aiY = pos.y-CHECK_RADIUS; aiY < pos.y + CHECK_RADIUS; ++aiY) {
+                			Vec2i checkPos(aiX,aiY);
+                			if(map->isInside(checkPos) && map->isInsideSurface(map->toSurfCoords(checkPos))) {
+                				Cell *cAI = map->getCell(checkPos);
+                				SurfaceCell *scAI = map->getSurfaceCell(Map::toSurfCoords(checkPos));
+                				if(scAI != NULL && cAI != NULL && cAI->getUnit(field) != NULL && sc->isVisible(teamIndex)) {
+                					const Unit *checkUnit = cAI->getUnit(field);
+                					if(foundEnemyList.find(checkUnit->getId()) == foundEnemyList.end()) {
+										bool cannotSeeUnitAI = (checkUnit->getType()->hasCellMap() == true &&
+															checkUnit->getType()->getAllowEmptyCellMap() == true &&
+															checkUnit->getType()->hasEmptyCellMap() == true);
+										if(cannotSeeUnitAI == false && isAlly(checkUnit) == false
+												&& checkUnit->isAlive() == true) {
+											foundEnemies++;
+											foundEnemyList[checkUnit->getId()] = true;
+										}
+                					}
+                				}
+                			}
+                		}
+                	}
+                	if(foundEnemies >= WARNING_ENEMY_COUNT) {
+                		if(std::find(enemyWarningPositionList.begin(),enemyWarningPositionList.end(),pos) == enemyWarningPositionList.end()) {
+                			enemyWarningPositionList.push_back(pos);
+                		}
+                	}
                     return unit;
                 }
             }
@@ -665,6 +911,79 @@ Map * AiInterface::getMap() {
 bool AiInterface::factionUsesResourceType(const FactionType *factionType, const ResourceType *rt) {
 	bool factionUsesResourceType = factionType->factionUsesResourceType(rt);
 	return factionUsesResourceType;
+}
+
+void AiInterface::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *aiInterfaceNode = rootNode->addChild("AiInterface");
+
+//    World *world;
+//    Commander *commander;
+//    Console *console;
+//    GameSettings *gameSettings;
+//
+//    Ai ai;
+	ai.saveGame(aiInterfaceNode);
+//    int timer;
+	aiInterfaceNode->addAttribute("timer",intToStr(timer), mapTagReplacements);
+//    int factionIndex;
+	aiInterfaceNode->addAttribute("factionIndex",intToStr(factionIndex), mapTagReplacements);
+//    int teamIndex;
+	aiInterfaceNode->addAttribute("teamIndex",intToStr(teamIndex), mapTagReplacements);
+//	//config
+//	bool redir;
+	aiInterfaceNode->addAttribute("redir",intToStr(redir), mapTagReplacements);
+//    int logLevel;
+	aiInterfaceNode->addAttribute("logLevel",intToStr(logLevel), mapTagReplacements);
+//    std::map<const ResourceType *,int> cacheUnitHarvestResourceLookup;
+	for(std::map<const ResourceType *,int>::const_iterator iterMap = cacheUnitHarvestResourceLookup.begin();
+			iterMap != cacheUnitHarvestResourceLookup.end(); ++iterMap) {
+		XmlNode *cacheUnitHarvestResourceLookupNode = aiInterfaceNode->addChild("cacheUnitHarvestResourceLookup");
+
+		cacheUnitHarvestResourceLookupNode->addAttribute("key",iterMap->first->getName(), mapTagReplacements);
+		cacheUnitHarvestResourceLookupNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+}
+
+// AiInterface::AiInterface(Game &game, int factionIndex, int teamIndex, int useStartLocation) {
+void AiInterface::loadGame(const XmlNode *rootNode, Faction *faction) {
+	XmlNode *aiInterfaceNode = NULL;
+	vector<XmlNode *> aiInterfaceNodeList = rootNode->getChildList("AiInterface");
+	for(unsigned int i = 0; i < aiInterfaceNodeList.size(); ++i) {
+		XmlNode *node = aiInterfaceNodeList[i];
+		if(node->getAttribute("factionIndex")->getIntValue() == faction->getIndex()) {
+			aiInterfaceNode = node;
+			break;
+		}
+	}
+
+	if(aiInterfaceNode != NULL) {
+		factionIndex = aiInterfaceNode->getAttribute("factionIndex")->getIntValue();
+		teamIndex = aiInterfaceNode->getAttribute("teamIndex")->getIntValue();
+
+		ai.loadGame(aiInterfaceNode, faction);
+		//firstTime = timeflowNode->getAttribute("firstTime")->getFloatValue();
+
+		timer = aiInterfaceNode->getAttribute("timer")->getIntValue();
+	//    int factionIndex;
+		//factionIndex = aiInterfaceNode->getAttribute("factionIndex")->getIntValue();
+	//    int teamIndex;
+		//teamIndex = aiInterfaceNode->getAttribute("teamIndex")->getIntValue();
+	//	//config
+	//	bool redir;
+		redir = aiInterfaceNode->getAttribute("redir")->getIntValue() != 0;
+	//    int logLevel;
+		logLevel = aiInterfaceNode->getAttribute("logLevel")->getIntValue();
+
+	//    std::map<const ResourceType *,int> cacheUnitHarvestResourceLookup;
+	//	for(std::map<const ResourceType *,int>::const_iterator iterMap = cacheUnitHarvestResourceLookup.begin();
+	//			iterMap != cacheUnitHarvestResourceLookup.end(); ++iterMap) {
+	//		XmlNode *cacheUnitHarvestResourceLookupNode = aiInterfaceNode->addChild("cacheUnitHarvestResourceLookup");
+	//
+	//		cacheUnitHarvestResourceLookupNode->addAttribute("key",iterMap->first->getName(), mapTagReplacements);
+	//		cacheUnitHarvestResourceLookupNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	//	}
+	}
 }
 
 }}//end namespace

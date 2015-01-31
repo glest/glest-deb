@@ -10,9 +10,8 @@
 // ==============================================================
 
 #include "metrics.h"	
-
-//#include "element_type.h"
 #include <stdexcept>
+#include "platform_util.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -25,13 +24,32 @@ namespace Glest{ namespace Game{
 // =====================================================
 
 Metrics::Metrics() {
+	reloadData();
+}
+
+void Metrics::reload(int resWidth, int resHeight) {
+	Metrics *metrics = getInstancePtr();
+	metrics->reloadData(resWidth, resHeight);
+}
+
+void Metrics::reloadData(int resWidth, int resHeight) {
 	Config &config = Config::getInstance();
 	
 	virtualW= 1000;
 	virtualH= 750;
 
-	screenW= config.getInt("ScreenWidth");
-	screenH= config.getInt("ScreenHeight");
+	if(resWidth > 0) {
+		screenW= resWidth;
+	}
+	else {
+		screenW= config.getInt("ScreenWidth");
+	}
+	if(resHeight > 0) {
+		screenH= resHeight;
+	}
+	else {
+		screenH= config.getInt("ScreenHeight");
+	}
 	
 	minimapX= 10;
 	minimapY= 750-128-30+16;
@@ -44,28 +62,33 @@ Metrics::Metrics() {
 	displayH= 480;	
 }
 
+Metrics * Metrics::getInstancePtr() {
+	static Metrics metrics;
+	return &metrics;
+}
+
 const Metrics &Metrics::getInstance(){
-	static const Metrics metrics;
-	return metrics;
+	Metrics *metrics = getInstancePtr();
+	return *metrics;
 }
 
 float Metrics::getAspectRatio() const{
 	if(screenH == 0) {
-		throw runtime_error("div by 0 screenH == 0");
+		throw megaglest_runtime_error("div by 0 screenH == 0");
 	}
 	return static_cast<float>(screenW)/screenH;
 }
 
 int Metrics::toVirtualX(int w) const{
 	if(screenW == 0) {
-		throw runtime_error("div by 0 screenW == 0");
+		throw megaglest_runtime_error("div by 0 screenW == 0");
 	}
 	return w*virtualW/screenW;
 }
 
 int Metrics::toVirtualY(int h) const{
 	if(screenH == 0) {
-		throw runtime_error("div by 0 screenH == 0");
+		throw megaglest_runtime_error("div by 0 screenH == 0");
 	}
 
 	//printf("h [%d] virtualH [%d] screenH [%d] result = %d\n",h,virtualH,screenH,(h*virtualH/screenH));

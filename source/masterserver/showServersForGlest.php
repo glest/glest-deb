@@ -1,4 +1,8 @@
 <?php
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke and Tom Reynolds
+//	The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 	define( 'INCLUSION_PERMITTED', true );
 	require_once( 'config.php' );
 	require_once( 'functions.php' );
@@ -8,7 +12,7 @@
 	// consider replacing this by a cron job
 	cleanupServerList();
 
-	$servers_in_db = mysql_query( 'SELECT * FROM glestserver ORDER BY status, (networkSlots - connectedClients) DESC, lasttime DESC;' );
+	$servers_in_db = mysql_query( 'SELECT * FROM glestserver WHERE status <> 3 ORDER BY status, connectedClients > 0 DESC, (networkSlots - connectedClients) , ip DESC;' );
 	$all_servers = array();
 	while ( $server = mysql_fetch_array( $servers_in_db ) )
 	{

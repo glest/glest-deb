@@ -24,6 +24,7 @@
 #include "resource.h"
 #include "renderer.h"
 #include "game_util.h"
+#include "faction.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -40,85 +41,133 @@ namespace Glest{ namespace Game{
 const string VALUE_PERCENT_MULTIPLIER_KEY_NAME = "value-percent-multiplier";
 const string VALUE_REGEN_KEY_NAME = "regeneration";
 
-
-void UpgradeTypeBase::load(const XmlNode *upgradeNode) {
+void UpgradeTypeBase::load(const XmlNode *upgradeNode, string upgradename) {
+	this->upgradename = upgradename;
 	//values
 	maxHpIsMultiplier = false;
-	maxHp= upgradeNode->getChild("max-hp")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("max-hp")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		maxHpIsMultiplier = upgradeNode->getChild("max-hp")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("max-hp") == true) {
+		maxHp = upgradeNode->getChild("max-hp")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("max-hp")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			maxHpIsMultiplier = upgradeNode->getChild("max-hp")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+			//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+		}
+	}
+	else {
+		maxHp = 0;
 	}
 	maxHpRegeneration = 0;
 	//maxHpRegenerationIsMultiplier = false;
-	if(upgradeNode->getChild("max-hp")->getAttribute(VALUE_REGEN_KEY_NAME,false) != NULL) {
-		maxHpRegeneration = upgradeNode->getChild("max-hp")->getAttribute(VALUE_REGEN_KEY_NAME)->getIntValue();
+	if(upgradeNode->hasChild("max-hp") == true) {
+		if(upgradeNode->getChild("max-hp")->getAttribute(VALUE_REGEN_KEY_NAME,false) != NULL) {
+			maxHpRegeneration = upgradeNode->getChild("max-hp")->getAttribute(VALUE_REGEN_KEY_NAME)->getIntValue();
 
-		//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+			//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+		}
 	}
 
 	maxEpIsMultiplier = false;
-	maxEp= upgradeNode->getChild("max-ep")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("max-ep")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		maxEpIsMultiplier = upgradeNode->getChild("max-ep")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("max-ep") == true) {
+		maxEp = upgradeNode->getChild("max-ep")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("max-ep")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			maxEpIsMultiplier = upgradeNode->getChild("max-ep")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found maxEpIsMultiplier = %d\n",maxEpIsMultiplier);
+			//printf("Found maxEpIsMultiplier = %d\n",maxEpIsMultiplier);
+		}
+	}
+	else {
+		maxEp = 0;
 	}
 	maxEpRegeneration = 0;
 	//maxEpRegenerationIsMultiplier = false;
-	if(upgradeNode->getChild("max-ep")->getAttribute(VALUE_REGEN_KEY_NAME,false) != NULL) {
-		maxEpRegeneration = upgradeNode->getChild("max-ep")->getAttribute(VALUE_REGEN_KEY_NAME)->getIntValue();
+	if(upgradeNode->hasChild("max-ep") == true) {
+		if(upgradeNode->getChild("max-ep")->getAttribute(VALUE_REGEN_KEY_NAME,false) != NULL) {
+			maxEpRegeneration = upgradeNode->getChild("max-ep")->getAttribute(VALUE_REGEN_KEY_NAME)->getIntValue();
 
-		//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+			//printf("Found maxHpIsMultiplier = %d\n",maxHpIsMultiplier);
+		}
 	}
 
 	sightIsMultiplier = false;
-	sight= upgradeNode->getChild("sight")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("sight")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		sightIsMultiplier = upgradeNode->getChild("sight")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("sight") == true) {
+		sight= upgradeNode->getChild("sight")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("sight")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			sightIsMultiplier = upgradeNode->getChild("sight")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found sightIsMultiplier = %d\n",sightIsMultiplier);
+			//printf("Found sightIsMultiplier = %d\n",sightIsMultiplier);
+		}
+	}
+	else {
+		sight = 0;
 	}
 
 	attackStrengthIsMultiplier = false;
-	attackStrength= upgradeNode->getChild("attack-strenght")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("attack-strenght")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		attackStrengthIsMultiplier = upgradeNode->getChild("attack-strenght")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found attackStrengthIsMultiplier = %d\n",attackStrengthIsMultiplier);
+	std::vector<string> attackStrengthXMLTags;
+	attackStrengthXMLTags.push_back("attack-strenght");
+	attackStrengthXMLTags.push_back("attack-strength");
+	if(upgradeNode->hasChildWithAliases(attackStrengthXMLTags) == true) {
+		attackStrength= upgradeNode->getChildWithAliases(attackStrengthXMLTags)->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChildWithAliases(attackStrengthXMLTags)->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			attackStrengthIsMultiplier = upgradeNode->getChildWithAliases(attackStrengthXMLTags)->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+
+			//printf("Found attackStrengthIsMultiplier = %d\n",attackStrengthIsMultiplier);
+		}
+	}
+	else {
+		attackStrength = 0;
 	}
 
 	attackRangeIsMultiplier = false;
-	attackRange= upgradeNode->getChild("attack-range")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("attack-range")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		attackRangeIsMultiplier = upgradeNode->getChild("attack-range")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("attack-range") == true) {
+		attackRange= upgradeNode->getChild("attack-range")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("attack-range")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			attackRangeIsMultiplier = upgradeNode->getChild("attack-range")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found attackRangeIsMultiplier = %d\n",attackRangeIsMultiplier);
+			//printf("Found attackRangeIsMultiplier = %d\n",attackRangeIsMultiplier);
+		}
+	}
+	else {
+		attackRange = 0;
 	}
 
 	armorIsMultiplier = false;
-	armor= upgradeNode->getChild("armor")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("armor")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		armorIsMultiplier = upgradeNode->getChild("armor")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("armor") == true) {
+		armor= upgradeNode->getChild("armor")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("armor")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			armorIsMultiplier = upgradeNode->getChild("armor")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found armorIsMultiplier = %d\n",armorIsMultiplier);
+			//printf("Found armorIsMultiplier = %d\n",armorIsMultiplier);
+		}
+	}
+	else {
+		armor = 0;
 	}
 
 	moveSpeedIsMultiplier = false;
-	moveSpeed= upgradeNode->getChild("move-speed")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("move-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		moveSpeedIsMultiplier = upgradeNode->getChild("move-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("move-speed") == true) {
+		moveSpeed= upgradeNode->getChild("move-speed")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("move-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			moveSpeedIsMultiplier = upgradeNode->getChild("move-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found moveSpeedIsMultiplier = %d\n",moveSpeedIsMultiplier);
+			//printf("Found moveSpeedIsMultiplier = %d\n",moveSpeedIsMultiplier);
+		}
+	}
+	else {
+		moveSpeed= 0;
 	}
 
 	prodSpeedIsMultiplier = false;
-	prodSpeed= upgradeNode->getChild("production-speed")->getAttribute("value")->getIntValue();
-	if(upgradeNode->getChild("production-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
-		prodSpeedIsMultiplier = upgradeNode->getChild("production-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
+	if(upgradeNode->hasChild("production-speed") == true) {
+		prodSpeed= upgradeNode->getChild("production-speed")->getAttribute("value")->getIntValue();
+		if(upgradeNode->getChild("production-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME,false) != NULL) {
+			prodSpeedIsMultiplier = upgradeNode->getChild("production-speed")->getAttribute(VALUE_PERCENT_MULTIPLIER_KEY_NAME)->getBoolValue();
 
-		//printf("Found prodSpeedIsMultiplier = %d\n",prodSpeedIsMultiplier);
+			//printf("Found prodSpeedIsMultiplier = %d\n",prodSpeedIsMultiplier);
+		}
+	}
+	else {
+		prodSpeed = 0;
 	}
 }
 
@@ -185,18 +234,350 @@ int UpgradeTypeBase::getProdSpeed(const SkillType *st) const {
 			}
 		}
 		else {
-			throw runtime_error("Unsupported skilltype in getProdSpeed!");
+			throw megaglest_runtime_error("Unsupported skilltype in getProdSpeed!");
 		}
 
 		return result;
 	}
 }
 
-bool UpgradeType::isAffected(const UnitType *unitType) const{
-	return find(effects.begin(), effects.end(), unitType)!=effects.end();
+string UpgradeTypeBase::getDesc(bool translatedValue) const{
+
+    string str="";
+    string indent="->";
+    //int i;
+	Lang &lang= Lang::getInstance();
+
+	if(maxHp != 0) {
+		if(maxHpIsMultiplier) {
+			str += indent+lang.getString("Hp",(translatedValue == true ? "" : "english")) + " *" + intToStr(maxHp);
+		}
+		else {
+			str += indent+lang.getString("Hp",(translatedValue == true ? "" : "english")) + " +" + intToStr(maxHp);
+		}
+
+		if(maxHpRegeneration != 0) {
+			str += " [" + intToStr(maxHpRegeneration) + "]";
+		}
+	}
+
+	if(sight != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+		if(sightIsMultiplier) {
+			str+= indent+lang.getString("Sight",(translatedValue == true ? "" : "english")) + " *" + intToStr(sight);
+		}
+		else {
+			str+= indent+lang.getString("Sight",(translatedValue == true ? "" : "english")) + " +" + intToStr(sight);
+		}
+	}
+	if(maxEp != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(maxEpIsMultiplier) {
+			str+= indent+lang.getString("Ep",(translatedValue == true ? "" : "english")) + " *" + intToStr(maxEp);
+		}
+		else {
+			str+= indent+lang.getString("Ep",(translatedValue == true ? "" : "english")) + " +" + intToStr(maxEp);
+		}
+		if(maxEpRegeneration != 0) {
+			str += " [" + intToStr(maxEpRegeneration) + "]";
+		}
+	}
+	if(attackStrength != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(attackStrengthIsMultiplier) {
+			str+= indent+lang.getString("AttackStrenght",(translatedValue == true ? "" : "english")) + " *" + intToStr(attackStrength);
+		}
+		else {
+			str+= indent+lang.getString("AttackStrenght",(translatedValue == true ? "" : "english")) + " +" + intToStr(attackStrength);
+		}
+	}
+	if(attackRange != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(attackRangeIsMultiplier) {
+			str+= indent+lang.getString("AttackDistance",(translatedValue == true ? "" : "english")) + " *" + intToStr(attackRange);
+		}
+		else {
+			str+= indent+lang.getString("AttackDistance",(translatedValue == true ? "" : "english")) + " +" + intToStr(attackRange);
+		}
+	}
+	if(armor != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(armorIsMultiplier) {
+			str+= indent+lang.getString("Armor",(translatedValue == true ? "" : "english")) + " *" + intToStr(armor);
+		}
+		else {
+			str+= indent+lang.getString("Armor",(translatedValue == true ? "" : "english")) + " +" + intToStr(armor);
+		}
+	}
+	if(moveSpeed != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(moveSpeedIsMultiplier) {
+			str+= indent+lang.getString("WalkSpeed",(translatedValue == true ? "" : "english")) + " *" + intToStr(moveSpeed);
+		}
+		else {
+			str+= indent+lang.getString("WalkSpeed",(translatedValue == true ? "" : "english")) + " +" + intToStr(moveSpeed);
+		}
+	}
+	if(prodSpeed != 0) {
+		if(str != "") {
+			str += "\n";
+		}
+
+		if(prodSpeedIsMultiplier) {
+			str+= indent+lang.getString("ProductionSpeed",(translatedValue == true ? "" : "english")) + " *" + intToStr(prodSpeed);
+		}
+		else {
+			str+= indent+lang.getString("ProductionSpeed",(translatedValue == true ? "" : "english")) + " +" + intToStr(prodSpeed);
+		}
+	}
+	if(str != "") {
+		str += "\n";
+	}
+
+    return str;
+}
+
+void UpgradeTypeBase::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *upgradeTypeBaseNode = rootNode->addChild("UpgradeTypeBase");
+
+	upgradeTypeBaseNode->addAttribute("upgradename",upgradename, mapTagReplacements);
+
+////    int maxHp;
+//	upgradeTypeBaseNode->addAttribute("maxHp",intToStr(maxHp), mapTagReplacements);
+////    bool maxHpIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("maxHpIsMultiplier",intToStr(maxHpIsMultiplier), mapTagReplacements);
+////	int maxHpRegeneration;
+//	upgradeTypeBaseNode->addAttribute("maxHpRegeneration",intToStr(maxHpRegeneration), mapTagReplacements);
+////	//bool maxHpRegenerationIsMultiplier;
+////
+////    int sight;
+//	upgradeTypeBaseNode->addAttribute("sight",intToStr(sight), mapTagReplacements);
+////    bool sightIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("sightIsMultiplier",intToStr(sightIsMultiplier), mapTagReplacements);
+////    int maxEp;
+//	upgradeTypeBaseNode->addAttribute("maxEp",intToStr(maxEp), mapTagReplacements);
+////    bool maxEpIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("maxEpIsMultiplier",intToStr(maxEpIsMultiplier), mapTagReplacements);
+////	int maxEpRegeneration;
+//	upgradeTypeBaseNode->addAttribute("maxEpRegeneration",intToStr(maxEpRegeneration), mapTagReplacements);
+////	//bool maxEpRegenerationIsMultiplier;
+////    int armor;
+//	upgradeTypeBaseNode->addAttribute("armor",intToStr(armor), mapTagReplacements);
+////    bool armorIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("armorIsMultiplier",intToStr(armorIsMultiplier), mapTagReplacements);
+////    int attackStrength;
+//	upgradeTypeBaseNode->addAttribute("attackStrength",intToStr(attackStrength), mapTagReplacements);
+////    bool attackStrengthIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("attackStrengthIsMultiplier",intToStr(attackStrengthIsMultiplier), mapTagReplacements);
+////    std::map<string,int> attackStrengthMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = attackStrengthMultiplierValueList.begin();
+//			iterMap != attackStrengthMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *attackStrengthMultiplierValueListNode = upgradeTypeBaseNode->addChild("attackStrengthMultiplierValueList");
+//
+//		attackStrengthMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		attackStrengthMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+////    int attackRange;
+//	upgradeTypeBaseNode->addAttribute("attackRange",intToStr(attackRange), mapTagReplacements);
+////    bool attackRangeIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("attackRangeIsMultiplier",intToStr(attackRangeIsMultiplier), mapTagReplacements);
+////    std::map<string,int> attackRangeMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = attackRangeMultiplierValueList.begin();
+//			iterMap != attackRangeMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *attackRangeMultiplierValueListNode = upgradeTypeBaseNode->addChild("attackRangeMultiplierValueList");
+//
+//		attackRangeMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		attackRangeMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+//
+////    int moveSpeed;
+//	upgradeTypeBaseNode->addAttribute("moveSpeed",intToStr(moveSpeed), mapTagReplacements);
+////    bool moveSpeedIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("moveSpeedIsMultiplier",intToStr(moveSpeedIsMultiplier), mapTagReplacements);
+////    std::map<string,int> moveSpeedIsMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = moveSpeedIsMultiplierValueList.begin();
+//			iterMap != moveSpeedIsMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *moveSpeedIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("moveSpeedIsMultiplierValueList");
+//
+//		moveSpeedIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		moveSpeedIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+//
+////    int prodSpeed;
+//	upgradeTypeBaseNode->addAttribute("prodSpeed",intToStr(prodSpeed), mapTagReplacements);
+////    bool prodSpeedIsMultiplier;
+//	upgradeTypeBaseNode->addAttribute("prodSpeedIsMultiplier",intToStr(prodSpeedIsMultiplier), mapTagReplacements);
+////    std::map<string,int> prodSpeedProduceIsMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = prodSpeedProduceIsMultiplierValueList.begin();
+//			iterMap != prodSpeedProduceIsMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *prodSpeedProduceIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedProduceIsMultiplierValueList");
+//
+//		prodSpeedProduceIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		prodSpeedProduceIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+//
+////    std::map<string,int> prodSpeedUpgradeIsMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = prodSpeedUpgradeIsMultiplierValueList.begin();
+//			iterMap != prodSpeedUpgradeIsMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *prodSpeedUpgradeIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedUpgradeIsMultiplierValueList");
+//
+//		prodSpeedUpgradeIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		prodSpeedUpgradeIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+//
+////    std::map<string,int> prodSpeedMorphIsMultiplierValueList;
+//	for(std::map<string,int>::const_iterator iterMap = prodSpeedMorphIsMultiplierValueList.begin();
+//			iterMap != prodSpeedMorphIsMultiplierValueList.end(); ++iterMap) {
+//		XmlNode *prodSpeedMorphIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedMorphIsMultiplierValueList");
+//
+//		prodSpeedMorphIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+//		prodSpeedMorphIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//	}
+}
+
+const UpgradeType * UpgradeTypeBase::loadGame(const XmlNode *rootNode, Faction *faction) {
+	const XmlNode *upgradeTypeBaseNode = rootNode->getChild("UpgradeTypeBase");
+
+	//description = upgradeTypeBaseNode->getAttribute("description")->getValue();
+
+	string upgradename = upgradeTypeBaseNode->getAttribute("upgradename")->getValue();
+	return faction->getType()->getUpgradeType(upgradename);
+	//    int maxHp;
+//	maxHp = upgradeTypeBaseNode->getAttribute("maxHp")->getIntValue();
+//	//    bool maxHpIsMultiplier;
+//	maxHpIsMultiplier = upgradeTypeBaseNode->getAttribute("maxHpIsMultiplier")->getIntValue();
+//	//	int maxHpRegeneration;
+//	maxHpRegeneration = upgradeTypeBaseNode->getAttribute("maxHpRegeneration")->getIntValue();
+//	//	//bool maxHpRegenerationIsMultiplier;
+//	//
+//	//    int sight;
+//	sight = upgradeTypeBaseNode->getAttribute("sight")->getIntValue();
+//	//    bool sightIsMultiplier;
+//	sightIsMultiplier = upgradeTypeBaseNode->getAttribute("sightIsMultiplier")->getIntValue();
+//	//    int maxEp;
+//	maxEp = upgradeTypeBaseNode->getAttribute("maxEp")->getIntValue();
+//	//    bool maxEpIsMultiplier;
+//	maxEpIsMultiplier = upgradeTypeBaseNode->getAttribute("maxEpIsMultiplier")->getIntValue();
+//	//	int maxEpRegeneration;
+//	maxEpRegeneration = upgradeTypeBaseNode->getAttribute("maxEpRegeneration")->getIntValue();
+//	//	//bool maxEpRegenerationIsMultiplier;
+//	//    int armor;
+//	armor = upgradeTypeBaseNode->getAttribute("armor")->getIntValue();
+//	//    bool armorIsMultiplier;
+//	armorIsMultiplier = upgradeTypeBaseNode->getAttribute("armorIsMultiplier")->getIntValue();
+//	//    int attackStrength;
+//	attackStrength = upgradeTypeBaseNode->getAttribute("attackStrength")->getIntValue();
+//	//    bool attackStrengthIsMultiplier;
+//	attackStrengthIsMultiplier = upgradeTypeBaseNode->getAttribute("attackStrengthIsMultiplier")->getIntValue();
+//	//    std::map<string,int> attackStrengthMultiplierValueList;
+//	vector<XmlNode *> attackStrengthMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("attackStrengthMultiplierValueList");
+//	for(unsigned int i = 0; i < attackStrengthMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = attackStrengthMultiplierValueNodeList[i];
+//
+//		attackStrengthMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
+//	//    int attackRange;
+//	attackRange = upgradeTypeBaseNode->getAttribute("attackRange")->getIntValue();
+//	//    bool attackRangeIsMultiplier;
+//	attackRangeIsMultiplier = upgradeTypeBaseNode->getAttribute("attackRangeIsMultiplier")->getIntValue();
+//	//    std::map<string,int> attackRangeMultiplierValueList;
+//	vector<XmlNode *> attackRangeMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("attackRangeMultiplierValueList");
+//	for(unsigned int i = 0; i < attackRangeMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = attackRangeMultiplierValueNodeList[i];
+//
+//		attackRangeMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
+//
+//	//    int moveSpeed;
+//	moveSpeed = upgradeTypeBaseNode->getAttribute("moveSpeed")->getIntValue();
+//	//    bool moveSpeedIsMultiplier;
+//	moveSpeedIsMultiplier = upgradeTypeBaseNode->getAttribute("moveSpeedIsMultiplier")->getIntValue();
+//	//    std::map<string,int> moveSpeedIsMultiplierValueList;
+//	vector<XmlNode *> moveSpeedIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("moveSpeedIsMultiplierValueList");
+//	for(unsigned int i = 0; i < moveSpeedIsMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = moveSpeedIsMultiplierValueNodeList[i];
+//
+//		moveSpeedIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
+//
+//	//    int prodSpeed;
+//	prodSpeed = upgradeTypeBaseNode->getAttribute("prodSpeed")->getIntValue();
+//	//    bool prodSpeedIsMultiplier;
+//	prodSpeedIsMultiplier = upgradeTypeBaseNode->getAttribute("prodSpeedIsMultiplier")->getIntValue();
+//	//    std::map<string,int> prodSpeedProduceIsMultiplierValueList;
+//	vector<XmlNode *> prodSpeedProduceIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedProduceIsMultiplierValueList");
+//	for(unsigned int i = 0; i < prodSpeedProduceIsMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = prodSpeedProduceIsMultiplierValueNodeList[i];
+//
+//		prodSpeedProduceIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
+//
+//	//    std::map<string,int> prodSpeedUpgradeIsMultiplierValueList;
+//	vector<XmlNode *> prodSpeedUpgradeIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedUpgradeIsMultiplierValueList");
+//	for(unsigned int i = 0; i < prodSpeedUpgradeIsMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = prodSpeedUpgradeIsMultiplierValueNodeList[i];
+//
+//		prodSpeedUpgradeIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
+//
+//	//    std::map<string,int> prodSpeedMorphIsMultiplierValueList;
+//	vector<XmlNode *> prodSpeedMorphIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedMorphIsMultiplierValueList");
+//	for(unsigned int i = 0; i < prodSpeedMorphIsMultiplierValueNodeList.size(); ++i) {
+//		XmlNode *node = prodSpeedMorphIsMultiplierValueNodeList[i];
+//
+//		prodSpeedMorphIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+//		                                  node->getAttribute("value")->getIntValue();
+//	}
 }
 
 // ==================== misc ====================
+
+string UpgradeType::getName(bool translatedValue) const {
+	if(translatedValue == false) return name;
+
+	Lang &lang = Lang::getInstance();
+	return lang.getTechTreeString("UpgradeTypeName_" + name,name.c_str());
+}
+
+string UpgradeType::getReqDesc(bool translatedValue) const{
+	Lang &lang= Lang::getInstance();
+    string str= ProducibleType::getReqDesc(translatedValue);
+    string indent="  ";
+	if(getEffectCount()>0){
+		str+= "\n"+ lang.getString("Upgrades",(translatedValue == true ? "" : "english"))+"\n";
+	}
+	str+=UpgradeTypeBase::getDesc(translatedValue);
+	if(getEffectCount()>0){
+		str+= lang.getString("AffectedUnits",(translatedValue == true ? "" : "english"))+"\n";
+		for(int i=0; i<getEffectCount(); ++i){
+			str+= indent+getEffect(i)->getName(translatedValue)+"\n";
+		}
+	}
+	return str;
+}
 
 void UpgradeType::preLoad(const string &dir){
 	name=lastDir(dir);
@@ -204,11 +585,13 @@ void UpgradeType::preLoad(const string &dir){
 
 void UpgradeType::load(const string &dir, const TechTree *techTree,
 		const FactionType *factionType, Checksum* checksum,
-		Checksum* techtreeChecksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
+		Checksum* techtreeChecksum, std::map<string,
+		vector<pair<string, string> > > &loadedFileList,
+		bool validationMode) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	char szBuf[1024]="";
-	sprintf(szBuf,Lang::getInstance().get("LogScreenGameLoadingUpgradeType","",true).c_str(),formatString(name).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingUpgradeType","",true).c_str(),formatString(this->getName(true)).c_str());
 	Logger::getInstance().add(szBuf, true);
 
 	string currentPath = dir;
@@ -228,28 +611,10 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 		const XmlNode *upgradeNode= xmlTree.getRootNode();
 
 		//image
-		const XmlNode *imageNode= upgradeNode->getChild("image");
-		image= Renderer::getInstance().newTexture2D(rsGame);
-		if(image) {
-			image->load(imageNode->getAttribute("path")->getRestrictedValue(currentPath,true));
-		}
-		loadedFileList[imageNode->getAttribute("path")->getRestrictedValue(currentPath,true)].push_back(make_pair(sourceXMLFile,imageNode->getAttribute("path")->getRestrictedValue()));
-
-		//if(fileExists(imageNode->getAttribute("path")->getRestrictedValue(currentPath,true)) == false) {
-		//	printf("\n***ERROR MISSING FILE [%s]\n",imageNode->getAttribute("path")->getRestrictedValue(currentPath,true).c_str());
-		//}
+		image = NULL; // Not used for upgrade types
 
 		//image cancel
-		const XmlNode *imageCancelNode= upgradeNode->getChild("image-cancel");
-		cancelImage= Renderer::getInstance().newTexture2D(rsGame);
-		if(cancelImage) {
-			cancelImage->load(imageCancelNode->getAttribute("path")->getRestrictedValue(currentPath,true));
-		}
-		loadedFileList[imageCancelNode->getAttribute("path")->getRestrictedValue(currentPath,true)].push_back(make_pair(sourceXMLFile,imageCancelNode->getAttribute("path")->getRestrictedValue()));
-
-		//if(fileExists(imageCancelNode->getAttribute("path")->getRestrictedValue(currentPath,true)) == false) {
-		//	printf("\n***ERROR MISSING FILE [%s]\n",imageCancelNode->getAttribute("path")->getRestrictedValue(currentPath,true).c_str());
-		//}
+		cancelImage = NULL; // Not used for upgrade types
 
 		//upgrade time
 		const XmlNode *upgradeTimeNode= upgradeNode->getChild("time");
@@ -260,7 +625,7 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 		//unit requirements
 		bool hasDup = false;
 		const XmlNode *unitRequirementsNode= upgradeNode->getChild("unit-requirements");
-		for(int i = 0; i < unitRequirementsNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)unitRequirementsNode->getChildCount(); ++i) {
 			const XmlNode *unitNode= 	unitRequirementsNode->getChild("unit", i);
 			string name= unitNode->getAttribute("name")->getRestrictedValue();
 
@@ -284,7 +649,7 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 
 		//upgrade requirements
 		const XmlNode *upgradeRequirementsNode= upgradeNode->getChild("upgrade-requirements");
-		for(int i = 0; i < upgradeRequirementsNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)upgradeRequirementsNode->getChildCount(); ++i) {
 			const XmlNode *upgradeReqNode= upgradeRequirementsNode->getChild("upgrade", i);
 			string name= upgradeReqNode->getAttribute("name")->getRestrictedValue();
 
@@ -309,9 +674,9 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 		//resource requirements
 		int index = 0;
 		const XmlNode *resourceRequirementsNode= upgradeNode->getChild("resource-requirements");
-		hasDup = false;
+
 		costs.resize(resourceRequirementsNode->getChildCount());
-		for(int i = 0; i < costs.size(); ++i) {
+		for(int i = 0; i < (int)costs.size(); ++i) {
 			const XmlNode *resourceNode= 	resourceRequirementsNode->getChild("resource", i);
 			string name= resourceNode->getAttribute("name")->getRestrictedValue();
 			int amount= resourceNode->getAttribute("amount")->getIntValue();
@@ -336,15 +701,26 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 		index = 0;
 		for(std::map<string,int>::iterator iterMap = sortedItems.begin();
 				iterMap != sortedItems.end(); ++iterMap) {
-			costs[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
-			index++;
+			try {
+				costs[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
+				index++;
+			}
+			catch(megaglest_runtime_error& ex) {
+				if(validationMode == false) {
+					throw;
+				}
+				else {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\nFor UpgradeType: %s Cost: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what(),name.c_str(),iterMap->second);
+				}
+			}
+
 		}
 		sortedItems.clear();
 		hasDup = false;
 
 		//effects
 		const XmlNode *effectsNode= upgradeNode->getChild("effects");
-		for(int i = 0; i < effectsNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)effectsNode->getChildCount(); ++i) {
 			const XmlNode *unitNode= effectsNode->getChild("unit", i);
 			string name= unitNode->getAttribute("name")->getRestrictedValue();
 
@@ -366,106 +742,50 @@ void UpgradeType::load(const string &dir, const TechTree *techTree,
 		sortedItems.clear();
 
 		//values
-		UpgradeTypeBase::load(upgradeNode);
+		UpgradeTypeBase::load(upgradeNode,name);
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading UpgradeType: "+ dir + "\n" +e.what());
+		throw megaglest_runtime_error("Error loading UpgradeType: "+ dir + "\n" +e.what());
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string UpgradeType::getReqDesc() const{
-
-    string str;
-    //int i;
-	Lang &lang= Lang::getInstance();
-
-    str= ProducibleType::getReqDesc();
-	if(getEffectCount()>0){
-		str+= "\n"+ lang.get("Upgrades")+":\n";
-		for(int i=0; i<getEffectCount(); ++i){
-			str+= getEffect(i)->getName()+"\n";
-		}
-	}
-
-	if(maxHp != 0) {
-		if(maxHpIsMultiplier) {
-			str += lang.get("Hp") + " *" + intToStr(maxHp);
-		}
-		else {
-			str += lang.get("Hp") + " +" + intToStr(maxHp);
-		}
-
-		if(maxHpRegeneration != 0) {
-			str += " [" + intToStr(maxHpRegeneration) + "]";
-		}
-	}
-	if(sight != 0) {
-		if(sightIsMultiplier) {
-			str+= lang.get("Sight") + " *" + intToStr(sight);
-		}
-		else {
-			str+= lang.get("Sight") + " +" + intToStr(sight);
-		}
-	}
-	if(maxEp != 0) {
-		if(maxEpIsMultiplier) {
-			str+= lang.get("Ep") + " *" + intToStr(maxEp)+"\n";
-		}
-		else {
-			str+= lang.get("Ep") + " +" + intToStr(maxEp)+"\n";
-		}
-		if(maxEpRegeneration != 0) {
-			str += " [" + intToStr(maxEpRegeneration) + "]";
-		}
-	}
-	if(attackStrength != 0) {
-		if(attackStrengthIsMultiplier) {
-			str+= lang.get("AttackStrenght") + " *" + intToStr(attackStrength)+"\n";
-		}
-		else {
-			str+= lang.get("AttackStrenght") + " +" + intToStr(attackStrength)+"\n";
-		}
-	}
-	if(attackRange != 0) {
-		if(attackRangeIsMultiplier) {
-			str+= lang.get("AttackDistance") + " *" + intToStr(attackRange)+"\n";
-		}
-		else {
-			str+= lang.get("AttackDistance") + " +" + intToStr(attackRange)+"\n";
-		}
-	}
-	if(armor != 0) {
-		if(armorIsMultiplier) {
-			str+= lang.get("Armor") + " *" + intToStr(armor)+"\n";
-		}
-		else {
-			str+= lang.get("Armor") + " +" + intToStr(armor)+"\n";
-		}
-	}
-	if(moveSpeed != 0) {
-		if(moveSpeedIsMultiplier) {
-			str+= lang.get("WalkSpeed") + " *" + intToStr(moveSpeed)+"\n";
-		}
-		else {
-			str+= lang.get("WalkSpeed") + " +" + intToStr(moveSpeed)+"\n";
-		}
-	}
-	if(prodSpeed != 0) {
-		if(prodSpeedIsMultiplier) {
-			str+= lang.get("ProductionSpeed") + " *" + intToStr(prodSpeed)+"\n";
-		}
-		else {
-			str+= lang.get("ProductionSpeed") + " +" + intToStr(prodSpeed)+"\n";
-		}
-	}
-
-    return str;
+bool UpgradeType::isAffected(const UnitType *unitType) const{
+	return find(effects.begin(), effects.end(), unitType)!=effects.end();
 }
 
-
+//void UpgradeType::saveGame(XmlNode *rootNode) const {
+//	UpgradeTypeBase::saveGame(rootNode);
+//	ProducibleType::saveGame(rootNode);
+//
+//	std::map<string,string> mapTagReplacements;
+//	XmlNode *upgradeTypeNode = rootNode->addChild("UpgradeType");
+//
+//	//upgradeTypeNode->addAttribute("maxHp",intToStr(maxHp), mapTagReplacements);
+//	//vector<const UnitType*> effects;
+//	for(unsigned int i = 0; i < effects.size(); ++i) {
+//		XmlNode *unitTypeNode = rootNode->addChild("UnitType");
+//
+//		const UnitType *ut = effects[i];
+//		unitTypeNode->addAttribute("name",ut->getName(), mapTagReplacements);
+//	}
+//}
+//
+//void UpgradeType::loadGame(const XmlNode *rootNode, Faction *faction) {
+//	//UpgradeTypeBase::loadGame(rootNode);
+//	//ProducibleType::loadGame(rootNode);
+//
+//	//const XmlNode *upgradeTypeNode = rootNode->getChild("UpgradeType");
+//
+//	//maxHp = upgradeTypeNode->getAttribute("maxHp")->getIntValue();
+//
+////	vector<XmlNode *> unitTypeNodeList = upgradeTypeNode->getChildList("UnitType");
+////	for(unsigned int i = 0; i < unitTypeNodeList.size(); ++i) {
+////		XmlNode *node = unitTypeNodeList[i];
+////	}
+//}
 
 // ===============================
 // 	class TotalUpgrade
@@ -531,6 +851,8 @@ void TotalUpgrade::sum(const UpgradeTypeBase *ut, const Unit *unit) {
 
 	if(ut->getMaxEpIsMultiplier() == true) {
 		maxEp += ((double)unit->getEp() * ((double)ut->getMaxEp() / (double)100));
+		// TODO: SoftCoder - Fix the bug below on next major release
+		// if(ut->getMaxEpRegeneration() != 0) {
 		if(ut->getMaxHpRegeneration() != 0) {
 			maxEpRegeneration += ((double)unit->getType()->getEpRegeneration() + ((double)max(maxEp,unit->getEp()) * ((double)ut->getMaxEpRegeneration() / (double)100)));
 		}
@@ -557,7 +879,7 @@ void TotalUpgrade::sum(const UpgradeTypeBase *ut, const Unit *unit) {
 	}
 
 	if(ut->getAttackStrengthIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const AttackSkillType *ast = dynamic_cast<const AttackSkillType *>(skillType);
 			if(ast != NULL) {
@@ -570,7 +892,7 @@ void TotalUpgrade::sum(const UpgradeTypeBase *ut, const Unit *unit) {
 	}
 
 	if(ut->getAttackRangeIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const AttackSkillType *ast = dynamic_cast<const AttackSkillType *>(skillType);
 			if(ast != NULL) {
@@ -585,7 +907,7 @@ void TotalUpgrade::sum(const UpgradeTypeBase *ut, const Unit *unit) {
 	if(ut->getMoveSpeedIsMultiplier() == true) {
 		//printf("BEFORE Applying moveSpeedIsMultiplier\n");
 
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const MoveSkillType *mst = dynamic_cast<const MoveSkillType *>(skillType);
 			if(mst != NULL) {
@@ -602,7 +924,7 @@ void TotalUpgrade::sum(const UpgradeTypeBase *ut, const Unit *unit) {
 	}
 
 	if(ut->getProdSpeedIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const ProduceSkillType *pst = dynamic_cast<const ProduceSkillType *>(skillType);
 			if(pst != NULL) {
@@ -638,10 +960,13 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 	prodSpeedIsMultiplier		= ut->getProdSpeedIsMultiplier();
 
 	if(ut->getMaxHpIsMultiplier() == true) {
+		//printf("#1 Maxhp maxHp = %d, unit->getHp() = %d ut->getMaxHp() = %d\n",maxHp,unit->getHp(),ut->getMaxHp());
 		maxHp -= ((double)unit->getHp() * ((double)ut->getMaxHp() / (double)100));
+
 		if(ut->getMaxHpRegeneration() != 0) {
 			maxHpRegeneration -= ((double)unit->getType()->getHpRegeneration() + ((double)max(maxHp,unit->getHp()) * ((double)ut->getMaxHpRegeneration() / (double)100)));
 		}
+		//printf("#1.1 Maxhp maxHp = %d, unit->getHp() = %d ut->getMaxHp() = %d\n",maxHp,unit->getHp(),ut->getMaxHp());
 	}
 	else {
 		maxHp -= ut->getMaxHp();
@@ -649,11 +974,13 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 			maxHpRegeneration -= ut->getMaxHpRegeneration();
 		}
 	}
+	enforceMinimumValue(0,maxHp);
+	enforceMinimumValue(0,maxHpRegeneration);
 
 	if(ut->getMaxEpIsMultiplier() == true) {
 		maxEp -= ((double)unit->getEp() * ((double)ut->getMaxEp() / (double)100));
 		if(ut->getMaxEpRegeneration() != 0) {
-			maxEpRegeneration += ((double)unit->getType()->getEpRegeneration() + ((double)max(maxEp,unit->getEp()) * ((double)ut->getMaxEpRegeneration() / (double)100)));
+			maxEpRegeneration -= ((double)unit->getType()->getEpRegeneration() + ((double)max(maxEp,unit->getEp()) * ((double)ut->getMaxEpRegeneration() / (double)100)));
 		}
 	}
 	else {
@@ -662,6 +989,8 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 			maxEpRegeneration -= ut->getMaxEpRegeneration();
 		}
 	}
+	enforceMinimumValue(0,maxEp);
+	enforceMinimumValue(0,maxEpRegeneration);
 
 	if(ut->getSightIsMultiplier() == true) {
 		sight -= ((double)unit->getType()->getSight() * ((double)ut->getSight() / (double)100));
@@ -669,6 +998,7 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 	else {
 		sight -= ut->getSight();
 	}
+	enforceMinimumValue(0,sight);
 
 	if(ut->getArmorIsMultiplier() == true) {
 		armor -= ((double)unit->getType()->getArmor() * ((double)ut->getArmor() / (double)100));
@@ -676,41 +1006,48 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 	else {
 		armor -= ut->getArmor();
 	}
+	enforceMinimumValue(0,armor);
 
 	if(ut->getAttackStrengthIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const AttackSkillType *ast = dynamic_cast<const AttackSkillType *>(skillType);
 			if(ast != NULL) {
 				attackStrengthMultiplierValueList[ast->getName()] -= ((double)ast->getAttackStrength() * ((double)ut->getAttackStrength(NULL) / (double)100));
+				enforceMinimumValue(0,attackStrengthMultiplierValueList[ast->getName()]);
 			}
 		}
 	}
 	else {
 		attackStrength -= ut->getAttackStrength(NULL);
+		enforceMinimumValue(0,attackStrength);
 	}
 
+
 	if(ut->getAttackRangeIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const AttackSkillType *ast = dynamic_cast<const AttackSkillType *>(skillType);
 			if(ast != NULL) {
 				attackRangeMultiplierValueList[ast->getName()] -= ((double)ast->getAttackRange() * ((double)ut->getAttackRange(NULL) / (double)100));
+				enforceMinimumValue(0,attackRangeMultiplierValueList[ast->getName()]);
 			}
 		}
 	}
 	else {
 		attackRange -= ut->getAttackRange(NULL);
+		enforceMinimumValue(0,attackRange);
 	}
 
 	if(ut->getMoveSpeedIsMultiplier() == true) {
 		//printf("BEFORE Applying moveSpeedIsMultiplier, moveSpeed = %d, ut->getMoveSpeed() = %d\n",moveSpeed,ut->getMoveSpeed());
 
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const MoveSkillType *mst = dynamic_cast<const MoveSkillType *>(skillType);
 			if(mst != NULL) {
 				moveSpeedIsMultiplierValueList[mst->getName()] -= ((double)mst->getSpeed() * ((double)ut->getMoveSpeed(NULL) / (double)100));
+				enforceMinimumValue(0,moveSpeedIsMultiplierValueList[mst->getName()]);
 			}
 		}
 
@@ -718,27 +1055,32 @@ void TotalUpgrade::deapply(const UpgradeTypeBase *ut,const Unit *unit) {
 	}
 	else {
 		moveSpeed -= ut->getMoveSpeed(NULL);
+		enforceMinimumValue(0,moveSpeed);
 	}
 
 	if(ut->getProdSpeedIsMultiplier() == true) {
-		for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+		for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 			const SkillType *skillType = unit->getType()->getSkillType(i);
 			const ProduceSkillType *pst = dynamic_cast<const ProduceSkillType *>(skillType);
 			if(pst != NULL) {
 				prodSpeedProduceIsMultiplierValueList[pst->getName()] -= ((double)pst->getSpeed() * ((double)ut->getProdSpeed(NULL) / (double)100));
+				enforceMinimumValue(0,prodSpeedProduceIsMultiplierValueList[pst->getName()]);
 			}
 			const UpgradeSkillType *ust = dynamic_cast<const UpgradeSkillType *>(skillType);
 			if(ust != NULL) {
 				prodSpeedUpgradeIsMultiplierValueList[ust->getName()] -= ((double)ust->getSpeed() * ((double)ut->getProdSpeed(NULL) / (double)100));
+				enforceMinimumValue(0,prodSpeedUpgradeIsMultiplierValueList[ust->getName()]);
 			}
 			const MorphSkillType *mst = dynamic_cast<const MorphSkillType *>(skillType);
 			if(mst != NULL) {
 				prodSpeedMorphIsMultiplierValueList[mst->getName()] -= ((double)mst->getSpeed() * ((double)ut->getProdSpeed(NULL) / (double)100));
+				enforceMinimumValue(0,prodSpeedMorphIsMultiplierValueList[mst->getName()]);
 			}
 		}
 	}
 	else {
 		prodSpeed -= ut->getProdSpeed(NULL);
+		enforceMinimumValue(0,prodSpeed);
 	}
 }
 
@@ -748,5 +1090,201 @@ void TotalUpgrade::incLevel(const UnitType *ut) {
 	sight += ut->getSight()*20/100;
 	armor += ut->getArmor()*50/100;
 }
+
+void TotalUpgrade::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *upgradeTypeBaseNode = rootNode->addChild("TotalUpgrade");
+
+//    int maxHp;
+	upgradeTypeBaseNode->addAttribute("maxHp",intToStr(maxHp), mapTagReplacements);
+//    bool maxHpIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("maxHpIsMultiplier",intToStr(maxHpIsMultiplier), mapTagReplacements);
+//	int maxHpRegeneration;
+	upgradeTypeBaseNode->addAttribute("maxHpRegeneration",intToStr(maxHpRegeneration), mapTagReplacements);
+//	//bool maxHpRegenerationIsMultiplier;
+//
+//    int sight;
+	upgradeTypeBaseNode->addAttribute("sight",intToStr(sight), mapTagReplacements);
+//    bool sightIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("sightIsMultiplier",intToStr(sightIsMultiplier), mapTagReplacements);
+//    int maxEp;
+	upgradeTypeBaseNode->addAttribute("maxEp",intToStr(maxEp), mapTagReplacements);
+//    bool maxEpIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("maxEpIsMultiplier",intToStr(maxEpIsMultiplier), mapTagReplacements);
+//	int maxEpRegeneration;
+	upgradeTypeBaseNode->addAttribute("maxEpRegeneration",intToStr(maxEpRegeneration), mapTagReplacements);
+//	//bool maxEpRegenerationIsMultiplier;
+//    int armor;
+	upgradeTypeBaseNode->addAttribute("armor",intToStr(armor), mapTagReplacements);
+//    bool armorIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("armorIsMultiplier",intToStr(armorIsMultiplier), mapTagReplacements);
+//    int attackStrength;
+	upgradeTypeBaseNode->addAttribute("attackStrength",intToStr(attackStrength), mapTagReplacements);
+//    bool attackStrengthIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("attackStrengthIsMultiplier",intToStr(attackStrengthIsMultiplier), mapTagReplacements);
+//    std::map<string,int> attackStrengthMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = attackStrengthMultiplierValueList.begin();
+			iterMap != attackStrengthMultiplierValueList.end(); ++iterMap) {
+		XmlNode *attackStrengthMultiplierValueListNode = upgradeTypeBaseNode->addChild("attackStrengthMultiplierValueList");
+
+		attackStrengthMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		attackStrengthMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+//    int attackRange;
+	upgradeTypeBaseNode->addAttribute("attackRange",intToStr(attackRange), mapTagReplacements);
+//    bool attackRangeIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("attackRangeIsMultiplier",intToStr(attackRangeIsMultiplier), mapTagReplacements);
+//    std::map<string,int> attackRangeMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = attackRangeMultiplierValueList.begin();
+			iterMap != attackRangeMultiplierValueList.end(); ++iterMap) {
+		XmlNode *attackRangeMultiplierValueListNode = upgradeTypeBaseNode->addChild("attackRangeMultiplierValueList");
+
+		attackRangeMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		attackRangeMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+//    int moveSpeed;
+	upgradeTypeBaseNode->addAttribute("moveSpeed",intToStr(moveSpeed), mapTagReplacements);
+//    bool moveSpeedIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("moveSpeedIsMultiplier",intToStr(moveSpeedIsMultiplier), mapTagReplacements);
+//    std::map<string,int> moveSpeedIsMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = moveSpeedIsMultiplierValueList.begin();
+			iterMap != moveSpeedIsMultiplierValueList.end(); ++iterMap) {
+		XmlNode *moveSpeedIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("moveSpeedIsMultiplierValueList");
+
+		moveSpeedIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		moveSpeedIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+//    int prodSpeed;
+	upgradeTypeBaseNode->addAttribute("prodSpeed",intToStr(prodSpeed), mapTagReplacements);
+//    bool prodSpeedIsMultiplier;
+	upgradeTypeBaseNode->addAttribute("prodSpeedIsMultiplier",intToStr(prodSpeedIsMultiplier), mapTagReplacements);
+//    std::map<string,int> prodSpeedProduceIsMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = prodSpeedProduceIsMultiplierValueList.begin();
+			iterMap != prodSpeedProduceIsMultiplierValueList.end(); ++iterMap) {
+		XmlNode *prodSpeedProduceIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedProduceIsMultiplierValueList");
+
+		prodSpeedProduceIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		prodSpeedProduceIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+//    std::map<string,int> prodSpeedUpgradeIsMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = prodSpeedUpgradeIsMultiplierValueList.begin();
+			iterMap != prodSpeedUpgradeIsMultiplierValueList.end(); ++iterMap) {
+		XmlNode *prodSpeedUpgradeIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedUpgradeIsMultiplierValueList");
+
+		prodSpeedUpgradeIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		prodSpeedUpgradeIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+//    std::map<string,int> prodSpeedMorphIsMultiplierValueList;
+	for(std::map<string,int>::const_iterator iterMap = prodSpeedMorphIsMultiplierValueList.begin();
+			iterMap != prodSpeedMorphIsMultiplierValueList.end(); ++iterMap) {
+		XmlNode *prodSpeedMorphIsMultiplierValueListNode = upgradeTypeBaseNode->addChild("prodSpeedMorphIsMultiplierValueList");
+
+		prodSpeedMorphIsMultiplierValueListNode->addAttribute("key",iterMap->first, mapTagReplacements);
+		prodSpeedMorphIsMultiplierValueListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+}
+
+void TotalUpgrade::loadGame(const XmlNode *rootNode) {
+	const XmlNode *upgradeTypeBaseNode = rootNode->getChild("TotalUpgrade");
+
+	//description = upgradeTypeBaseNode->getAttribute("description")->getValue();
+
+	//    int maxHp;
+	maxHp = upgradeTypeBaseNode->getAttribute("maxHp")->getIntValue();
+	//    bool maxHpIsMultiplier;
+	maxHpIsMultiplier = upgradeTypeBaseNode->getAttribute("maxHpIsMultiplier")->getIntValue() != 0;
+	//	int maxHpRegeneration;
+	maxHpRegeneration = upgradeTypeBaseNode->getAttribute("maxHpRegeneration")->getIntValue();
+	//	//bool maxHpRegenerationIsMultiplier;
+	//
+	//    int sight;
+	sight = upgradeTypeBaseNode->getAttribute("sight")->getIntValue();
+	//    bool sightIsMultiplier;
+	sightIsMultiplier = upgradeTypeBaseNode->getAttribute("sightIsMultiplier")->getIntValue() != 0;
+	//    int maxEp;
+	maxEp = upgradeTypeBaseNode->getAttribute("maxEp")->getIntValue();
+	//    bool maxEpIsMultiplier;
+	maxEpIsMultiplier = upgradeTypeBaseNode->getAttribute("maxEpIsMultiplier")->getIntValue() != 0;
+	//	int maxEpRegeneration;
+	maxEpRegeneration = upgradeTypeBaseNode->getAttribute("maxEpRegeneration")->getIntValue();
+	//	//bool maxEpRegenerationIsMultiplier;
+	//    int armor;
+	armor = upgradeTypeBaseNode->getAttribute("armor")->getIntValue();
+	//    bool armorIsMultiplier;
+	armorIsMultiplier = upgradeTypeBaseNode->getAttribute("armorIsMultiplier")->getIntValue() != 0;
+	//    int attackStrength;
+	attackStrength = upgradeTypeBaseNode->getAttribute("attackStrength")->getIntValue();
+	//    bool attackStrengthIsMultiplier;
+	attackStrengthIsMultiplier = upgradeTypeBaseNode->getAttribute("attackStrengthIsMultiplier")->getIntValue() != 0;
+	//    std::map<string,int> attackStrengthMultiplierValueList;
+	vector<XmlNode *> attackStrengthMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("attackStrengthMultiplierValueList");
+	for(unsigned int i = 0; i < attackStrengthMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = attackStrengthMultiplierValueNodeList[i];
+
+		attackStrengthMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+	//    int attackRange;
+	attackRange = upgradeTypeBaseNode->getAttribute("attackRange")->getIntValue();
+	//    bool attackRangeIsMultiplier;
+	attackRangeIsMultiplier = upgradeTypeBaseNode->getAttribute("attackRangeIsMultiplier")->getIntValue() != 0;
+	//    std::map<string,int> attackRangeMultiplierValueList;
+	vector<XmlNode *> attackRangeMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("attackRangeMultiplierValueList");
+	for(unsigned int i = 0; i < attackRangeMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = attackRangeMultiplierValueNodeList[i];
+
+		attackRangeMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+
+	//    int moveSpeed;
+	moveSpeed = upgradeTypeBaseNode->getAttribute("moveSpeed")->getIntValue();
+	//    bool moveSpeedIsMultiplier;
+	moveSpeedIsMultiplier = upgradeTypeBaseNode->getAttribute("moveSpeedIsMultiplier")->getIntValue() != 0;
+	//    std::map<string,int> moveSpeedIsMultiplierValueList;
+	vector<XmlNode *> moveSpeedIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("moveSpeedIsMultiplierValueList");
+	for(unsigned int i = 0; i < moveSpeedIsMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = moveSpeedIsMultiplierValueNodeList[i];
+
+		moveSpeedIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+
+	//    int prodSpeed;
+	prodSpeed = upgradeTypeBaseNode->getAttribute("prodSpeed")->getIntValue();
+	//    bool prodSpeedIsMultiplier;
+	prodSpeedIsMultiplier = upgradeTypeBaseNode->getAttribute("prodSpeedIsMultiplier")->getIntValue() != 0;
+	//    std::map<string,int> prodSpeedProduceIsMultiplierValueList;
+	vector<XmlNode *> prodSpeedProduceIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedProduceIsMultiplierValueList");
+	for(unsigned int i = 0; i < prodSpeedProduceIsMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = prodSpeedProduceIsMultiplierValueNodeList[i];
+
+		prodSpeedProduceIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+
+	//    std::map<string,int> prodSpeedUpgradeIsMultiplierValueList;
+	vector<XmlNode *> prodSpeedUpgradeIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedUpgradeIsMultiplierValueList");
+	for(unsigned int i = 0; i < prodSpeedUpgradeIsMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = prodSpeedUpgradeIsMultiplierValueNodeList[i];
+
+		prodSpeedUpgradeIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+
+	//    std::map<string,int> prodSpeedMorphIsMultiplierValueList;
+	vector<XmlNode *> prodSpeedMorphIsMultiplierValueNodeList = upgradeTypeBaseNode->getChildList("prodSpeedMorphIsMultiplierValueList");
+	for(unsigned int i = 0; i < prodSpeedMorphIsMultiplierValueNodeList.size(); ++i) {
+		XmlNode *node = prodSpeedMorphIsMultiplierValueNodeList[i];
+
+		prodSpeedMorphIsMultiplierValueList[node->getAttribute("key")->getValue()] =
+		                                  node->getAttribute("value")->getIntValue();
+	}
+}
+
 
 }}//end namespace

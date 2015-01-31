@@ -1,3 +1,13 @@
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda
+//
+//	You can redistribute this code and/or modify it under
+//	the terms of the GNU General Public License as published
+//	by the Free Software Foundation; either version 2 of the
+//	License, or (at your option) any later version
+// ==============================================================
+
 #ifndef _SHARED_D3D9_DEVICECONTEXTD3D9_H_
 #define _SHARED_D3D9_DEVICECONTEXTD3D9_H_ 
 

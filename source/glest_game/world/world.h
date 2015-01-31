@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_WORLD_H_
 #define _GLEST_GAME_WORLD_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "vec.h"
 #include "math_util.h"
 #include "resource.h"
@@ -44,10 +49,11 @@ class Config;
 class Game;
 class GameSettings;
 class ScriptManager;
-class Cartographer;
-class RoutePlanner;
+
+namespace Shared{ namespace Sound{
 class StaticSound;
 class StrSound;
+}};
 
 // =====================================================
 // 	class World
@@ -63,25 +69,6 @@ public:
 	int teamIndex;
 };
 
-class ExploredCellsLookupItem {
-public:
-
-	int ExploredCellsLookupItemCacheTimerCountIndex;
-	std::vector<SurfaceCell *> exploredCellList;
-	std::vector<SurfaceCell *> visibleCellList;
-
-	static time_t lastDebug;
-};
-
-class FowAlphaCellsLookupItem {
-public:
-
-	std::vector<Vec2i> surfPosList;
-	std::vector<float> alphaList;
-
-	static time_t lastDebug;
-};
-
 class World {
 private:
 	typedef vector<Faction *> Factions;
@@ -90,18 +77,14 @@ private:
 	std::map<int,ExploredCellsLookupKey> ExploredCellsLookupItemCacheTimer;
 	int ExploredCellsLookupItemCacheTimerCount;
 
-	std::map<Vec2i, std::map<int, FowAlphaCellsLookupItem > > FowAlphaCellsLookupItemCache;
-
 public:
 	static const int generationArea= 100;
-	static const float airHeight;
 	static const int indirectSightRange= 5;
 
 private:
 
 	Map map;
 	Tileset tileset;
-	//TechTree techTree;
 	TechTree *techTree;
 	TimeFlow timeFlow;
 	Scenario scenario;
@@ -117,14 +100,11 @@ private:
 	RandomGen random;
 
 	ScriptManager* scriptManager;
-	Cartographer *cartographer;
-	RoutePlanner *routePlanner;
 
 	int thisFactionIndex;
 	int thisTeamIndex;
 	int frameCount;
-	//int nextUnitId;
-	Mutex mutexFactionNextUnitId;
+	Mutex *mutexFactionNextUnitId;
 	std::map<int,int> mapFactionNextUnitId;
 
 	//config
@@ -132,19 +112,35 @@ private:
 	bool fogOfWar;
 	int fogOfWarSmoothingFrameSkip;
 	bool fogOfWarSmoothing;
+	int fogOfWarSkillTypeValue;
+
 	Game *game;
 	Chrono chronoPerfTimer;
 	bool perfTimerEnabled;
 
 	bool unitParticlesEnabled;
-	bool staggeredFactionUpdates;
-	std::map<string,StaticSound *> staticSoundList;
-	std::map<string,StrSound *> streamSoundList;
+	std::map<string,::Shared::Sound::StaticSound *> staticSoundList;
+	std::map<string,::Shared::Sound::StrSound *> streamSoundList;
 
 	uint32 nextCommandGroupId;
 
 	string queuedScenarioName;
 	bool queuedScenarioKeepFactions;
+
+	bool disableAttackEffects;
+
+	const XmlNode *loadWorldNode;
+
+	MasterSlaveThreadController masterController;
+
+	bool originalGameFogOfWar;
+	std::map<int,std::pair<const Unit *,const FogOfWarSkillType *> > mapFogOfWarUnitList;
+
+	bool animatedTilesetObjectPosListLoaded;
+	std::vector<Vec2i> animatedTilesetObjectPosList;
+
+	bool cacheFowAlphaTexture;
+	bool cacheFowAlphaTextureFogOfWarValue;
 
 public:
 	World();
@@ -153,39 +149,43 @@ public:
 	void end(); //to die before selection does
 	void endScenario(); //to die before selection does
 
+	void addFogOfWarSkillType(const Unit *unit,const FogOfWarSkillType *fowst);
+	void removeFogOfWarSkillType(const Unit *unit);
+	bool removeFogOfWarSkillTypeFromList(const Unit *unit);
+
 	//get
-	int getMaxPlayers() const						{return map.getMaxPlayers();}
-	int getThisFactionIndex() const					{return thisFactionIndex;}
+	inline int getMaxPlayers() const						{return map.getMaxPlayers();}
+	inline int getThisFactionIndex() const					{return thisFactionIndex;}
 
-	int getThisTeamIndex() const					{return thisTeamIndex;}
-	void setThisTeamIndex(int team) 				{ thisTeamIndex=team;}
+	inline int getThisTeamIndex() const					{return thisTeamIndex;}
+	inline void setThisTeamIndex(int team) 				{ thisTeamIndex=team;}
 
-	const Faction *getThisFaction() const			{return factions[thisFactionIndex];}
-	Faction *getThisFactionPtr() 					{return factions[thisFactionIndex];}
+	inline const Faction *getThisFaction() const			{return (thisFactionIndex >= 0 ? factions[thisFactionIndex] : NULL);}
+	inline Faction *getThisFactionPtr() 					{return (thisFactionIndex >= 0 ? factions[thisFactionIndex] : NULL);}
 
-	int getFactionCount() const						{return factions.size();}
-	const Map *getMap() const 						{return &map;}
-	Map *getMapPtr()  								{return &map;}
+	inline int getFactionCount() const						{return (int)factions.size();}
+	inline const Map *getMap() const 						{return &map;}
+	inline Map *getMapPtr()  								{return &map;}
 
-	const Tileset *getTileset() const 				{return &tileset;}
-	const TechTree *getTechTree() const 			{return techTree;}
-	const Scenario *getScenario() const 			{return &scenario;}
-	const TimeFlow *getTimeFlow() const				{return &timeFlow;}
-	Tileset *getTileset() 							{return &tileset;}
-	Map *getMap() 									{return &map;}
-	Cartographer* getCartographer()					{return cartographer;}
-	RoutePlanner* getRoutePlanner()					{return routePlanner;}
-	const Faction *getFaction(int i) const			{return factions[i];}
-	Faction *getFaction(int i) 						{return factions[i];}
-	const Minimap *getMinimap() const				{return &minimap;}
-	Minimap *getMiniMapObject() 					{return &minimap;}
-	const Stats *getStats() const					{return &stats;};
-	Stats *getStats()								{return &stats;};
-	const WaterEffects *getWaterEffects() const		{return &waterEffects;}
-	const WaterEffects *getAttackEffects() const		{return &attackEffects;}
+	inline const Tileset *getTileset() const 				{return &tileset;}
+	inline const TechTree *getTechTree() const 			{return techTree;}
+	inline const Scenario *getScenario() const 			{return &scenario;}
+	inline const TimeFlow *getTimeFlow() const				{return &timeFlow;}
+	inline Tileset *getTileset() 							{return &tileset;}
+	inline Map *getMap() 									{return &map;}
+	inline const Faction *getFaction(int i) const			{return factions[i];}
+	inline Faction *getFaction(int i) 						{return factions[i];}
+	inline const Minimap *getMinimap() const				{return &minimap;}
+	inline Minimap *getMiniMapObject() 					{return &minimap;}
+
+	inline const Stats *getStats() const					{return &stats;};
+	inline Stats *getStats()								{return &stats;};
+
+	inline const WaterEffects *getWaterEffects() const		{return &waterEffects;}
+	inline const WaterEffects *getAttackEffects() const		{return &attackEffects;}
 	int getNextUnitId(Faction *faction);
 	int getNextCommandGroupId();
-	int getFrameCount() const						{return frameCount;}
+	inline int getFrameCount() const						{return frameCount;}
 
 	//init & load
 	void init(Game *game, bool createUnits, bool initFactions=true);
@@ -195,29 +195,39 @@ public:
 			std::map<string,vector<pair<string, string> > > &loadedFileList);
 	void clearTileset();
 	Checksum loadTech(const vector<string> pathList, const string &techName,
-			set<string> &factions, Checksum* checksum,std::map<string,vector<pair<string, string> > > &loadedFileList);
+			set<string> &factions, Checksum* checksum,
+			std::map<string,vector<pair<string, string> > > &loadedFileList,
+			bool validationMode=false);
 	Checksum loadMap(const string &path, Checksum* checksum);
-	Checksum loadScenario(const string &path, Checksum* checksum,bool resetCurrentScenario=false);
+	Checksum loadScenario(const string &path, Checksum* checksum,bool resetCurrentScenario=false,const XmlNode *rootNode=NULL);
 	void setQueuedScenario(string scenarioName,bool keepFactions);
-	string getQueuedScenario() const { return queuedScenarioName; }
-	bool getQueuedScenarioKeepFactions() const { return queuedScenarioKeepFactions; }
+	inline string getQueuedScenario() const { return queuedScenarioName; }
+	inline bool getQueuedScenarioKeepFactions() const { return queuedScenarioKeepFactions; }
 	void initUnitsForScenario();
 
 	//misc
 	void update();
 	Unit* findUnitById(int id) const;
 	const UnitType* findUnitTypeById(const FactionType* factionType, int id);
+	const UnitType *findUnitTypeByName(const string factionName, const string unitTypeName);
 	bool placeUnit(const Vec2i &startLoc, int radius, Unit *unit, bool spaciated= false);
 	void moveUnitCells(Unit *unit);
+
 	bool toRenderUnit(const Unit *unit, const Quad2i &visibleQuad) const;
 	bool toRenderUnit(const Unit *unit) const;
+	bool toRenderUnit(const UnitBuildInfo &pendingUnit) const;
+
+
 	Unit *nearestStore(const Vec2i &pos, int factionIndex, const ResourceType *rt);
 	void addAttackEffects(const Unit *unit);
 
 	//scripting interface
 	void morphToUnit(int unitId,const string &morphName,bool ignoreRequirements);
-	void createUnit(const string &unitName, int factionIndex, const Vec2i &pos);
+	void createUnit(const string &unitName, int factionIndex, const Vec2i &pos,bool spaciated = true);
 	void givePositionCommand(int unitId, const string &commandName, const Vec2i &pos);
+	vector<int> getUnitsForFaction(int factionIndex,const string& commandTypeName,int field);
+	int getUnitCurrentField(int unitId);
+	bool getIsUnitAlive(int unitId);
 	void giveAttackCommand(int unitId, int unitToAttackId);
 	void giveProductionCommand(int unitId, const string &producedName);
 	void giveUpgradeCommand(int unitId, const string &upgradeName);
@@ -227,7 +237,7 @@ public:
 	void stopStreamingSound(const string &playSound);
 	void stopAllSound();
 	void moveToUnit(int unitId, int destUnitId);
-	void togglePauseGame(bool pauseStatus);
+	void togglePauseGame(bool pauseStatus, bool forceAllowPauseStateChange);
 	void addConsoleText(const string &text);
 	void addConsoleTextWoLang(const string &text);
 
@@ -235,11 +245,35 @@ public:
 	int getResourceAmount(const string &resourceName, int factionIndex);
 	Vec2i getStartLocation(int factionIndex);
 	Vec2i getUnitPosition(int unitId);
+	void setUnitPosition(int unitId, Vec2i pos);
+
+	void addCellMarker(Vec2i pos, int factionIndex, const string &note, const string textureFile);
+	void removeCellMarker(Vec2i pos, int factionIndex);
+	void showMarker(Vec2i pos, int factionIndex, const string &note, const string textureFile,int flashCount);
+
 	int getUnitFactionIndex(int unitId);
+	const string getUnitName(int unitId);
 	int getUnitCount(int factionIndex);
 	int getUnitCountOfType(int factionIndex, const string &typeName);
 
-	Game * getGame() { return game; }
+	const string getSystemMacroValue(const string key);
+	const string getPlayerName(int factionIndex);
+
+	void highlightUnit(int unitId,float radius, float thickness, Vec4f color);
+	void unhighlightUnit(int unitId);
+
+	void giveStopCommand(int unitId);
+
+	bool selectUnit(int unitId);
+	void unselectUnit(int unitId);
+	void addUnitToGroupSelection(int unitId,int groupIndex);
+	void removeUnitFromGroupSelection(int unitId,int groupIndex);
+	void recallGroupSelection(int groupIndex);
+	void setAttackWarningsEnabled(bool enabled);
+	bool getAttackWarningsEnabled();
+
+
+	inline Game * getGame() { return game; }
 	const GameSettings * getGameSettings() const;
 
 	GameSettings * getGameSettingsPtr();
@@ -248,15 +282,26 @@ public:
 	std::vector<std::string> validateResourceTypes();
 
 	void setFogOfWar(bool value);
+	bool getFogOfWar() const { return fogOfWar; }
+
 	std::string DumpWorldToLog(bool consoleBasicInfoOnly = false) const;
 
-	int getUpdateFps(int factionIndex) const;
+	inline int getUpdateFps(int factionIndex) const {
+		int result = GameConstants::updateFps;
+		return result;
+	}
 	bool canTickWorld() const;
 
-	void exploreCells(const Vec2i &newPos, int sightRange, int teamIndex);
-	bool showWorldForPlayer(int factionIndex) const;
+	ExploredCellsLookupItem exploreCells(const Vec2i &newPos, int sightRange, int teamIndex);
+	void exploreCells(int teamIndex,ExploredCellsLookupItem &exploredCellsCache);
+	bool showWorldForPlayer(int factionIndex, bool excludeFogOfWarCheck=false) const;
 
-	UnitUpdater * getUnitUpdater() { return &unitUpdater; }
+	inline UnitUpdater * getUnitUpdater() { return &unitUpdater; }
+
+	void playStaticVideo(const string &playVideo);
+	void playStreamingVideo(const string &playVideo);
+	void stopStreamingVideo(const string &playVideo);
+	void stopAllVideo();
 
 	void removeResourceTargetFromCache(const Vec2i &pos);
 
@@ -264,6 +309,14 @@ public:
 	string getFowAlphaCellsLookupItemCacheStats();
 	string getAllFactionsCacheStats();
 
+	void placeUnitAtLocation(const Vec2i &location, int radius, Unit *unit, bool spaciated);
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
+
+	void clearCaches();
+	void refreshAllUnitExplorations();
+
+	bool factionLostGame(int factionIndex);
 private:
 
 	void initCells(bool fogOfWar);
@@ -272,17 +325,17 @@ private:
 	void initMinimap();
 	void initUnits();
 	void initMap();
-	//void initExplorationState();
 
 	//misc
 	void tick();
-	bool canTickFaction(int factionIdx);
-	int tickFactionIndex();
-	void computeFow(int factionIdxToTick=-1);
+	void computeFow();
 
+	void updateAllTilesetObjects();
 	void updateAllFactionUnits();
 	void underTakeDeadFactionUnits();
 	void updateAllFactionConsumableCosts();
+	void restoreExploredFogOfWarCells();
+
 };
 
 }}//end namespace

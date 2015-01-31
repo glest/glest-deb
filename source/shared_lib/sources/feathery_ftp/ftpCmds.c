@@ -60,19 +60,19 @@ LOCAL uint8_t scratchBuf[LEN_SCRATCHBUF];
 int ftpSendMsg(msgmode_E mode, int sessionId, int ret, const char* msg)
 {
 	int sentlen = 0;
-	int len = strlen(msg);
+	int len = (int)strlen(msg);
 	char buf[6];
 
 	if(mode == MSG_QUOTE)
 	{
-		sprintf((char*)buf, "%03d \"", ret);
+		snprintf((char*)buf, 6,"%03d \"", ret);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, buf, 5);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, msg, len);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, "\"\r\n", 3);
 	}
 	else
 	{
-		sprintf((char*)buf, "%03d ", ret);
+		snprintf((char*)buf, 6,"%03d ", ret);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, buf, 4);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, msg, len);
 		sentlen += ftpSend(ftpGetSession(sessionId)->ctrlSocket, "\r\n", 2);
@@ -86,7 +86,7 @@ if(VERBOSE_MODE_ENABLED) printf("%02d <-- %s%s\n", sessionId, buf, msg);
 int ftpExecTransmission(int sessionId)
 {
 	int finished = FALSE;
-	int len;
+	size_t len;
     ftpSession_S *pSession = ftpGetSession(sessionId);
 	transmission_S *pTrans = &pSession->activeTrans;
 	int rxLen;
@@ -99,8 +99,8 @@ int ftpExecTransmission(int sessionId)
         len = ftpReadFile(scratchBuf, 1, LEN_SCRATCHBUF, pTrans->fsHandle);
 		if(len > 0)
         {
-			pTrans->fileSize -= len;
-            if(ftpSend(pTrans->dataSocket, scratchBuf, len))
+			pTrans->fileSize -= (uint32_t)len;
+            if(ftpSend(pTrans->dataSocket, scratchBuf, (int)len))
 			{
     	    	ftpSendMsg(MSG_NORMAL, sessionId, 426, ftpMsg000);
     	    	finished = TRUE;
@@ -108,7 +108,7 @@ int ftpExecTransmission(int sessionId)
 		}
 		else
 		{
-			if(VERBOSE_MODE_ENABLED) printf("ERROR in ftpExecTransmission ftpReadFile returned = %d for sessionId = %d\n",len,sessionId);
+			if(VERBOSE_MODE_ENABLED) printf("ERROR in ftpExecTransmission ftpReadFile returned = %d for sessionId = %d\n",(int)len,sessionId);
 	    	ftpSendMsg(MSG_NORMAL, sessionId, 451, ftpMsg001);
 	    	finished = TRUE;
 		}
@@ -125,7 +125,7 @@ int ftpExecTransmission(int sessionId)
 		{
         	len = ftpReceive(pTrans->dataSocket, &scratchBuf[rxLen], LEN_SCRATCHBUF - rxLen);
 
-			if(len <= 0) {
+			if(len < 1) {
 				int errorNumber = getLastSocketError();
 				const char *errText = getLastSocketErrorText(&errorNumber);
 				if(VERBOSE_MODE_ENABLED) printf("ftpExecTransmission ERROR ON RECEIVE for socket = %d, data len = %d, error = %d [%s]\n",pTrans->dataSocket,(LEN_SCRATCHBUF - rxLen),errorNumber,errText);
@@ -133,22 +133,22 @@ int ftpExecTransmission(int sessionId)
 				break;
 			}
 
-			rxLen += len;
+			rxLen += (int)len;
 		} while(rxLen < LEN_SCRATCHBUF);
 
 		if(rxLen > 0)
         {
-			int res = ftpWriteFile(scratchBuf, 1, rxLen, pTrans->fsHandle);
-	        if(res != rxLen)
+			size_t res = ftpWriteFile(scratchBuf, 1, rxLen, pTrans->fsHandle);
+	        if(res != (size_t)rxLen)
 			{
-	        	if(VERBOSE_MODE_ENABLED) printf("ERROR in ftpExecTransmission ftpWriteFile returned = %d for sessionId = %d\n",res,sessionId);
+	        	if(VERBOSE_MODE_ENABLED) printf("ERROR in ftpExecTransmission ftpWriteFile returned = %d for sessionId = %d\n",(int)res,sessionId);
 
 		    	ftpSendMsg(MSG_NORMAL, sessionId, 451, ftpMsg001);
     	    	finished = TRUE;
 			}
 		}
 
-		if(len <= 0)
+		if(len < 1)
 		{
 	    	ftpSendMsg(MSG_NORMAL, sessionId, 226, ftpMsg003);
 	    	finished = TRUE;
@@ -201,8 +201,8 @@ LOCAL int ftpCmdSyst(int sessionId, const char* args, int len)
 }
 LOCAL int ftpCmdPort(int sessionId, const char* args, int len)
 {
-	char clientIp[16];
-	uint16_t clientPort;
+	//char clientIp[16]="";
+	uint16_t clientPort=0;
 
 	int commaCnt = 0;
 	int n;
@@ -215,13 +215,13 @@ LOCAL int ftpCmdPort(int sessionId, const char* args, int len)
 			if(args[n] == ',')
 			{
 				commaCnt++;
-				if(commaCnt < 4)
-					clientIp[n] = '.';
-				else
-					clientIp[n] = '\0';
+//				if(commaCnt < 4)
+//					clientIp[n] = '.';
+//				else
+//					clientIp[n] = '\0';
 			}
-			else
-				clientIp[n] = args[n];
+//			else
+//				clientIp[n] = args[n];
 		}
 		else				// Port-Nummer
 		{
@@ -232,8 +232,6 @@ LOCAL int ftpCmdPort(int sessionId, const char* args, int len)
 			break;
 		}
 	}
-	// TODO Derzeit wird die übergebene IP nicht beachtet, sondern nur die IP des Control-Sockets verwendet
-	clientIp[0] = clientIp[0];
 	if(ftpGetSession(sessionId)->passiveDataSocket >= 0)
 	{
 		if(VERBOSE_MODE_ENABLED) printf("In ftpCmdPort about to Close socket = %d for sessionId = %d\n",ftpGetSession(sessionId)->passiveDataSocket,sessionId);
@@ -330,7 +328,7 @@ LOCAL int sendListing(socket_t dataSocket, int sessionId, const char* path, int 
 
 					if(currTime.year == fileInfo.mTime.year)
 					{
-						len = sprintf((char*)&scratchBuf[1], "rwxrwxrwx %4u %-8s %-8s %8u %s %02d %02d:%02d %s\r\n",
+						len = snprintf((char*)&scratchBuf[1], LEN_SCRATCHBUF-1,"rwxrwxrwx %4u %-8s %-8s %8u %s %02d %02d:%02d %s\r\n",
 								fileInfo.links,
 								fileInfo.user,
 								fileInfo.group,
@@ -343,7 +341,7 @@ LOCAL int sendListing(socket_t dataSocket, int sessionId, const char* path, int 
 					}
 					else
 					{
-						len = sprintf((char*)&scratchBuf[1], "rwxrwxrwx %4u %-8s %-8s %8u %s %02d %5d %s\r\n",
+						len = snprintf((char*)&scratchBuf[1], LEN_SCRATCHBUF-1,"rwxrwxrwx %4u %-8s %-8s %8u %s %02d %5d %s\r\n",
 								fileInfo.links,
 								fileInfo.user,
 								fileInfo.group,
@@ -358,32 +356,32 @@ LOCAL int sendListing(socket_t dataSocket, int sessionId, const char* path, int 
 				}
 				else if(format & NLST)
 				{
-					len = sprintf((char*)scratchBuf, "%s\r\n", dirEntry);
+					len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,"%s\r\n", dirEntry);
 					ftpSend(dataSocket, scratchBuf, len);
 					haveAnySuccessfulFiles = 1;
 				}
 				else if(format & MLSD)
 				{
 					if(!strcmp("..", dirEntry))
-						len = sprintf((char*)scratchBuf, "Type=pdir");
+						len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,"Type=pdir");
 					else
 					{
 						switch(fileInfo.type)
 						{
 						default:
 						case TYPE_FILE:
-							len = sprintf((char*)scratchBuf, "Type=file");
+							len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,"Type=file");
 							break;
 						case TYPE_DIR:
-							len = sprintf((char*)scratchBuf, "Type=dir");
+							len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,"Type=dir");
 							break;
 						case TYPE_LINK:
-							len = sprintf((char*)scratchBuf, "Type=OS.unix=slink");
+							len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,"Type=OS.unix=slink");
 							break;
 						}
 					}
 					ftpSend(dataSocket, scratchBuf, len);
-					len = sprintf((char*)scratchBuf, ";Size=%u;Modify=%04d%02d%02d%02d%02d%02d;Perm=r; %s\r\n",
+					len = snprintf((char*)scratchBuf, LEN_SCRATCHBUF,";Size=%u;Modify=%04d%02d%02d%02d%02d%02d;Perm=r; %s\r\n",
 							fileInfo.size,
 							fileInfo.mTime.year,
 							fileInfo.mTime.month,
@@ -701,6 +699,7 @@ LOCAL int ftpCmdType(int sessionId, const char* args, int len)
 		break;
 	default:
 		ftpSendMsg(MSG_NORMAL, sessionId, 504, ftpMsg028);
+		break;
 	}
 
 	return 0;
@@ -755,7 +754,7 @@ LOCAL int ftpCmdPasv(int sessionId, const char* args, int len)
 
         remoteFTPServerIp = ftpFindExternalFTPServerIp(ftpGetSession(sessionId)->remoteIp);
 
-        sprintf(str, "%s (%d,%d,%d,%d,%d,%d)",
+        snprintf(str, 50,"%s (%d,%d,%d,%d,%d,%d)",
                 ftpMsg029,
                 (remoteFTPServerIp >> 24) & 0xFF,
                 (remoteFTPServerIp >> 16) & 0xFF,
@@ -769,7 +768,7 @@ LOCAL int ftpCmdPasv(int sessionId, const char* args, int len)
     }
     else
     {
-        sprintf(str, "%s (%d,%d,%d,%d,%d,%d)",
+        snprintf(str, 50,"%s (%d,%d,%d,%d,%d,%d)",
                 ftpMsg029,
                 (ip >> 24) & 0xFF,
                 (ip >> 16) & 0xFF,
@@ -799,6 +798,7 @@ LOCAL int ftpCmdStru(int sessionId, const char* args, int len)
 		break;
 	default:
 		ftpSendMsg(MSG_NORMAL, sessionId, 504, ftpMsg031);
+		break;
 	}
 	return 0;
 }
@@ -818,7 +818,7 @@ LOCAL int ftpCmdSize(int sessionId, const char* args, int len)
         return 2;
     }
 
-    sprintf(str, "%d", fileInfo.size);
+    snprintf(str, 12,"%d", fileInfo.size);
    	ftpSendMsg(MSG_NORMAL, sessionId, 213, str);
 
 
@@ -839,7 +839,7 @@ LOCAL int ftpCmdMdtm(int sessionId, const char* args, int len)
         return 2;
     }
 
-    sprintf(str, "%04d%02d%02d%02d%02d%02d", fileInfo.mTime.year,
+    snprintf(str, 15,"%04d%02d%02d%02d%02d%02d", fileInfo.mTime.year,
 											 fileInfo.mTime.month,
 											 fileInfo.mTime.day,
 											 fileInfo.mTime.hour,
@@ -957,7 +957,7 @@ int execFtpCmd(int sessionId, const char* cmd, int cmdlen)
 	//if(VERBOSE_MODE_ENABLED) printf("In execFtpCmd ARRAY_SIZE(cmds) = %lu for sessionId = %d\n",ARRAY_SIZE(cmds),sessionId);
 	if(VERBOSE_MODE_ENABLED) printf("In execFtpCmd cmd [%s] for sessionId = %d\n",cmd,sessionId);
 
-	for(n = 0; n < ARRAY_SIZE(cmds); n++)
+	for(n = 0; n < (int)ARRAY_SIZE(cmds); n++)
 	{
 		if(!strncmp(cmds[n].cmdToken, cmd, cmds[n].tokLen))
 		{
@@ -999,7 +999,7 @@ int execFtpCmd(int sessionId, const char* cmd, int cmdlen)
 
 			if(VERBOSE_MODE_ENABLED) printf("About to execute cmds[n].cmdToken [%s] command [%s] for sessionId = %d\n",cmds[n].cmdToken,&cmd[i],sessionId);
 
-			ret = cmds[n].handler(sessionId, &cmd[i], strlen(&cmd[i]));	// execute command
+			ret = cmds[n].handler(sessionId, &cmd[i], (int)strlen(&cmd[i]));	// execute command
 
 			if(VERBOSE_MODE_ENABLED) printf("Executed cmds[n].cmdToken [%s] command [%s] ret = %d for sessionId = %d\n",cmds[n].cmdToken,&cmd[i],ret,sessionId);
 

@@ -16,8 +16,10 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <set>
+#include <iterator>
 #include "platform_util.h"
 #include "conversion.h"
+#include "byte_order.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -50,7 +52,9 @@ MapPreview::MapPreview() {
 	title = "";
 	desc = "";
 	author = "";
+	maxFactions = 0;
 	refAlt = DEFAULT_MAP_CELL_HEIGHT;
+	hasChanged = false;
 }
 
 MapPreview::~MapPreview() {
@@ -112,7 +116,7 @@ static int get_dist(int delta_x, int delta_y) {
 	float dx = (float)delta_x;
 	float dy = (float)delta_y;
 #ifdef USE_STREFLOP
-	return static_cast<int>(streflop::sqrtf(dx * dx + dy * dy)+0.5); // round correctly
+	return static_cast<int>(streflop::sqrtf(static_cast<streflop::Simple>(dx * dx + dy * dy))+0.5); // round correctly
 #else
 	return static_cast<int>(sqrtf(dx * dx + dy * dy)+0.5); // round correctly
 #endif
@@ -137,6 +141,7 @@ void MapPreview::glestChangeHeight(int x, int y, int height, int radius) {
 					if ((height > 0 && newAlt > oldAlt) || (height < 0 && newAlt < oldAlt) || height == 0) {
 						if (newAlt >= 0 && newAlt <= 20) {
 							cells[i][j].height = static_cast<float>(newAlt);
+							hasChanged = true;
 						}
 					}
 				}
@@ -163,6 +168,7 @@ void MapPreview::pirateChangeHeight(int x, int y, int height, int radius) {
 	if (radius == 1) {
 		if(inside(x, y)){
 			cells[x][y].height = (float)goalAlt;
+			hasChanged = true;
 		}
 		return;
 	}
@@ -279,16 +285,16 @@ void MapPreview::pirateChangeHeight(int x, int y, int height, int radius) {
 
 					// Determine which gradients to use and take a weighted average
 #ifdef USE_STREFLOP
-					if (streflop::fabs(normIf) > streflop::fabs(normJf)) {
+					if (streflop::fabs(static_cast<streflop::Simple>(normIf)) > streflop::fabs(static_cast<streflop::Simple>(normJf))) {
 
 						usedGrad =
-								gradient[normI[0]] [normJ[0]] * streflop::fabs(normJf) +
-								gradient[normI[0]] [normJ[1]] * (1 - streflop::fabs(normJf));
+								gradient[normI[0]] [normJ[0]] * streflop::fabs(static_cast<streflop::Simple>(normJf)) +
+								gradient[normI[0]] [normJ[1]] * (1 - streflop::fabs(static_cast<streflop::Simple>(normJf)));
 					}
-					else if (streflop::fabs(normIf) < streflop::fabs(normJf)) {
+					else if (streflop::fabs(static_cast<streflop::Simple>(normIf)) < streflop::fabs(static_cast<streflop::Simple>(normJf))) {
 						usedGrad =
-								gradient[normI[0]] [normJ[0]] * streflop::fabs(normIf) +
-								gradient[normI[1]] [normJ[0]] * (1 - streflop::fabs(normIf));
+								gradient[normI[0]] [normJ[0]] * streflop::fabs(static_cast<streflop::Simple>(normIf)) +
+								gradient[normI[1]] [normJ[0]] * (1 - streflop::fabs(static_cast<streflop::Simple>(normIf)));
 					}
 					else {
 						usedGrad =
@@ -321,6 +327,7 @@ void MapPreview::pirateChangeHeight(int x, int y, int height, int radius) {
 							((newAlt - cells[i][j].height) < 0 && height < 0) ||
 							height == 0) {
 						cells[i][j].height = newAlt;
+						hasChanged = true;
 					}
 				}
 		}
@@ -329,11 +336,13 @@ void MapPreview::pirateChangeHeight(int x, int y, int height, int radius) {
 
 void MapPreview::setHeight(int x, int y, float height) {
 	cells[x][y].height = height;
+	hasChanged = true;
 }
 
 void MapPreview::setRefAlt(int x, int y) {
 	if (inside(x, y)) {
 		refAlt = static_cast<int>(cells[x][y].height);
+		hasChanged = true;
 	}
 }
 
@@ -363,6 +372,8 @@ void MapPreview::flipX() {
 	//	delete [] oldCells[i];
 	//}
 	//delete [] oldCells;
+
+	hasChanged = true;
 }
 
 void MapPreview::flipY() {
@@ -392,19 +403,23 @@ void MapPreview::flipY() {
 	//	delete [] oldCells[i];
 	//}
 	//delete [] oldCells;
+
+	hasChanged = true;
 }
 
 // Copy a cell in the map from one cell to another, used by MirrorXY etc
 void MapPreview::copyXY(int x, int y, int sx, int sy) {
-		cells[x][y].height   = cells[sx][sy].height;
-		cells[x][y].object   = cells[sx][sy].object;
-		cells[x][y].resource = cells[sx][sy].resource;
-		cells[x][y].surface  = cells[sx][sy].surface;
+	cells[x][y].height   = cells[sx][sy].height;
+	cells[x][y].object   = cells[sx][sy].object;
+	cells[x][y].resource = cells[sx][sy].resource;
+	cells[x][y].surface  = cells[sx][sy].surface;
+
+	hasChanged = true;
 }
 
 // swap a cell in the map with another, used by rotate etc
 void MapPreview::swapXY(int x, int y, int sx, int sy) {
-	if(inside(x, y) && inside(sx, sy)){
+	if(inside(x, y) && inside(sx, sy)) {
 		float tmpHeight= cells[x][y].height;
 		cells[x][y].height= cells[sx][sy].height;
 		cells[sx][sy].height= tmpHeight;
@@ -420,12 +435,14 @@ void MapPreview::swapXY(int x, int y, int sx, int sy) {
 		int tmpSurface= cells[x][y].surface;
 		cells[x][y].surface= cells[sx][sy].surface;
 		cells[sx][sy].surface= tmpSurface;
+
+		hasChanged = true;
 	}
 }
 
 void MapPreview::changeSurface(int x, int y, MapSurfaceType surface, int radius) {
-	int i, j;
-	int dist;
+	int i = 0, j = 0;
+	int dist = 0;
 
 	for (i = x - radius + 1; i < x + radius; i++) {
 		for (j = y - radius + 1; j < y + radius; j++) {
@@ -433,6 +450,7 @@ void MapPreview::changeSurface(int x, int y, MapSurfaceType surface, int radius)
 				dist = get_dist(i - x, j - y);
 				if (radius > dist) {  // was >=
 					cells[i][j].surface = surface;
+					hasChanged = true;
 				}
 			}
 		}
@@ -441,11 +459,12 @@ void MapPreview::changeSurface(int x, int y, MapSurfaceType surface, int radius)
 
 void MapPreview::setSurface(int x, int y, MapSurfaceType surface) {
 	cells[x][y].surface = surface;
+	hasChanged = true;
 }
 
 void MapPreview::changeObject(int x, int y, int object, int radius) {
-	int i, j;
-	int dist;
+	int i = 0, j = 0;
+	int dist = 0;
 
 	for (i = x - radius + 1; i < x + radius; i++) {
 		for (j = y - radius + 1; j < y + radius; j++) {
@@ -454,6 +473,7 @@ void MapPreview::changeObject(int x, int y, int object, int radius) {
 				if (radius > dist) {  // was >=
 					cells[i][j].object = object;
 					cells[i][j].resource = 0;
+					hasChanged = true;
 				}
 			}
 		}
@@ -462,12 +482,15 @@ void MapPreview::changeObject(int x, int y, int object, int radius) {
 
 void MapPreview::setObject(int x, int y, int object) {
 	cells[x][y].object = object;
-	if (object != 0) cells[x][y].resource = 0;
+	if (object != 0) {
+		cells[x][y].resource = 0;
+	}
+	hasChanged = true;
 }
 
 void MapPreview::changeResource(int x, int y, int resource, int radius) {
-	int i, j;
-	int dist;
+	int i = 0, j = 0;
+	int dist = 0;
 
 	for (i = x - radius + 1; i < x + radius; i++) {
 		for (j = y - radius + 1; j < y + radius; j++) {
@@ -476,6 +499,7 @@ void MapPreview::changeResource(int x, int y, int resource, int radius) {
 				if (radius > dist) {  // was >=
 					cells[i][j].resource = resource;
 					cells[i][j].object = 0;
+					hasChanged = true;
 				}
 			}
 		}
@@ -484,13 +508,17 @@ void MapPreview::changeResource(int x, int y, int resource, int radius) {
 
 void MapPreview::setResource(int x, int y, int resource) {
 	cells[x][y].resource = resource;
-	if (resource != 0) cells[x][y].object = 0;
+	if (resource != 0) {
+		cells[x][y].object = 0;
+	}
+	hasChanged = true;
 }
 
 void MapPreview::changeStartLocation(int x, int y, int faction) {
 	if ((faction - 1) < maxFactions && inside(x, y)) {
 		startLocations[faction].x = x;
 		startLocations[faction].y = y;
+		hasChanged = true;
 	}
 }
 
@@ -500,28 +528,28 @@ bool MapPreview::inside(int x, int y) {
 
 void MapPreview::reset(int w, int h, float alt, MapSurfaceType surf) {
 	if (w < MIN_MAP_CELL_DIMENSION || h < MIN_MAP_CELL_DIMENSION) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Size of map must be at least %dx%d",MIN_MAP_CELL_DIMENSION,MIN_MAP_CELL_DIMENSION);
-		throw runtime_error(szBuf);
-		return;
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Size of map must be at least %dx%d",MIN_MAP_CELL_DIMENSION,MIN_MAP_CELL_DIMENSION);
+		throw megaglest_runtime_error(szBuf);
+		//return;
 	}
 
 	if (w > MAX_MAP_CELL_DIMENSION || h > MAX_MAP_CELL_DIMENSION) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Size of map can be at most %dx%d",MAX_MAP_CELL_DIMENSION,MAX_MAP_CELL_DIMENSION);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Size of map can be at most %dx%d",MAX_MAP_CELL_DIMENSION,MAX_MAP_CELL_DIMENSION);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	if (alt < MIN_MAP_CELL_HEIGHT || alt > MAX_MAP_CELL_HEIGHT) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Height must be in the range %d-%d",MIN_MAP_CELL_HEIGHT,MAX_MAP_CELL_HEIGHT);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Height must be in the range %d-%d",MIN_MAP_CELL_HEIGHT,MAX_MAP_CELL_HEIGHT);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	if (surf < st_Grass || surf > st_Ground) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Surface must be in the range %d-%d",st_Grass,st_Ground);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Surface must be in the range %d-%d",st_Grass,st_Ground);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	//if (cells != NULL) {
@@ -534,7 +562,7 @@ void MapPreview::reset(int w, int h, float alt, MapSurfaceType surf) {
 
 	this->w = w;
 	this->h = h;
-	this->maxFactions = maxFactions;
+	//this->maxFactions = maxFactions;
 
 	//cells = new Cell*[w];
 	cells.resize(w);
@@ -548,39 +576,40 @@ void MapPreview::reset(int w, int h, float alt, MapSurfaceType surf) {
 			cells[i][j].surface = surf;
 		}
 	}
+	hasChanged = true;
 }
 
 void MapPreview::resize(int w, int h, float alt, MapSurfaceType surf) {
 	if (w < MIN_MAP_CELL_DIMENSION || h < MIN_MAP_CELL_DIMENSION) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Size of map must be at least %dx%d",MIN_MAP_CELL_DIMENSION,MIN_MAP_CELL_DIMENSION);
-		throw runtime_error(szBuf);
-		return;
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Size of map must be at least %dx%d",MIN_MAP_CELL_DIMENSION,MIN_MAP_CELL_DIMENSION);
+		throw megaglest_runtime_error(szBuf);
+		//return;
 	}
 
 	if (w > MAX_MAP_CELL_DIMENSION || h > MAX_MAP_CELL_DIMENSION) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Size of map can be at most %dx%d",MAX_MAP_CELL_DIMENSION,MAX_MAP_CELL_DIMENSION);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Size of map can be at most %dx%d",MAX_MAP_CELL_DIMENSION,MAX_MAP_CELL_DIMENSION);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	if (alt < MIN_MAP_CELL_HEIGHT || alt > MAX_MAP_CELL_HEIGHT) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Height must be in the range %d-%d",MIN_MAP_CELL_HEIGHT,MAX_MAP_CELL_HEIGHT);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Height must be in the range %d-%d",MIN_MAP_CELL_HEIGHT,MAX_MAP_CELL_HEIGHT);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	if (surf < st_Grass || surf > st_Ground) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Surface must be in the range %d-%d",st_Grass,st_Ground);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Surface must be in the range %d-%d",st_Grass,st_Ground);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	int oldW = this->w;
 	int oldH = this->h;
 	this->w = w;
 	this->h = h;
-	this->maxFactions = maxFactions;
+	//this->maxFactions = maxFactions;
 
 	//create new cells
 	//Cell **oldCells = cells;
@@ -623,13 +652,15 @@ void MapPreview::resize(int w, int h, float alt, MapSurfaceType surf) {
 	//		delete [] oldCells[i];
 	//	delete [] oldCells;
 	//}
+
+	hasChanged = true;
 }
 
 void MapPreview::resetFactions(int maxPlayers) {
 	if (maxPlayers < MIN_MAP_FACTIONCOUNT || maxPlayers > MAX_MAP_FACTIONCOUNT) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"Max Players must be in the range %d-%d",MIN_MAP_FACTIONCOUNT,MAX_MAP_FACTIONCOUNT);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Max Players must be in the range %d-%d",MIN_MAP_FACTIONCOUNT,MAX_MAP_FACTIONCOUNT);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	//if (startLocations != NULL) {
@@ -646,18 +677,23 @@ void MapPreview::resetFactions(int maxPlayers) {
 		startLocations[i].x = 0;
 		startLocations[i].y = 0;
 	}
+
+	hasChanged = true;
 }
 
 void MapPreview::setTitle(const string &title) {
 	this->title = title;
+	hasChanged = true;
 }
 
 void MapPreview::setDesc(const string &desc) {
 	this->desc = desc;
+	hasChanged = true;
 }
 
 void MapPreview::setAuthor(const string &author) {
 	this->author = author;
+	hasChanged = true;
 }
 
 void MapPreview::setAdvanced(int heightFactor, int waterLevel, int cliffLevel, int cameraHeight) {
@@ -665,6 +701,7 @@ void MapPreview::setAdvanced(int heightFactor, int waterLevel, int cliffLevel, i
 	this->waterLevel = waterLevel;
 	this->cliffLevel = cliffLevel;
 	this->cameraHeight = cameraHeight;
+	hasChanged = true;
 }
 
 void MapPreview::randomizeHeights() {
@@ -672,6 +709,7 @@ void MapPreview::randomizeHeights() {
 	sinRandomize(0);
 	decalRandomize(4);
 	sinRandomize(1);
+	hasChanged = true;
 }
 
 void MapPreview::randomize() {
@@ -688,6 +726,7 @@ void MapPreview::randomize() {
 		sl.y = static_cast<int>(h * slNoiseFactor * (((i + slPlaceFactorY) / 2) % 2) + h * (1.f - slNoiseFactor) / 2.f);
 		startLocations[i] = sl;
 	}
+	hasChanged = true;
 }
 
 void MapPreview::switchSurfaces(MapSurfaceType surf1, MapSurfaceType surf2) {
@@ -696,15 +735,46 @@ void MapPreview::switchSurfaces(MapSurfaceType surf1, MapSurfaceType surf2) {
 			for (int j = 0; j < h; ++j) {
 				if (cells[i][j].surface == surf1) {
 					cells[i][j].surface = surf2;
+					hasChanged = true;
 				}
 				else if (cells[i][j].surface == surf2) {
 					cells[i][j].surface = surf1;
+					hasChanged = true;
 				}
 			}
 		}
 	}
 	else {
-		throw runtime_error("Incorrect surfaces");
+		throw megaglest_runtime_error("Incorrect surfaces");
+	}
+}
+
+void toEndianMapFileHeader(MapFileHeader &header) {
+	header.version = Shared::PlatformByteOrder::toCommonEndian(header.version);
+	header.maxFactions = Shared::PlatformByteOrder::toCommonEndian(header.maxFactions);
+	header.width = Shared::PlatformByteOrder::toCommonEndian(header.width);
+	header.height = Shared::PlatformByteOrder::toCommonEndian(header.height);
+	header.heightFactor = Shared::PlatformByteOrder::toCommonEndian(header.heightFactor);
+	header.waterLevel = Shared::PlatformByteOrder::toCommonEndian(header.waterLevel);
+	for(unsigned int i =0; i < (unsigned int)MAX_TITLE_LENGTH; ++i) {
+		header.title[i] = Shared::PlatformByteOrder::toCommonEndian(header.title[i]);
+	}
+	for(unsigned int i =0; i < (unsigned int)MAX_DESCRIPTION_LENGTH; ++i) {
+		header.description[i] = Shared::PlatformByteOrder::toCommonEndian(header.description[i]);
+	}
+}
+void fromEndianMapFileHeader(MapFileHeader &header) {
+	header.version = Shared::PlatformByteOrder::fromCommonEndian(header.version);
+	header.maxFactions = Shared::PlatformByteOrder::fromCommonEndian(header.maxFactions);
+	header.width = Shared::PlatformByteOrder::fromCommonEndian(header.width);
+	header.height = Shared::PlatformByteOrder::fromCommonEndian(header.height);
+	header.heightFactor = Shared::PlatformByteOrder::fromCommonEndian(header.heightFactor);
+	header.waterLevel = Shared::PlatformByteOrder::fromCommonEndian(header.waterLevel);
+	for(unsigned int i =0; i < (unsigned int)MAX_TITLE_LENGTH; ++i) {
+		header.title[i] = Shared::PlatformByteOrder::fromCommonEndian(header.title[i]);
+	}
+	for(unsigned int i =0; i < (unsigned int)MAX_DESCRIPTION_LENGTH; ++i) {
+		header.description[i] = Shared::PlatformByteOrder::fromCommonEndian(header.description[i]);
 	}
 }
 
@@ -724,16 +794,22 @@ void MapPreview::loadFromFile(const string &path) {
 		//read header
 		MapFileHeader header;
 		size_t bytes = fread(&header, sizeof(MapFileHeader), 1, f1);
+		if(bytes != 1) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		fromEndianMapFileHeader(header);
 
 		heightFactor = header.heightFactor;
 		waterLevel = header.waterLevel;
 		title = header.title;
 		author = header.author;
 		cliffLevel = 0;
-		if(header.version==1){
+		if(header.version == 1) {
 			desc = header.description;
 		}
-		else if(header.version==2){
+		else if(header.version == 2) {
 			desc = header.version2.short_desc;
 			cliffLevel=header.version2.cliffLevel;
 			cameraHeight=header.version2.cameraHeight;
@@ -743,7 +819,20 @@ void MapPreview::loadFromFile(const string &path) {
 		resetFactions(header.maxFactions);
 		for (int i = 0; i < maxFactions; ++i) {
 			bytes = fread(&startLocations[i].x, sizeof(int32), 1, f1);
+			if(bytes != 1) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			startLocations[i].x = Shared::PlatformByteOrder::fromCommonEndian(startLocations[i].x);
+
 			bytes = fread(&startLocations[i].y, sizeof(int32), 1, f1);
+			if(bytes != 1) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			startLocations[i].y = Shared::PlatformByteOrder::fromCommonEndian(startLocations[i].y);
 		}
 
 		//read Heights
@@ -751,6 +840,12 @@ void MapPreview::loadFromFile(const string &path) {
 		for (int j = 0; j < h; ++j) {
 			for (int i = 0; i < w; ++i) {
 				bytes = fread(&cells[i][j].height, sizeof(float), 1, f1);
+				if(bytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				cells[i][j].height = Shared::PlatformByteOrder::fromCommonEndian(cells[i][j].height);
 			}
 		}
 
@@ -758,6 +853,12 @@ void MapPreview::loadFromFile(const string &path) {
 		for (int j = 0; j < h; ++j) {
 			for (int i = 0; i < w; ++i) {
 				bytes = fread(&cells[i][j].surface, sizeof(int8), 1, f1);
+				if(bytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				cells[i][j].surface = Shared::PlatformByteOrder::fromCommonEndian(cells[i][j].surface);
 			}
 		}
 
@@ -766,6 +867,13 @@ void MapPreview::loadFromFile(const string &path) {
 			for (int i = 0; i < w; ++i) {
 				int8 obj;
 				bytes = fread(&obj, sizeof(int8), 1, f1);
+				if(bytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",bytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				obj = Shared::PlatformByteOrder::fromCommonEndian(obj);
+
 				if (obj <= 10) {
 					cells[i][j].object = obj;
 				}
@@ -775,18 +883,19 @@ void MapPreview::loadFromFile(const string &path) {
 			}
 		}
 
-		fclose(f1);
+		if(f1) fclose(f1);
 
 		fileLoaded = true;
 		mapFileLoaded = path;
+		hasChanged = false;
 	}
 	else {
 #ifdef WIN32
 		DWORD error = GetLastError();
-		string strError = "Could not open file, result: " + intToStr(error) + " - " + intToStr(fileErrno) + " " + strerror(fileErrno) + " [" + path + "]";
+		string strError = "[#5] Could not open file, result: " + intToStr(error) + " - " + intToStr(fileErrno) + " " + strerror(fileErrno) + " [" + path + "]";
 		throw strError;
 #else
-		throw runtime_error("error opening map file: " + path);
+		throw megaglest_runtime_error("[#5] error opening map file: " + path);
 #endif
 	}
 }
@@ -811,8 +920,11 @@ void MapPreview::saveToFile(const string &path) {
 		header.heightFactor = heightFactor;
 		header.waterLevel = waterLevel;
 		strncpy(header.title, title.c_str(), MAX_TITLE_LENGTH);
+		header.title[MAX_TITLE_LENGTH-1] = 0;
 		strncpy(header.author, author.c_str(), MAX_AUTHOR_LENGTH);
+		header.author[MAX_AUTHOR_LENGTH-1] = 0;
 		strncpy(header.version2.short_desc, desc.c_str(), MAX_DESCRIPTION_LENGTH_VERSION2);
+		header.version2.short_desc[MAX_DESCRIPTION_LENGTH_VERSION2-1] = 0;
 		header.version2.magic= 0x01020304;
 		header.version2.cliffLevel= cliffLevel;
 		header.version2.cameraHeight= cameraHeight;
@@ -852,14 +964,15 @@ void MapPreview::saveToFile(const string &path) {
 			}
 		}
 
-		fclose(f1);
+		if(f1) fclose(f1);
 
+		hasChanged = false;
 	}
 	else {
-		throw runtime_error("Error opening map file: " + path);
+		throw megaglest_runtime_error("Error opening map file: " + path);
 	}
 
-	void randomHeight(int x, int y, int height);
+	//void randomHeight(int x, int y, int height);
 }
 
 // ==================== PRIVATE ====================
@@ -868,6 +981,7 @@ void MapPreview::resetHeights(int height) {
 	for (int i = 0; i < w; ++i) {
 		for (int j = 0; j < h; ++j) {
 			cells[i][j].height = static_cast<float>(height);
+			hasChanged = true;
 		}
 	}
 }
@@ -888,8 +1002,8 @@ void MapPreview::sinRandomize(int strenght) {
 			float normV = static_cast<float>(j) / h;
 
 #ifdef USE_STREFLOP
-			float sh = (streflop::sinf(normH * sinH1) + streflop::sin(normH * sinH2)) / 2.f;
-			float sv = (streflop::sinf(normV * sinV1) + streflop::sin(normV * sinV2)) / 2.f;
+			float sh = (streflop::sinf(static_cast<streflop::Simple>(normH * sinH1)) + streflop::sin(static_cast<streflop::Simple>(normH * sinH2))) / 2.f;
+			float sv = (streflop::sinf(static_cast<streflop::Simple>(normV * sinV1)) + streflop::sin(static_cast<streflop::Simple>(normV * sinV2))) / 2.f;
 #else
 			float sh = (sinf(normH * sinH1) + sin(normH * sinH2)) / 2.f;
 			float sv = (sinf(normV * sinV1) + sin(normV * sinV2)) / 2.f;
@@ -923,6 +1037,7 @@ void MapPreview::decalRandomize(int strenght) {
 
 void MapPreview::applyNewHeight(float newHeight, int x, int y, int strenght) {
 	cells[x][y].height = static_cast<float>(((cells[x][y].height * strenght) + newHeight) / (strenght + 1));
+	hasChanged = true;
 }
 
 bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPlayersTitle,string i18nMapSizeTitle,bool errorOnInvalidMap) {
@@ -935,7 +1050,7 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 		f= fopen(file.c_str(), "rb");
 #endif
 		if(f == NULL) {
-			throw runtime_error("Can't open file");
+			throw megaglest_runtime_error("Can't open file");
 		}
 
 		MapFileHeader header;
@@ -944,14 +1059,16 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 			validMap = false;
 
 			if(errorOnInvalidMap == true) {
-				char szBuf[4096]="";
-				sprintf(szBuf,"In [%s::%s Line: %d]\nfile [%s]\nreadBytes != sizeof(MapFileHeader) [%lu] [%lu]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,file.c_str(),readBytes,sizeof(MapFileHeader));
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"In [%s::%s Line: %d]\nfile [%s]\nreadBytes != sizeof(MapFileHeader) [" MG_SIZE_T_SPECIFIER "] [" MG_SIZE_T_SPECIFIER "]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,file.c_str(),readBytes,sizeof(MapFileHeader));
 				SystemFlags::OutputDebug(SystemFlags::debugError,"%s",szBuf);
 
-				throw runtime_error(szBuf);
+				throw megaglest_runtime_error(szBuf);
 			}
 		}
 		else {
+			fromEndianMapFileHeader(header);
+
 			if(header.version < mapver_1 || header.version >= mapver_MAX) {
 				validMap = false;
 
@@ -960,7 +1077,7 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 					printf("In [%s::%s Line: %d]\file [%s]\nheader.version < mapver_1 || header.version >= mapver_MAX [%d] [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,file.c_str(),header.version,mapver_MAX);
 					SystemFlags::OutputDebug(SystemFlags::debugError,"%s",szBuf);
 
-					throw runtime_error(szBuf);
+					throw megaglest_runtime_error(szBuf);
 				}
 			}
 			else if(header.maxFactions <= 0 || header.maxFactions > MAX_MAP_FACTIONCOUNT) {
@@ -971,7 +1088,7 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 					printf("In [%s::%s Line: %d]\file [%s]\nheader.maxFactions <= 0 || header.maxFactions > MAX_MAP_FACTIONCOUNT [%d] [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,file.c_str(),header.maxFactions,MAX_MAP_FACTIONCOUNT);
 					SystemFlags::OutputDebug(SystemFlags::debugError,"%s",szBuf);
 
-					throw runtime_error(szBuf);
+					throw megaglest_runtime_error(szBuf);
 				}
 			}
 			else {
@@ -993,7 +1110,7 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 
 		//assert(0);
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s] loading map [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what(),file.c_str());
-		throw runtime_error("Error loading map file: [" + file + "] msg: " + e.what() + " errno [" + intToStr(errno) + "] [" + strerror(errno) + "]");
+		throw megaglest_runtime_error("Error loading map file: [" + file + "] msg: " + e.what() + " errno [" + intToStr(errno) + "] [" + strerror(errno) + "]");
 	}
 
 	return validMap;
@@ -1002,7 +1119,7 @@ bool MapPreview::loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPla
 // static
 string MapPreview::getMapPath(const vector<string> &pathList, const string &mapName,
 		string scenarioDir, bool errorOnNotFound) {
-    for(int idx = 0; idx < pathList.size(); idx++) {
+    for(unsigned int idx = 0; idx < pathList.size(); idx++) {
         string map_path = pathList[idx];
     	endPathWithSlash(map_path);
 
@@ -1023,7 +1140,7 @@ string MapPreview::getMapPath(const vector<string> &pathList, const string &mapN
     }
 
 	if(errorOnNotFound == true) {
-		throw runtime_error("Map [" + mapName + "] not found, scenarioDir [" + scenarioDir + "]");
+		throw megaglest_runtime_error("Map [" + mapName + "] not found, scenarioDir [" + scenarioDir + "]");
 	}
 
 	return "";
@@ -1071,7 +1188,7 @@ vector<string> MapPreview::findAllValidMaps(const vector<string> &pathList,
 	results.clear();
 
 	MapInfo mapInfo;
-	for(int i= 0; i < mapFiles.size(); i++){// fetch info and put map in right list
+	for(unsigned int i= 0; i < mapFiles.size(); i++){// fetch info and put map in right list
 		//loadMapInfo(string file, MapInfo *mapInfo, string i18nMaxMapPlayersTitle,string i18nMapSizeTitle,bool errorOnInvalidMap=true);
 		//printf("getMapPath [%s]\nmapFiles.at(i) [%s]\nscenarioDir [%s] getUserDataOnly = %d cutExtension = %d\n",getMapPath(pathList,mapFiles.at(i), scenarioDir, false).c_str(),mapFiles.at(i).c_str(),scenarioDir.c_str(), getUserDataOnly, cutExtension);
 

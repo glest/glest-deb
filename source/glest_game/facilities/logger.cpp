@@ -13,6 +13,8 @@
 
 #include "util.h"
 #include "renderer.h"
+#include "properties.h"
+#include "sound_renderer.h"
 #include "core_data.h"
 #include "metrics.h"
 #include "lang.h"
@@ -37,7 +39,7 @@ const int Logger::logLineCount= 15;
 // ===================== PUBLIC ========================
 
 Logger::Logger() {
-	//masterserverMode = false;
+	progress = 0;
 	string logs_path = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey);
 	if(logs_path != "") {
 		fileName= logs_path + "log.txt";
@@ -50,10 +52,15 @@ Logger::Logger() {
         fileName= userData + "log.txt";
 	}
 	loadingTexture=NULL;
+	gameHintToShow="";
 	showProgressBar = false;
+
+	displayColor=Vec4f(1.f,1.f,1.f,0.1f);
 
 	cancelSelected = false;
 	buttonCancel.setEnabled(false);
+
+	buttonNextHint.setEnabled(false);
 }
 
 Logger::~Logger() {
@@ -91,7 +98,7 @@ void Logger::clear() {
 	FILE *f= fopen(fileName.c_str(), "wt+");
 #endif
 	if(f == NULL){
-		throw runtime_error("Error opening log file" + fileName);
+		throw megaglest_runtime_error("Error opening log file" + fileName);
 	}
 
     fprintf(f, "%s", s.c_str());
@@ -108,9 +115,67 @@ void Logger::loadLoadingScreen(string filepath) {
 	}
 	else {
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] filepath = [%s]\n",__FILE__,__FUNCTION__,__LINE__,filepath.c_str());
-		loadingTexture = Renderer::findFactionLogoTexture(filepath);
+		loadingTexture = Renderer::findTexture(filepath);
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	}
+
+	Lang &lang = Lang::getInstance();
+	buttonCancel.setText(lang.getString("Cancel"));
+}
+
+void Logger::loadGameHints(string filePathEnglish,string filePathTranslation,bool clearList) {
+	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+	if((filePathEnglish == "") || (filePathTranslation == "")) {
+		return;
+	}
+	else {
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] filePathEnglish = [%s]\n filePathTranslation = [%s]\n",__FILE__,__FUNCTION__,__LINE__,filePathEnglish.c_str(),filePathTranslation.c_str());
+		gameHints.load(filePathEnglish,clearList);
+		gameHintsTranslation.load(filePathTranslation,clearList);
+		showNextHint();
+
+		Lang &lang = Lang::getInstance();
+		buttonNextHint.setText(lang.getString("ShowNextHint","",true));
+		buttonCancel.setText(lang.getString("Cancel"));
+
+		GraphicComponent::applyAllCustomProperties("Loading");
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	}
+}
+
+void Logger::showNextHint() {
+	string key=gameHints.getRandomKey(true);
+	string tmpString=gameHintsTranslation.getString(key,"");
+	if(tmpString!=""){
+		gameHintToShow=tmpString;
+	}
+	else {
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] key [%s] not found for [%s] hint translation\n",__FILE__,__FUNCTION__,__LINE__,key.c_str(),Lang::getInstance().getLanguage().c_str());
+		tmpString=gameHints.getString(key,"");
+		if(tmpString!=""){
+			gameHintToShow=tmpString;
+		}
+		else {
+			gameHintToShow="Problems to resolve hint key '"+key+"'";
+		}
+	}
+	replaceAll(gameHintToShow, "\\n", "\n");
+
+	Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
+
+	vector<pair<string,string> > mergedKeySettings = configKeys.getMergedProperties();
+	for(unsigned int j = 0; j < mergedKeySettings.size(); ++j) {
+        pair<string,string> &property = mergedKeySettings[j];
+        replaceAll(gameHintToShow, "#"+property.first+"#", property.second);
+	}
+	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+void Logger::clearHints() {
+	gameHintToShow="";
+	gameHints.clear();
+	gameHintsTranslation.clear();
 }
 
 void Logger::handleMouseClick(int x, int y) {
@@ -118,6 +183,13 @@ void Logger::handleMouseClick(int x, int y) {
 		if(buttonCancel.mouseClick(x, y)) {
 			cancelSelected = true;
 		}
+	}
+	if(buttonNextHint.getEnabled() == true && buttonNextHint.mouseClick(x,y) == true) {
+		showNextHint();
+		//buttonNextHint.setLighted(false);
+		SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+		CoreData &coreData= CoreData::getInstance();
+		soundRenderer.playFx(coreData.getClickSoundC());
 	}
 }
 
@@ -128,6 +200,10 @@ void Logger::renderLoadingScreen() {
 	Renderer &renderer= Renderer::getInstance();
 	CoreData &coreData= CoreData::getInstance();
 	const Metrics &metrics= Metrics::getInstance();
+
+	//3d
+	//renderer.reset3d();
+	//renderer.clearZBuffer();
 
 	renderer.reset2d();
 	renderer.clearBuffers();
@@ -160,40 +236,101 @@ void Logger::renderLoadingScreen() {
     int xLocation = metrics.getVirtualW() / 4;
 	if(Renderer::renderText3DEnabled) {
 
-		renderer.renderText3D(
-			state, coreData.getMenuFontBig3D(), Vec3f(1.f),
+		renderer.renderTextShadow3D(
+			state, coreData.getMenuFontBig3D(), displayColor,
 			xLocation,
 			65 * metrics.getVirtualH() / 100, false);
 
-		renderer.renderText3D(
-			current, coreData.getMenuFontNormal3D(), Vec3f(1.f),
+		renderer.renderTextShadow3D(
+			current, coreData.getMenuFontNormal3D(), displayColor,
 			xLocation,
 			62 * metrics.getVirtualH() / 100, false);
 
 	    if(this->statusText != "") {
-	    	renderer.renderText3D(
-	    		this->statusText, coreData.getMenuFontNormal3D(), 1.0f,
+	    	renderer.renderTextShadow3D(
+	    		this->statusText, coreData.getMenuFontNormal3D(), displayColor,
 	    		xLocation,
 	    		56 * metrics.getVirtualH() / 100, false);
 	    }
 	}
 	else {
-		renderer.renderText(
-			state, coreData.getMenuFontBig(), Vec3f(1.f),
+		renderer.renderTextShadow(
+			state, coreData.getMenuFontBig(), displayColor,
 			xLocation,
 			65 * metrics.getVirtualH() / 100, false);
 
-		renderer.renderText(
-			current, coreData.getMenuFontNormal(), 1.0f,
+		renderer.renderTextShadow(
+			current, coreData.getMenuFontNormal(), displayColor,
 			xLocation,
 			62 * metrics.getVirtualH() / 100, false);
 
 		if(this->statusText != "") {
-			renderer.renderText(
-				this->statusText, coreData.getMenuFontNormal(), 1.0f,
+			renderer.renderTextShadow(
+				this->statusText, coreData.getMenuFontNormal(), displayColor,
 				xLocation,
 				56 * metrics.getVirtualH() / 100, false);
 		}
+	}
+
+	if(gameHintToShow != "") {
+		Lang &lang = Lang::getInstance();
+		string hintText = lang.getString("Hint","",true);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,hintText.c_str(),gameHintToShow.c_str());
+		hintText = szBuf;
+
+		if(Renderer::renderText3DEnabled) {
+			int xLocationHint =  (metrics.getVirtualW() / 2) - (coreData.getMenuFontBig3D()->getMetrics()->getTextWidth(hintText) / 2);
+
+			renderer.renderTextShadow3D(
+					hintText, coreData.getMenuFontBig3D(), displayColor,
+					//xLocation*1.5f,
+					xLocationHint,
+					90 * metrics.getVirtualH() / 100, false);
+		}
+		else {
+			int xLocationHint =  (metrics.getVirtualW() / 2) - (coreData.getMenuFontBig()->getMetrics()->getTextWidth(hintText) / 2);
+
+			renderer.renderTextShadow(
+					hintText, coreData.getMenuFontBig(), displayColor,
+				//xLocation*1.5f,
+				xLocationHint,
+				90 * metrics.getVirtualH() / 100, false);
+
+		}
+		//Show next Hint
+		if(buttonNextHint.getEnabled() == false) {
+			buttonNextHint.init((metrics.getVirtualW() / 2) - (300 / 2), 90 * metrics.getVirtualH() / 100 + 20,175);
+			buttonNextHint.setText(lang.getString("ShowNextHint","",true));
+			buttonNextHint.setEnabled(true);
+			buttonNextHint.setVisible(true);
+			buttonNextHint.setEditable(true);
+		}
+
+		renderer.renderButton(&buttonNextHint);
+
+/*
+		if(Renderer::renderText3DEnabled) {
+			int xLocationHint =  (metrics.getVirtualW() / 2) - (coreData.getMenuFontBig3D()->getMetrics()->getTextWidth(hintText) / 2);
+
+			renderer.renderText3D(
+					lang.getString("ShowNextHint","",true), coreData.getMenuFontNormal3D(), nextHintTitleColor,
+					//xLocation*1.5f,
+					xLocationHint,
+					93 * metrics.getVirtualH() / 100, false);
+		}
+		else {
+			int xLocationHint =  (metrics.getVirtualW() / 2) - (coreData.getMenuFontBig()->getMetrics()->getTextWidth(hintText) / 2);
+
+			renderer.renderText(
+					lang.getString("ShowNextHint","",true), coreData.getMenuFontNormal(), nextHintTitleColor,
+				//xLocation*1.5f,
+				xLocationHint,
+				93 * metrics.getVirtualH() / 100, false);
+
+		}
+*/
+
 	}
 
     if(buttonCancel.getEnabled() == true) {
@@ -206,10 +343,10 @@ void Logger::renderLoadingScreen() {
 void Logger::setCancelLoadingEnabled(bool value) {
 	Lang &lang= Lang::getInstance();
 	const Metrics &metrics= Metrics::getInstance();
-	string containerName = "logger";
+	//string containerName = "logger";
 	//buttonCancel.registerGraphicComponent(containerName,"buttonCancel");
 	buttonCancel.init((metrics.getVirtualW() / 2) - (125 / 2), 50 * metrics.getVirtualH() / 100, 125);
-	buttonCancel.setText(lang.get("Cancel"));
+	buttonCancel.setText(lang.getString("Cancel"));
 	buttonCancel.setEnabled(value);
 	//GraphicComponent::applyAllCustomProperties(containerName);
 }

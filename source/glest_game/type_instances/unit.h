@@ -11,6 +11,11 @@
 #ifndef _GLEST_GAME_UNIT_H_
 #define _GLEST_GAME_UNIT_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "model.h"
 #include "upgrade_type.h"
 #include "particle.h"
@@ -18,6 +23,7 @@
 #include "game_constants.h"
 #include "platform_common.h"
 #include <vector>
+#include "faction.h"
 #include "leak_dumper.h"
 
 //#define LEAK_CHECK_UNITS
@@ -35,7 +41,7 @@ using Shared::PlatformCommon::Chrono;
 using Shared::PlatformCommon::ValueCheckerVault;
 
 class Map;
-class Faction;
+//class Faction;
 class Unit;
 class Command;
 class SkillType;
@@ -49,6 +55,8 @@ class Level;
 class MorphCommandType;
 class Game;
 class Unit;
+class GameSettings;
+class World;
 
 enum CommandResult {
 	crSuccess,
@@ -75,6 +83,19 @@ enum CauseOfDeathType {
 	ucodStarvedRegeneration
 };
 
+class UnitBuildInfo {
+public:
+	UnitBuildInfo() {
+		unit = NULL;
+		//pos;
+		buildUnit = NULL;
+	}
+	const Unit *unit;
+	CardinalDir facing;
+	Vec2i pos;
+	const UnitType *buildUnit;
+};
+
 // =====================================================
 // 	class UnitObserver
 // =====================================================
@@ -88,6 +109,8 @@ public:
 public:
 	virtual ~UnitObserver() {}
 	virtual void unitEvent(Event event, const Unit *unit)=0;
+
+	virtual void saveGame(XmlNode *rootNode) const = 0;
 };
 
 // =====================================================
@@ -107,6 +130,9 @@ public:
 
 	int getUnitId() const			{ return id; }
 	Faction *getUnitFaction() const	{ return faction; }
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode,World *world);
 };
 
 class UnitPathInterface {
@@ -133,6 +159,13 @@ public:
 
 	virtual void setMap(Map *value) = 0;
 	virtual Map * getMap() = 0;
+
+	virtual void saveGame(XmlNode *rootNode) = 0;
+	virtual void loadGame(const XmlNode *rootNode) = 0;
+
+	virtual void clearCaches() = 0;
+
+	virtual Checksum getCRC() = 0;
 };
 
 class UnitPathBasic : public UnitPathInterface {
@@ -147,7 +180,6 @@ private:
 private:
 	int blockCount;
 	vector<Vec2i> pathQueue;
-	vector<Vec2i> lastPathCacheQueue;
 
 public:
 	UnitPathBasic();
@@ -165,13 +197,9 @@ public:
 	virtual void clearBlockCount() { blockCount = 0; }
 	virtual void incBlockCount();
 	virtual void add(const Vec2i &path);
-	void addToLastPathCache(const Vec2i &path);
 	Vec2i pop(bool removeFrontPos=true);
 	virtual int getBlockCount() const { return blockCount; }
-	virtual int getQueueCount() const { return pathQueue.size(); }
-
-	int getLastPathCacheQueueCount() const { return lastPathCacheQueue.size(); }
-	vector<Vec2i> getLastPathCacheQueue() const { return lastPathCacheQueue; }
+	virtual int getQueueCount() const { return (int)pathQueue.size(); }
 
 	virtual vector<Vec2i> getQueue() const { return pathQueue; }
 
@@ -179,6 +207,12 @@ public:
 	virtual Map * getMap() { return map; }
 
 	virtual std::string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+	virtual void clearCaches();
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -197,11 +231,12 @@ private:
 
 public:
 	UnitPath() : UnitPathInterface(), blockCount(0), map(NULL) {} /**< Construct path object */
+
 	virtual bool isBlocked() const	{return blockCount >= maxBlockCount;} /**< is this path blocked	   */
 	virtual bool isEmpty() const	{return list<Vec2i>::empty();}	/**< is path empty				  */
 	virtual bool isStuck() const	{return false; }
 
-	int  size() const		{return list<Vec2i>::size();}	/**< size of path				 */
+	int  size() const		{return (int)list<Vec2i>::size();}	/**< size of path				 */
 	virtual void clear()			{list<Vec2i>::clear(); blockCount = 0;} /**< clear the path		*/
 	virtual void clearBlockCount() { blockCount = 0; }
 	virtual void incBlockCount()	{++blockCount;}		   /**< increment block counter			   */
@@ -215,7 +250,7 @@ public:
 	Vec2i peek()			{return back();}	 /**< peek at the next position			 */
 	void pop()				{this->pop_back();}	/**< pop the next position off the path */
 #else
-	// new style, for the new RoutePlanner
+	// new style
 	Vec2i peek()			{return front();}	 /**< peek at the next position			 */
 	//virtual Vec2i pop()		{ Vec2i p= front(); erase(begin()); return p; }	/**< pop the next position off the path */
 	void pop()		{ erase(begin()); }	/**< pop the next position off the path */
@@ -235,6 +270,12 @@ public:
 	virtual Map * getMap() { return map; }
 
 	virtual std::string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode) {};
+	virtual void loadGame(const XmlNode *rootNode) {};
+	virtual void clearCaches() {};
+
+	virtual Checksum getCRC() { return Checksum(); };
 };
 
 class WaypointPath : public list<Vec2i> {
@@ -254,30 +295,44 @@ public:
 // ===============================
 
 class UnitAttackBoostEffect {
+private:
+	int unitId;
+	const Unit *unitPtr;
+
+	const Unit *source;
+
+	void applyLoadedAttackBoostParticles(UnitParticleSystemType *upstPtr,const XmlNode* node, Unit* unit);
 public:
 
 	UnitAttackBoostEffect();
-	~UnitAttackBoostEffect();
+	virtual ~UnitAttackBoostEffect();
 
 	const AttackBoost *boost;
-	const Unit *source;
+	//const Unit *source;
+	const Unit * getSource();
+	void setSource(const Unit *unit);
 	UnitParticleSystem *ups;
 	UnitParticleSystemType *upst;
 
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode, Unit *unit, World *world, bool applyToOriginator);
 };
 
 class UnitAttackBoostEffectOriginator {
 public:
 
 	UnitAttackBoostEffectOriginator();
-	~UnitAttackBoostEffectOriginator();
+	virtual ~UnitAttackBoostEffectOriginator();
 
 	const SkillType *skillType;
 	std::vector<int> currentAttackBoostUnits;
 	UnitAttackBoostEffect *currentAppliedEffect;
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode, Unit *unit, World *world);
 };
 
-class Unit : public BaseColorPickEntity, ValueCheckerVault {
+class Unit : public BaseColorPickEntity, ValueCheckerVault, public ParticleOwner {
 private:
     typedef list<Command*> Commands;
 	typedef list<UnitObserver*> Observers;
@@ -287,10 +342,12 @@ private:
 	static std::map<Unit *,bool> mapMemoryList;
 #endif
 
+	static const float ANIMATION_SPEED_MULTIPLIER;
+	static const int64 PROGRESS_SPEED_MULTIPLIER;
+
 public:
-	static const float speedDivider;
+	static const int speedDivider;
 	static const int maxDeadCount;
-	static const float highlightTime;
 	static const int invalidId;
 
 #ifdef LEAK_CHECK_UNITS
@@ -299,18 +356,20 @@ public:
 #endif
 
 private:
-	const int id;
-    int hp;
-    int ep;
-    int loadCount;
-    int deadCount;
-    float progress;			//between 0 and 1
-	float lastAnimProgress;	//between 0 and 1
-	float animProgress;		//between 0 and 1
+	const int32 id;
+	int32 hp;
+	int32 ep;
+	int32 loadCount;
+	int32 deadCount;
+    //float progress;			//between 0 and 1
+    int64 progress;			//between 0 and 1
+	int64 lastAnimProgress;	//between 0 and 1
+	int64 animProgress;		//between 0 and 1
 	float highlight;
-	int progress2;
-	int kills;
-	int enemyKills;
+	int32 progress2;
+	int32 kills;
+	int32 enemyKills;
+	bool morphFieldsBlocked;
 
 	UnitReference targetRef;
 
@@ -332,11 +391,12 @@ private:
 	float rotationZ;
 	float rotationX;
 
+	const UnitType *preMorph_type;
     const UnitType *type;
     const ResourceType *loadType;
     const SkillType *currSkill;
-    int lastModelIndexForCurrSkillType;
-    int animationRandomCycleCount;
+    int32 lastModelIndexForCurrSkillType;
+    int32 animationRandomCycleCount;
 
     bool toBeUndertaken;
 	bool alive;
@@ -360,14 +420,15 @@ private:
 
 	vector<ParticleSystem*> fireParticleSystems;
 	vector<UnitParticleSystem*> smokeParticleSystems;
+	vector<ParticleSystem*> attackParticleSystems;
 
 	CardinalDir modelFacing;
 
 	std::string lastSynchDataString;
 	std::string lastFile;
-	int lastLine;
+	int32 lastLine;
 	std::string lastSource;
-	int lastRenderFrame;
+	int32 lastRenderFrame;
 	bool visible;
 
 	int retryCurrCommandCount;
@@ -398,7 +459,7 @@ private:
 	uint32 lastPathfindFailedFrame;
 	Vec2i lastPathfindFailedPos;
 	bool usePathfinderExtendedMaxNodes;
-	int maxQueuedCommandDisplayCount;
+	int32 maxQueuedCommandDisplayCount;
 
 	UnitAttackBoostEffectOriginator currentAttackBoostOriginatorEffect;
 
@@ -411,109 +472,165 @@ private:
 
 	bool changedActiveCommand;
 
-	int lastAttackerUnitId;
-	int lastAttackedUnitId;
+	int32 lastAttackerUnitId;
+	int32 lastAttackedUnitId;
 	CauseOfDeathType causeOfDeath;
+
+	uint32 pathfindFailedConsecutiveFrameCount;
+	Vec2i currentPathFinderDesiredFinalPos;
+
+	RandomGen random;
+	int32 pathFindRefreshCellCount;
+
+	FowAlphaCellsLookupItem cachedFow;
+	Vec2i cachedFowPos;
+
+	ExploredCellsLookupItem cacheExploredCells;
+	std::pair<Vec2i, int> cacheExploredCellsKey;
+
+	Vec2i lastHarvestedResourcePos;
+
+	string networkCRCLogInfo;
+	string networkCRCParticleLogInfo;
+	vector<string> networkCRCDecHpList;
+	vector<string> networkCRCParticleInfoList;
 
 public:
     Unit(int id, UnitPathInterface *path, const Vec2i &pos, const UnitType *type, Faction *faction, Map *map, CardinalDir placeFacing);
-    ~Unit();
+    virtual ~Unit();
 
     //static bool isUnitDeleted(void *unit);
 
     static void setGame(Game *value) { game=value;}
 
-    //const std::pair<const SkillType *,std::vector<Unit *> > & getCurrentAttackBoostUnits() const { return currentAttackBoostUnits; }
+    inline int getPathFindRefreshCellCount() const { return pathFindRefreshCellCount; }
+
+    void setCurrentPathFinderDesiredFinalPos(const Vec2i &finalPos) { currentPathFinderDesiredFinalPos = finalPos; }
+    Vec2i getCurrentPathFinderDesiredFinalPos() const { return currentPathFinderDesiredFinalPos; }
+
     const UnitAttackBoostEffectOriginator & getAttackBoostOriginatorEffect() const { return currentAttackBoostOriginatorEffect; }
-    bool unitHasAttackBoost(const AttackBoost *boost, const Unit *source) const;
+    bool unitHasAttackBoost(const AttackBoost *boost, const Unit *source);
+
+    inline uint32 getPathfindFailedConsecutiveFrameCount() const { return pathfindFailedConsecutiveFrameCount; }
+    inline void incrementPathfindFailedConsecutiveFrameCount() { pathfindFailedConsecutiveFrameCount++; }
+    inline void resetPathfindFailedConsecutiveFrameCount() { pathfindFailedConsecutiveFrameCount=0; }
+
+    const FowAlphaCellsLookupItem & getCachedFow() const { return cachedFow; }
+    FowAlphaCellsLookupItem getFogOfWarRadius(bool useCache) const;
+    void calculateFogOfWarRadius();
 
     //queries
     Command *getCurrrentCommandThreadSafe();
     void setIgnoreCheckCommand(bool value)      { ignoreCheckCommand=value;}
-    bool getIgnoreCheckCommand() const			{return ignoreCheckCommand;}
-	int getId() const							{return id;}
-	Field getCurrField() const					{return currField;}
-	int getLoadCount() const					{return loadCount;}
-	float getLastAnimProgress() const			{return lastAnimProgress;}
-	//float getProgress() const					{return progress;}
-	float getAnimProgress() const				{return animProgress;}
-	float getHightlight() const					{return highlight;}
-	int getProgress2() const					{return progress2;}
-	int getFactionIndex() const;
-	int getTeam() const;
-	int getHp() const							{return hp;}
-	int getEp() const							{return ep;}
+    inline bool getIgnoreCheckCommand() const			{return ignoreCheckCommand;}
+    inline int getId() const							{return id;}
+    inline Field getCurrField() const					{return currField;}
+    inline int getLoadCount() const					{return loadCount;}
+
+    //inline int getLastAnimProgress() const			{return lastAnimProgress;}
+    //inline int getAnimProgress() const				{return animProgress;}
+    inline float getLastAnimProgressAsFloat() const	{return static_cast<float>(lastAnimProgress) / ANIMATION_SPEED_MULTIPLIER;}
+    inline float getAnimProgressAsFloat() const		{return static_cast<float>(animProgress) / ANIMATION_SPEED_MULTIPLIER;}
+
+    inline float getHightlight() const					{return highlight;}
+    inline int getProgress2() const					{return progress2;}
+	inline int getFactionIndex() const {
+		return faction->getIndex();
+	}
+	inline int getTeam() const {
+		return faction->getTeam();
+	}
+	inline int getHp() const							{return hp;}
+	inline int getEp() const							{return ep;}
 	int getProductionPercent() const;
 	float getProgressRatio() const;
 	float getHpRatio() const;
 	float getEpRatio() const;
-	bool getToBeUndertaken() const				{return toBeUndertaken;}
-	Vec2i getTargetPos() const					{return targetPos;}
-	Vec3f getTargetVec() const					{return targetVec;}
-	Field getTargetField() const				{return targetField;}
-	Vec2i getMeetingPos() const					{return meetingPos;}
-	Faction *getFaction() const					{return faction;}
-    const ResourceType *getLoadType() const		{return loadType;}
-	const UnitType *getType() const				{return type;}
-	const SkillType *getCurrSkill() const		{return currSkill;}
-	const TotalUpgrade *getTotalUpgrade() const	{return &totalUpgrade;}
-	float getRotation() const					{return rotation;}
+	inline bool getToBeUndertaken() const				{return toBeUndertaken;}
+	inline Vec2i getTargetPos() const					{return targetPos;}
+	inline Vec3f getTargetVec() const					{return targetVec;}
+	inline Field getTargetField() const				{return targetField;}
+	inline Vec2i getMeetingPos() const					{return meetingPos;}
+	inline Faction *getFaction() const					{return faction;}
+	inline const ResourceType *getLoadType() const		{return loadType;}
+
+	inline const UnitType *getType() const				{return type;}
+	void setType(const UnitType *newType);
+	inline const UnitType *getPreMorphType() const		{return preMorph_type;}
+
+	inline const SkillType *getCurrSkill() const		{return currSkill;}
+	inline const TotalUpgrade *getTotalUpgrade() const	{return &totalUpgrade;}
+	inline float getRotation() const					{return rotation;}
 	float getRotationX() const;
 	float getRotationZ() const;
-	ParticleSystem *getFire() const				{return fire;}
-	int getKills() const						{return kills;}
-	int getEnemyKills() const					{return enemyKills;}
-	const Level *getLevel() const				{return level;}
+	ParticleSystem *getFire() const;
+	inline int getKills() const						{return kills;}
+	inline int getEnemyKills() const					{return enemyKills;}
+	inline const Level *getLevel() const				{return level;}
 	const Level *getNextLevel() const;
-	string getFullName() const;
-	const UnitPathInterface *getPath() const	{return unitPath;}
-	UnitPathInterface *getPath()				{return unitPath;}
-	WaypointPath *getWaypointPath()				{return &waypointPath;}
+	string getFullName(bool translatedValue) const;
+	inline const UnitPathInterface *getPath() const	{return unitPath;}
+	inline UnitPathInterface *getPath()				{return unitPath;}
+	inline WaypointPath *getWaypointPath()				{return &waypointPath;}
 
-	int getLastAttackerUnitId() const { return lastAttackerUnitId; }
-	void setLastAttackerUnitId(int unitId) { lastAttackerUnitId = unitId; }
+	inline int getLastAttackerUnitId() const { return lastAttackerUnitId; }
+	inline void setLastAttackerUnitId(int unitId) { lastAttackerUnitId = unitId; }
 
-	int getLastAttackedUnitId() const { return lastAttackedUnitId; }
-	void setLastAttackedUnitId(int unitId) { lastAttackedUnitId = unitId; }
+	inline int getLastAttackedUnitId() const { return lastAttackedUnitId; }
+	inline void setLastAttackedUnitId(int unitId) { lastAttackedUnitId = unitId; }
 
-	CauseOfDeathType getCauseOfDeath() const { return causeOfDeath; }
-	void setCauseOfDeath(CauseOfDeathType cause) { causeOfDeath = cause; }
+	inline CauseOfDeathType getCauseOfDeath() const { return causeOfDeath; }
+	inline void setCauseOfDeath(CauseOfDeathType cause) { causeOfDeath = cause; }
 
     //pos
-	Vec2i getPos() const				{return pos;}
+	inline Vec2i getPosNotThreadSafe() const				{return pos;}
+	Vec2i getPos();
 	Vec2i getPosWithCellMapSet() const;
-	Vec2i getLastPos() const			{return lastPos;}
+	inline Vec2i getLastPos() const			{return lastPos;}
 	Vec2i getCenteredPos() const;
     Vec2f getFloatCenteredPos() const;
 	Vec2i getCellPos() const;
 
     //is
-	bool isHighlighted() const			{return highlight>0.f;}
-	bool isDead() const					{return !alive;}
-	bool isAlive() const				{return alive;}
+	inline bool isHighlighted() const			{return highlight>0.f;}
+	inline bool isDead() const					{return !alive;}
+	inline bool isAlive() const				{return alive;}
     bool isOperative() const;
     bool isBeingBuilt() const;
     bool isBuilt() const;
+    bool isBuildCommandPending() const;
+    UnitBuildInfo getBuildCommandPendingInfo() const;
+
     bool isAnimProgressBound() const;
-    bool isPutrefacting() const;
+    bool isPutrefacting() const {
+    	return deadCount!=0;
+    }
 	bool isAlly(const Unit *unit) const;
 	bool isDamaged() const;
 	bool isInteresting(InterestingUnitType iut) const;
 
     //set
-	void setCurrField(Field currField)					{this->currField= currField;}
+	void setCurrField(Field currField);
     void setCurrSkill(const SkillType *currSkill);
     void setCurrSkill(SkillClass sc);
-	void setLoadCount(int loadCount)					{this->loadCount= loadCount;}
-	void setLoadType(const ResourceType *loadType)		{this->loadType= loadType;}
-	void setProgress2(int progress2)					{this->progress2= progress2;}
-	void setPos(const Vec2i &pos);
+
+    void setMorphFieldsBlocked ( bool value ) {this->morphFieldsBlocked=value;}
+	bool getMorphFieldsBlocked() const { return morphFieldsBlocked; }
+
+	inline void setLastHarvestedResourcePos(Vec2i pos)		{ this->lastHarvestedResourcePos = pos; }
+	inline Vec2i getLastHarvestedResourcePos() const	{ return this->lastHarvestedResourcePos; }
+
+    inline void setLoadCount(int loadCount)					{this->loadCount= loadCount;}
+    inline void setLoadType(const ResourceType *loadType)		{this->loadType= loadType;}
+    inline void setProgress2(int progress2)					{this->progress2= progress2;}
+	void setPos(const Vec2i &pos,bool clearPathFinder=false);
+	void refreshPos();
 	void setTargetPos(const Vec2i &targetPos);
 	void setTarget(const Unit *unit);
 	void setTargetVec(const Vec3f &targetVec);
 	void setMeetingPos(const Vec2i &meetingPos);
 	void setVisible(const bool visible);
-	bool getVisible() const { return visible; }
+	inline bool getVisible() const { return visible; }
 
 	//render related
     const Model *getCurrentModel();
@@ -524,17 +641,22 @@ public:
 
     //command related
 	bool anyCommand(bool validateCommandtype=false) const;
-	Command *getCurrCommand() const;
+	inline Command *getCurrCommand() const {
+		if(commands.empty() == false) {
+			return commands.front();
+		}
+		return NULL;
+	}
 	void replaceCurrCommand(Command *cmd);
 	int getCountOfProducedUnits(const UnitType *ut) const;
 	unsigned int getCommandSize() const;
-	CommandResult giveCommand(Command *command, bool tryQueue = false);		//give a command
+	std::pair<CommandResult,string> giveCommand(Command *command, bool tryQueue = false);		//give a command
 	CommandResult finishCommand();						//command finished
 	CommandResult cancelCommand();						//cancel canceled
 
 	//lifecycle
 	void create(bool startingUnit= false);
-	void born();
+	void born(const CommandType *ct);
 	void kill();
 	void undertake();
 
@@ -546,8 +668,8 @@ public:
     //other
 	void resetHighlight();
 	const CommandType *computeCommandType(const Vec2i &pos, const Unit *targetUnit= NULL) const;
-	string getDesc() const;
-	string getDescExtension() const;
+	string getDesc(bool translatedValue) const;
+	string getDescExtension(bool translatedValue) const;
     bool computeEp();
     //bool computeHp();
     bool repair();
@@ -555,6 +677,7 @@ public:
     int update2();
     bool update();
 	void tick();
+	RandomGen* getRandom() { return &random; }
 
 	bool applyAttackBoost(const AttackBoost *boost, const Unit *source);
 	void deapplyAttackBoost(const AttackBoost *boost, const Unit *source);
@@ -563,71 +686,128 @@ public:
 	void computeTotalUpgrade();
 	void incKills(int team);
 	bool morph(const MorphCommandType *mct);
-	CommandResult checkCommand(Command *command) const;
+	std::pair<CommandResult,string> checkCommand(Command *command) const;
 	void applyCommand(Command *command);
 
 	void setModelFacing(CardinalDir value);
-	CardinalDir getModelFacing() const { return modelFacing; }
+	inline CardinalDir getModelFacing() const { return modelFacing; }
 
 	bool isMeetingPointSettable() const;
 
-	int getLastRenderFrame() const { return lastRenderFrame; }
-	void setLastRenderFrame(int value) { lastRenderFrame = value; }
+	inline int getLastRenderFrame() const { return lastRenderFrame; }
+	inline void setLastRenderFrame(int value) { lastRenderFrame = value; }
 
-	int getRetryCurrCommandCount() const { return retryCurrCommandCount; }
-	void setRetryCurrCommandCount(int value) { retryCurrCommandCount = value; }
+	inline int getRetryCurrCommandCount() const { return retryCurrCommandCount; }
+	inline void setRetryCurrCommandCount(int value) { retryCurrCommandCount = value; }
 
-	Vec3f getScreenPos() const { return screenPos; }
+	inline Vec3f getScreenPos() const { return screenPos; }
 	void setScreenPos(Vec3f value) { screenPos = value; }
 
-	string getCurrentUnitTitle() const {return currentUnitTitle;}
+	inline string getCurrentUnitTitle() const {return currentUnitTitle;}
 	void setCurrentUnitTitle(string value) { currentUnitTitle = value;}
 
 	void exploreCells();
 
-	bool getInBailOutAttempt() const { return inBailOutAttempt; }
-	void setInBailOutAttempt(bool value) { inBailOutAttempt = value; }
+	inline bool getInBailOutAttempt() const { return inBailOutAttempt; }
+	inline void setInBailOutAttempt(bool value) { inBailOutAttempt = value; }
 
 	//std::vector<std::pair<Vec2i,Chrono> > getBadHarvestPosList() const { return badHarvestPosList; }
 	//void setBadHarvestPosList(std::vector<std::pair<Vec2i,Chrono> > value) { badHarvestPosList = value; }
 	void addBadHarvestPos(const Vec2i &value);
 	void removeBadHarvestPos(const Vec2i &value);
-	bool isBadHarvestPos(const Vec2i &value,bool checkPeerUnits=true) const;
+	inline bool isBadHarvestPos(const Vec2i &value,bool checkPeerUnits=true) const {
+		bool result = false;
+		if(badHarvestPosList.empty() == true) {
+			return result;
+		}
+
+		std::map<Vec2i,int>::const_iterator iter = badHarvestPosList.find(value);
+		if(iter != badHarvestPosList.end()) {
+			result = true;
+		}
+		else if(checkPeerUnits == true) {
+			// Check if any other units of similar type have this position tagged
+			// as bad?
+			for(int i = 0; i < this->getFaction()->getUnitCount(); ++i) {
+				Unit *peerUnit = this->getFaction()->getUnit(i);
+				if( peerUnit != NULL && peerUnit->getId() != this->getId() &&
+					peerUnit->getType()->hasCommandClass(ccHarvest) == true &&
+					peerUnit->getType()->getSize() <= this->getType()->getSize()) {
+					if(peerUnit->isBadHarvestPos(value,false) == true) {
+						result = true;
+						break;
+					}
+				}
+			}
+		}
+
+		return result;
+	}
 	void cleanupOldBadHarvestPos();
 
 	void setLastHarvestResourceTarget(const Vec2i *pos);
-	std::pair<Vec2i,int> getLastHarvestResourceTarget() const { return lastHarvestResourceTarget;}
+	inline std::pair<Vec2i,int> getLastHarvestResourceTarget() const { return lastHarvestResourceTarget;}
 
 	//std::pair<Vec2i,std::vector<Vec2i> > getCurrentTargetPathTaken() const { return currentTargetPathTaken; }
 	//void addCurrentTargetPathTakenCell(const Vec2i &target,const Vec2i &cell);
 
 	void logSynchData(string file,int line,string source="");
-	std::string toString() const;
-	bool needToUpdate();
+	void logSynchDataThreaded(string file,int line,string source="");
 
-	bool isLastStuckFrameWithinCurrentFrameTolerance() const;
-	uint32 getLastStuckFrame() const { return lastStuckFrame; }
-	void setLastStuckFrame(uint32 value) { lastStuckFrame = value; }
+	std::string toString(bool crcMode=false) const;
+	bool needToUpdate();
+	float getProgressAsFloat() const;
+	int64 getUpdateProgress();
+	int64 getDiagonalFactor();
+	int64 getHeightFactor(int64 speedMultiplier=PROGRESS_SPEED_MULTIPLIER);
+	int64 getSpeedDenominator(int64 updateFPS);
+	bool isChangedActiveCommand() const { return changedActiveCommand; }
+
+	bool isLastStuckFrameWithinCurrentFrameTolerance(bool evalMode);
+	inline uint32 getLastStuckFrame() const { return lastStuckFrame; }
+	//inline void setLastStuckFrame(uint32 value) { lastStuckFrame = value; }
 	void setLastStuckFrameToCurrentFrame();
 
-	Vec2i getLastStuckPos() const { return lastStuckPos; }
-	void setLastStuckPos(Vec2i pos) { lastStuckPos = pos; }
+	inline Vec2i getLastStuckPos() const { return lastStuckPos; }
+	inline void setLastStuckPos(Vec2i pos) { lastStuckPos = pos; }
 
 	bool isLastPathfindFailedFrameWithinCurrentFrameTolerance() const;
-	uint32 getLastPathfindFailedFrame() const { return lastPathfindFailedFrame; }
-	void setLastPathfindFailedFrame(uint32 value) { lastPathfindFailedFrame = value; }
+	inline uint32 getLastPathfindFailedFrame() const { return lastPathfindFailedFrame; }
+	inline void setLastPathfindFailedFrame(uint32 value) { lastPathfindFailedFrame = value; }
 	void setLastPathfindFailedFrameToCurrentFrame();
 
-	Vec2i getLastPathfindFailedPos() const { return lastPathfindFailedPos; }
-	void setLastPathfindFailedPos(Vec2i pos) { lastPathfindFailedPos = pos; }
+	inline Vec2i getLastPathfindFailedPos() const { return lastPathfindFailedPos; }
+	inline void setLastPathfindFailedPos(Vec2i pos) { lastPathfindFailedPos = pos; }
 
-	bool getUsePathfinderExtendedMaxNodes() const { return usePathfinderExtendedMaxNodes; }
-	void setUsePathfinderExtendedMaxNodes(bool value) { usePathfinderExtendedMaxNodes = value; }
+	inline bool getUsePathfinderExtendedMaxNodes() const { return usePathfinderExtendedMaxNodes; }
+	inline void setUsePathfinderExtendedMaxNodes(bool value) { usePathfinderExtendedMaxNodes = value; }
 
 	void updateTimedParticles();
 
 	virtual string getUniquePickName() const;
+	void saveGame(XmlNode *rootNode);
+	static Unit * loadGame(const XmlNode *rootNode,GameSettings *settings,Faction *faction, World *world);
+
+	void clearCaches();
+	bool showTranslatedTechTree() const;
+
+	void addAttackParticleSystem(ParticleSystem *ps);
+
+	Checksum getCRC();
+
+	virtual void end(ParticleSystem *particleSystem);
+	virtual void logParticleInfo(string info);
+	void setNetworkCRCParticleLogInfo(string networkCRCParticleLogInfo) { this->networkCRCParticleLogInfo = networkCRCParticleLogInfo; }
+	void clearParticleInfo();
+	void addNetworkCRCDecHp(string info);
+	void clearNetworkCRCDecHpList();
+
 private:
+
+	bool isNetworkCRCEnabled();
+	string getNetworkCRCDecHpList() const;
+	string getParticleInfo() const;
+
 	float computeHeight(const Vec2i &pos) const;
 	void calculateXZRotation();
 	void updateTarget();
@@ -637,8 +817,19 @@ private:
 	void stopDamageParticles(bool force);
 	void startDamageParticles();
 
-	int getFrameCount() const;
+	uint32 getFrameCount() const;
 	void checkCustomizedParticleTriggers(bool force);
+	bool checkModelStateInfoForNewHpValue();
+	void checkUnitLevel();
+
+	void morphAttackBoosts(Unit *unit);
+
+	int64 getUpdatedProgress(int64 currentProgress, int64 updateFPS, int64 speed, int64 diagonalFactor, int64 heightFactor);
+
+	void logSynchDataCommon(string file,int line,string source="",bool threadedMode=false);
+	void updateAttackBoostProgress(const Game* game);
+
+	void setAlive(bool value);
 };
 
 }}// end namespace

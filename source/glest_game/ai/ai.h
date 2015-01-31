@@ -48,9 +48,12 @@ protected:
 	TaskClass taskClass;	
 
 public:
+	Task();
 	virtual ~Task(){}
 	TaskClass getClass() const	{return taskClass;}
 	virtual string toString() const= 0;
+
+	virtual void saveGame(XmlNode *rootNode) const = 0;
 };
 
 // ==================== ProduceTask ====================
@@ -61,6 +64,7 @@ private:
 	const UnitType *unitType;
 	const ResourceType *resourceType;
 
+	ProduceTask();
 public:
 	ProduceTask(UnitClass unitClass);
 	ProduceTask(const UnitType *unitType);
@@ -70,6 +74,9 @@ public:
 	const UnitType *getUnitType() const				{return unitType;}
 	const ResourceType *getResourceType() const		{return resourceType;}
 	virtual string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode) const;
+	static ProduceTask * loadGame(const XmlNode *rootNode, Faction *faction);
 };
 
 // ==================== BuildTask ====================
@@ -81,8 +88,10 @@ private:
 	bool forcePos;
 	Vec2i pos;
 
+	BuildTask();
+
 public:
-	BuildTask(const UnitType *unitType= NULL);
+	BuildTask(const UnitType *unitType);
 	BuildTask(const ResourceType *resourceType);
 	BuildTask(const UnitType *unitType, const Vec2i &pos);
 
@@ -91,6 +100,9 @@ public:
 	bool getForcePos() const					{return forcePos;}
 	Vec2i getPos() const						{return pos;}
 	virtual string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode) const;
+	static BuildTask * loadGame(const XmlNode *rootNode, Faction *faction);
 };
 
 // ==================== UpgradeTask ====================
@@ -99,10 +111,14 @@ class UpgradeTask: public Task{
 private:
 	const UpgradeType *upgradeType;
 
+	UpgradeTask();
 public:
-	UpgradeTask(const UpgradeType *upgradeType= NULL);
+	UpgradeTask(const UpgradeType *upgradeType);
 	const UpgradeType *getUpgradeType() const	{return upgradeType;}
 	virtual string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode) const;
+	static UpgradeTask * loadGame(const XmlNode *rootNode, Faction *faction);
 };
 
 // ===============================
@@ -113,14 +129,20 @@ public:
 
 class Ai {
 private:
-	static const int harvesterPercent= 30;
-	static const int maxBuildRadius= 40; 
-	static const int minMinWarriors= 7;
-	static const int maxMinWarriors= 20;
-	static const int minStaticResources= 10;
-	static const int minConsumableResources= 20;
-	static const int maxExpansions= 2;
-	static const int villageRadius= 15;
+	int maxBuildRadius;
+
+	int minMinWarriors;
+	int minMinWarriorsExpandCpuEasy;
+	int minMinWarriorsExpandCpuMega;
+	int minMinWarriorsExpandCpuUltra;
+	int minMinWarriorsExpandCpuNormal;
+	int maxMinWarriors;
+
+	int maxExpansions;
+	int villageRadius;
+	int scoutResourceRange;
+	int minWorkerAttackersHarvesting;
+	int minBuildSpacing;
 
 public:
 	enum ResourceUsage {
@@ -131,7 +153,6 @@ public:
 	};
 
 private:
-	//typedef vector<AiRule*> AiRules;
 	typedef vector<AiRule *> AiRules;
 	typedef list<const Task*> Tasks;
 	typedef deque<Vec2i> Positions;
@@ -145,18 +166,32 @@ private:
 	Positions expansionPositions;
 	RandomGen random;
 	std::map<int,int> factionSwitchTeamRequestCount;
+	int minWarriors;
 
 	bool getAdjacentUnits(std::map<float, std::map<int, const Unit *> > &signalAdjacentUnits, const Unit *unit);
 
 public: 
 	Ai() {
-	    aiInterface = NULL;
-	    startLoc = -1;
+		// Defaults that used to be static which can now be overriden
+		maxBuildRadius					= 40;
+		minMinWarriors					= 7;
+		minMinWarriorsExpandCpuEasy		= 1;
+		minMinWarriorsExpandCpuMega		= 3;
+		minMinWarriorsExpandCpuUltra	= 3;
+		minMinWarriorsExpandCpuNormal	= 3;
+		maxMinWarriors					= 20;
+		maxExpansions					= 2;
+		villageRadius					= 15;
+		scoutResourceRange				= 20;
+		minWorkerAttackersHarvesting	= 3;
+		minBuildSpacing					= 1;
+
+	    aiInterface 			 = NULL;
+	    startLoc 				 = -1;
 	    randomMinWarriorsReached = false;
+	    minWarriors 			 = 0;
 	}
     ~Ai();
-
-    int minWarriors;
 
 	void init(AiInterface *aiInterface,int useStartLocation=-1);
     void update(); 
@@ -166,6 +201,8 @@ public:
 	RandomGen* getRandom()					{return &random;}
     int getCountOfType(const UnitType *ut);
 	
+    int getMinWarriors() const { return minWarriors; }
+
 	int getCountOfClass(UnitClass uc,UnitClass *additionalUnitClassToExcludeFromCount=NULL);
 	float getRatioOfClass(UnitClass uc,UnitClass *additionalUnitClassToExcludeFromCount=NULL);
 
@@ -174,6 +211,9 @@ public:
 	bool findPosForBuilding(const UnitType* building, const Vec2i &searchPos, Vec2i &pos);
 	bool findAbleUnit(int *unitIndex, CommandClass ability, bool idleOnly);
 	bool findAbleUnit(int *unitIndex, CommandClass ability, CommandClass currentCommand);
+	vector<int> findUnitsDoingCommand(CommandClass currentCommand);
+	vector<int> findUnitsHarvestingResourceType(const ResourceType *rt);
+
 	bool beingAttacked(Vec2i &pos, Field &field, int radius);
 
 	//tasks
@@ -197,6 +237,9 @@ public:
     void unblockUnits();
 
     bool outputAIBehaviourToConsole() const;
+
+    void saveGame(XmlNode *rootNode) const;
+    void loadGame(const XmlNode *rootNode, Faction *faction);
 };
 
 }}//end namespace

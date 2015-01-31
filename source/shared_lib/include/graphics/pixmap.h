@@ -14,7 +14,7 @@
 
 #include <string>
 #include "vec.h"
-#include "types.h"
+#include "data_types.h"
 #include <map>
 #include "checksum.h"
 #include "leak_dumper.h"
@@ -26,7 +26,6 @@ using Shared::Platform::int16;
 using Shared::Platform::uint16;
 using Shared::Platform::int32;
 using Shared::Platform::uint32;
-using Shared::Platform::uint64;
 using Shared::Platform::float32;
 using Shared::Util::Checksum;
 
@@ -212,7 +211,7 @@ public:
 	uint8 *getPixels() const	{return pixels;}
 	void deletePixels();
 	string getPath() const		{ return path;}
-	uint64 getPixelByteCount() const;
+	std::size_t getPixelByteCount() const;
 
 	Checksum * getCRC() { return &crc; }
 };
@@ -272,8 +271,8 @@ public:
 	float getComponentf(int x, int y, int component) const;
 
 	//set data
-	void setPixel(int x, int y, const uint8 *value);
-	void setPixel(int x, int y, const float32 *value);
+	void setPixel(int x, int y, const uint8 *value, int arraySize);
+	void setPixel(int x, int y, const float32 *value, int arraySize);
 	void setComponent(int x, int y, int component, uint8 value);
 	void setComponent(int x, int y, int component, float32 value);
 
@@ -283,8 +282,8 @@ public:
 	void setPixel(int x, int y, float p);
 	
 	//mass set
-	void setPixels(const uint8 *value);
-	void setPixels(const float32 *value);
+	void setPixels(const uint8 *value, int arraySize);
+	void setPixels(const float32 *value, int arraySize);
 	void setComponents(int component, uint8 value);
 	void setComponents(int component, float32 value);
 
@@ -293,8 +292,9 @@ public:
 	void lerp(float t, const Pixmap2D *pixmap1, const Pixmap2D *pixmap2);
 	void copy(const Pixmap2D *sourcePixmap);
 	void subCopy(int x, int y, const Pixmap2D *sourcePixmap);
+	void copyImagePart(int x, int y, const Pixmap2D *sourcePixmap);
 	string getPath() const		{ return path;}
-	uint64 getPixelByteCount() const;
+	std::size_t getPixelByteCount() const;
 
 	Checksum * getCRC() { return &crc; }
 
@@ -342,7 +342,7 @@ public:
 	uint8 *getPixels() const	{return pixels;}
 	void deletePixels();
 	string getPath() const		{ return path;}
-	uint64 getPixelByteCount() const;
+	std::size_t getPixelByteCount() const;
 
 	Checksum * getCRC() { return &crc; }
 };
@@ -385,7 +385,7 @@ public:
 	const Pixmap2D *getFace(int face) const	{return &faces[face];}
 	void deletePixels();
 	string getPath(int face) const		{ return path[face];}
-	uint64 getPixelByteCount() const;
+	std::size_t getPixelByteCount() const;
 
 	Checksum * getCRC() { return &crc; }
 };

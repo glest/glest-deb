@@ -95,6 +95,7 @@ ServerLine::ServerLine(MasterServerInfo *mServerInfo, int lineIndex, int baseY, 
 		//loadingTexture = renderer.newTexture2D(rsGlobal);
 		countryTexture->setMipmap(true);
 		//loadingTexture->getPixmap()->load(filepath);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFile [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFile.c_str());
 		countryTexture->load(logoFile);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -110,7 +111,7 @@ ServerLine::ServerLine(MasterServerInfo *mServerInfo, int lineIndex, int baseY, 
 
 	wrongVersionLabel.init(i, baseY - lineOffset);
 	wrongVersionLabel.setTextColor(Vec3f(1.0f,0.0f,0.0f));
-	wrongVersionLabel.setText(lang.get("IncompatibleVersion"));
+	wrongVersionLabel.setText(lang.getString("IncompatibleVersion"));
 
 	//game setup info:
 	techLabel.init(i, baseY - lineOffset);
@@ -140,7 +141,7 @@ ServerLine::ServerLine(MasterServerInfo *mServerInfo, int lineIndex, int baseY, 
 	i+= 60;
 	status.init(i, baseY - lineOffset);
 	status.setTextColor(color);
-	status.setText(lang.get("MGGameStatus" + intToStr(masterServerInfo.getStatus())));
+	status.setText(lang.getString("MGGameStatus" + intToStr(masterServerInfo.getStatus())));
 
 	i+= 130;
 	selectButton.init(i, baseY - lineOffset, 30);
@@ -164,7 +165,7 @@ void ServerLine::reloadUI() {
 
 	country.setText(masterServerInfo.getCountry());
 
-	wrongVersionLabel.setText(lang.get("IncompatibleVersion"));
+	wrongVersionLabel.setText(lang.getString("IncompatibleVersion"));
 
 	techLabel.setText(masterServerInfo.getTech());
 
@@ -174,7 +175,7 @@ void ServerLine::reloadUI() {
 
 	externalConnectPort.setText(intToStr(masterServerInfo.getExternalConnectPort()));
 
-	status.setText(lang.get("MGGameStatus" + intToStr(masterServerInfo.getStatus())));
+	status.setText(lang.getString("MGGameStatus" + intToStr(masterServerInfo.getStatus())));
 
 	GraphicComponent::reloadFontsForRegisterGraphicComponents(containerName);
 }

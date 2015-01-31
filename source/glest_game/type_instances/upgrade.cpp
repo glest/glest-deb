@@ -17,6 +17,8 @@
 #include "util.h"
 #include "upgrade_type.h"
 #include "conversion.h"
+#include "faction.h"
+#include "faction_type.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -27,6 +29,11 @@ namespace Glest{ namespace Game{
 // =====================================================
 // 	class Upgrade
 // =====================================================
+Upgrade::Upgrade() {
+	state= usUpgrading;
+	this->factionIndex= -1;
+	this->type= NULL;
+}
 
 Upgrade::Upgrade(const UpgradeType *type, int factionIndex) {
 	state= usUpgrading;
@@ -59,12 +66,35 @@ std::string Upgrade::toString() const {
 
 	result += " state = " + intToStr(state) + " factionIndex = " + intToStr(factionIndex);
 	if(type != NULL) {
-		result += " type = " + type->getReqDesc();
+		result += " type = " + type->getReqDesc(false);
 	}
 
 	return result;
 }
 
+void Upgrade::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *upgradeNode = rootNode->addChild("Upgrade");
+
+	upgradeNode->addAttribute("state",intToStr(state), mapTagReplacements);
+	upgradeNode->addAttribute("factionIndex",intToStr(factionIndex), mapTagReplacements);
+	upgradeNode->addAttribute("type",type->getName(), mapTagReplacements);
+}
+
+Upgrade * Upgrade::loadGame(const XmlNode *rootNode,Faction *faction) {
+	Upgrade *newUpgrade = new Upgrade();
+
+	const XmlNode *upgradeNode = rootNode;
+
+	//description = upgrademanagerNode->getAttribute("description")->getValue();
+
+	newUpgrade->state = static_cast<UpgradeState>(upgradeNode->getAttribute("state")->getIntValue());
+	newUpgrade->factionIndex = upgradeNode->getAttribute("factionIndex")->getIntValue();
+	string unitTypeName = upgradeNode->getAttribute("type")->getValue();
+	newUpgrade->type = faction->getType()->getUpgradeType(unitTypeName);
+
+	return newUpgrade;
+}
 
 // =====================================================
 // 	class UpgradeManager
@@ -78,16 +108,16 @@ UpgradeManager::~UpgradeManager() {
 void UpgradeManager::startUpgrade(const UpgradeType *upgradeType, int factionIndex) {
 	Upgrade *upgrade = new Upgrade(upgradeType, factionIndex);
 	upgrades.push_back(upgrade);
-	upgradesLookup[upgradeType] = upgrades.size()-1;
+	upgradesLookup[upgradeType] = (int)upgrades.size()-1;
 }
 
 void UpgradeManager::cancelUpgrade(const UpgradeType *upgradeType) {
 	map<const UpgradeType *,int>::iterator iterFind = upgradesLookup.find(upgradeType);
 	if(iterFind != upgradesLookup.end()) {
-		if(iterFind->second >= upgrades.size()) {
-			char szBuf[1024]="";
-			sprintf(szBuf,"Error canceling upgrade, iterFind->second >= upgrades.size() - [%d] : [%d]",iterFind->second,(int)upgrades.size());
-			throw runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
+		if(iterFind->second >= (int)upgrades.size()) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"Error canceling upgrade, iterFind->second >= upgrades.size() - [%d] : [%d]",iterFind->second,(int)upgrades.size());
+			throw megaglest_runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
 		}
 		int eraseIndex = iterFind->second;
 		upgrades.erase(upgrades.begin() + eraseIndex);
@@ -95,7 +125,7 @@ void UpgradeManager::cancelUpgrade(const UpgradeType *upgradeType) {
 
 		for(map<const UpgradeType *,int>::iterator iterMap = upgradesLookup.begin();
 			iterMap != upgradesLookup.end(); ++iterMap) {
-			if(iterMap->second >= upgrades.size()) {
+			if(iterMap->second >= (int)upgrades.size()) {
 				iterMap->second--;
 			}
 			if(iterMap->second < 0) {
@@ -104,7 +134,7 @@ void UpgradeManager::cancelUpgrade(const UpgradeType *upgradeType) {
 		}
 	}
 	else {
-		throw runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
+		throw megaglest_runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
 	}
 
 /*
@@ -120,7 +150,7 @@ void UpgradeManager::cancelUpgrade(const UpgradeType *upgradeType) {
 		upgrades.erase(it);
 	}
 	else{
-		throw runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
+		throw megaglest_runtime_error("Error canceling upgrade, upgrade not found in upgrade manager");
 	}
 */
 }
@@ -131,7 +161,7 @@ void UpgradeManager::finishUpgrade(const UpgradeType *upgradeType) {
 		upgrades[iterFind->second]->setState(usUpgraded);
 	}
 	else {
-		throw runtime_error("Error finishing upgrade, upgrade not found in upgrade manager");
+		throw megaglest_runtime_error("Error finishing upgrade, upgrade not found in upgrade manager");
 	}
 
 
@@ -148,7 +178,7 @@ void UpgradeManager::finishUpgrade(const UpgradeType *upgradeType) {
 		(*it)->setState(usUpgraded);
 	}
 	else{
-		throw runtime_error("Error finishing upgrade, upgrade not found in upgrade manager");
+		throw megaglest_runtime_error("Error finishing upgrade, upgrade not found in upgrade manager");
 	}
 */
 }
@@ -220,10 +250,36 @@ void UpgradeManager::computeTotalUpgrade(const Unit *unit, TotalUpgrade *totalUp
 
 std::string UpgradeManager::toString() const {
 	std::string result = "UpgradeCount: " + intToStr(this->getUpgradeCount());
-	for(int idx = 0; idx < upgrades.size(); idx++) {
+	for(int idx = 0; idx < (int)upgrades.size(); idx++) {
 		result += " index = " + intToStr(idx) + " " + upgrades[idx]->toString();
 	}
 	return result;
+}
+
+void UpgradeManager::saveGame(XmlNode *rootNode) {
+	//std::map<string,string> mapTagReplacements;
+	XmlNode *upgrademanagerNode = rootNode->addChild("UpgradeManager");
+
+	for(unsigned int i = 0; i < upgrades.size(); ++i) {
+		upgrades[i]->saveGame(upgrademanagerNode);
+	}
+
+//	Upgrades upgrades;
+//	UgradesLookup upgradesLookup;
+}
+
+void UpgradeManager::loadGame(const XmlNode *rootNode,Faction *faction) {
+	const XmlNode *upgrademanagerNode = rootNode->getChild("UpgradeManager");
+
+	//description = upgrademanagerNode->getAttribute("description")->getValue();
+
+	vector<XmlNode *> upgradeNodeList = upgrademanagerNode->getChildList("Upgrade");
+	for(unsigned int i = 0; i < upgradeNodeList.size(); ++i) {
+		XmlNode *node = upgradeNodeList[i];
+		Upgrade *newUpgrade = Upgrade::loadGame(node,faction);
+		upgrades.push_back(newUpgrade);
+		upgradesLookup[newUpgrade->getType()] = (int)upgrades.size()-1;
+	}
 }
 
 }}// end namespace

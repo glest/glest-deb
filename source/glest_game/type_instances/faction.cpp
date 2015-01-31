@@ -37,15 +37,15 @@ bool CommandGroupUnitSorterId::operator()(const int l, const int r) {
 	if(!lUnit) {
 		printf("Error lUnit == NULL for id = %d factionIndex = %d\n",l,faction->getIndex());
 
-		for(unsigned int i = 0; i < faction->getUnitCount(); ++i) {
-			printf("%d / %d id = %d [%s]\n",i,faction->getUnitCount(),faction->getUnit(i)->getId(),faction->getUnit(i)->getType()->getName().c_str());
+		for(unsigned int i = 0; i < (unsigned int)faction->getUnitCount(); ++i) {
+			printf("%u / %d id = %d [%s]\n",i,faction->getUnitCount(),faction->getUnit(i)->getId(),faction->getUnit(i)->getType()->getName(false).c_str());
 		}
 	}
 	if(!rUnit) {
 		printf("Error rUnit == NULL for id = %d factionIndex = %d\n",r,faction->getIndex());
 
-		for(unsigned int i = 0; i < faction->getUnitCount(); ++i) {
-			printf("%d / %d id = %d [%s]\n",i,faction->getUnitCount(),faction->getUnit(i)->getId(),faction->getUnit(i)->getType()->getName().c_str());
+		for(unsigned int i = 0; i < (unsigned int)faction->getUnitCount(); ++i) {
+			printf("%u / %d id = %d [%s]\n",i,faction->getUnitCount(),faction->getUnit(i)->getId(),faction->getUnit(i)->getType()->getName(false).c_str());
 		}
 	}
 
@@ -71,9 +71,9 @@ bool CommandGroupUnitSorter::compare(const Unit *l, const Unit *r) {
 
 	if(l == NULL || r == NULL)
 		printf("Unit l [%s - %d] r [%s - %d]\n",
-			(l != NULL ? l->getType()->getName().c_str() : "null"),
+			(l != NULL ? l->getType()->getName(false).c_str() : "null"),
 			(l != NULL ? l->getId() : -1),
-			(r != NULL ? r->getType()->getName().c_str() : "null"),
+			(r != NULL ? r->getType()->getName(false).c_str() : "null"),
 			(r != NULL ? r->getId() : -1));
 
 
@@ -140,14 +140,14 @@ bool CommandGroupUnitSorter::compare(const Unit *l, const Unit *r) {
 //	}
 	else {
 		//Command *commandPeer = j.unit->getCurrrentCommandThreadSafe();
-		if( commandPeer != NULL && commandPeer->getCommandType() != NULL &&
-			(commandPeer->getCommandType()->getClass() != ccMove &&
-			 commandPeer->getCommandType()->getClass() != ccAttack)) {
-			result = l->getId() < r->getId();
-		}
-		else {
+		//if( commandPeer != NULL && commandPeer->getCommandType() != NULL &&
+		//	(commandPeer->getCommandType()->getClass() != ccMove &&
+		//	 commandPeer->getCommandType()->getClass() != ccAttack)) {
 			result = (l->getId() < r->getId());
-		}
+		//}
+		//else {
+		//	result = (l->getId() < r->getId());
+		//}
 	}
 
 	//printf("Sorting, unit [%d - %s] cmd [%s] | unit2 [%d - %s] cmd [%s] result = %d\n",this->unit->getId(),this->unit->getFullName().c_str(),(this->unit->getCurrCommand() == NULL ? "NULL" : this->unit->getCurrCommand()->toString().c_str()),j.unit->getId(),j.unit->getFullName().c_str(),(j.unit->getCurrCommand() == NULL ? "NULL" : j.unit->getCurrCommand()->toString().c_str()),result);
@@ -163,7 +163,7 @@ void Faction::sortUnitsByCommandGroups() {
 //	//	printf("i = %d [%p]\n",i,&units[i]);
 //		if(Unit::isUnitDeleted(units[i]) == true) {
 //			printf("i = %d [%p]\n",i,&units[i]);
-//			throw runtime_error("unit already deleted!");
+//			throw megaglest_runtime_error("unit already deleted!");
 //		}
 	//}
 	//printf("\nSorting\n");
@@ -172,16 +172,16 @@ void Faction::sortUnitsByCommandGroups() {
 
 	//printf("====== Done sorting for faction # %d [%s] unitCount = %d\n",this->getIndex(),this->getType()->getName().c_str(),units.size());
 
-	unsigned int originalUnitSize = units.size();
+	//unsigned int originalUnitSize = (unsigned int)units.size();
 
 	std::vector<int> unitIds;
 	for(unsigned int i = 0; i < units.size(); ++i) {
 		int unitId = units[i]->getId();
 		if(this->findUnit(unitId) == NULL) {
-			printf("#1 Error unitId not found for id = %d [%s] factionIndex = %d\n",unitId,units[i]->getType()->getName().c_str(),this->getIndex());
+			printf("#1 Error unitId not found for id = %d [%s] factionIndex = %d\n",unitId,units[i]->getType()->getName(false).c_str(),this->getIndex());
 
 			for(unsigned int j = 0; j < units.size(); ++j) {
-				printf("%d / %d id = %d [%s]\n",j,(int)units.size(),units[j]->getId(),units[j]->getType()->getName().c_str());
+				printf("%u / %d id = %d [%s]\n",j,(int)units.size(),units[j]->getId(),units[j]->getType()->getName(false).c_str());
 			}
 		}
 		unitIds.push_back(unitId);
@@ -198,14 +198,14 @@ void Faction::sortUnitsByCommandGroups() {
 			printf("#2 Error unitId not found for id = %d factionIndex = %d\n",unitId,this->getIndex());
 
 			for(unsigned int j = 0; j < units.size(); ++j) {
-				printf("%d / %d id = %d [%s]\n",j,(int)units.size(),units[j]->getId(),units[j]->getType()->getName().c_str());
+				printf("%u / %d id = %d [%s]\n",j,(int)units.size(),units[j]->getId(),units[j]->getType()->getName(false).c_str());
 			}
 		}
 
 		units.push_back(this->findUnit(unitId));
 	}
 
-	assert(originalUnitSize == units.size());
+	//assert(originalUnitSize == units.size());
 }
 
 // =====================================================
@@ -213,13 +213,17 @@ void Faction::sortUnitsByCommandGroups() {
 // =====================================================
 
 FactionThread::FactionThread(Faction *faction) : BaseThread() {
-	this->triggerIdMutex = new Mutex();
+	this->triggerIdMutex = new Mutex(CODE_AT_LINE);
 	this->faction = faction;
+	this->masterController = NULL;
+	uniqueID = "FactionThread";
 }
 
 FactionThread::~FactionThread() {
-	delete triggerIdMutex;
-	triggerIdMutex = NULL;
+	this->faction = NULL;
+	this->masterController = NULL;
+	delete this->triggerIdMutex;
+	this->triggerIdMutex = NULL;
 }
 
 void FactionThread::setQuitStatus(bool value) {
@@ -260,6 +264,7 @@ bool FactionThread::canShutdown(bool deleteSelfIfShutdownDelayed) {
 	bool ret = (getExecutingTask() == false);
 	if(ret == false && deleteSelfIfShutdownDelayed == true) {
 	    setDeleteSelfOnExecutionDone(deleteSelfIfShutdownDelayed);
+	    deleteSelfIfRequired();
 	    signalQuit();
 	}
 
@@ -282,12 +287,17 @@ bool FactionThread::isSignalPathfinderCompleted(int frameIndex) {
 }
 
 void FactionThread::execute() {
+	string codeLocation = "1";
     RunningStatusSafeWrapper runningStatus(this);
 	try {
 		//setRunningStatus(true);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] ****************** STARTING worker thread this = %p\n",__FILE__,__FUNCTION__,__LINE__,this);
 
+		bool minorDebugPerformance = false;
+		Chrono chrono;
+
+		codeLocation = "2";
 		//unsigned int idx = 0;
 		for(;this->faction != NULL;) {
 			if(getQuitStatus() == true) {
@@ -297,6 +307,12 @@ void FactionThread::execute() {
 
 			semTaskSignalled.waitTillSignalled();
 
+			codeLocation = "3";
+			//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			static string masterSlaveOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+			MasterSlaveThreadControllerSafeWrapper safeMasterController(masterController,20000,masterSlaveOwnerId);
+			//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
 			if(getQuitStatus() == true) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				break;
@@ -304,43 +320,125 @@ void FactionThread::execute() {
 
 			static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
             MutexSafeWrapper safeMutex(triggerIdMutex,mutexOwnerId);
-            bool executeTask = (frameIndex.first >= 0);
+            bool executeTask = (this->frameIndex.first >= 0);
+			int currentTriggeredFrameIndex = this->frameIndex.first;
 
             //if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] frameIndex = %d this = %p executeTask = %d\n",__FILE__,__FUNCTION__,__LINE__,frameIndex.first, this, executeTask);
 
             safeMutex.ReleaseLock();
 
+			codeLocation = "5";
+            //printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
             if(executeTask == true) {
+				codeLocation = "6";
 				ExecutingTaskSafeWrapper safeExecutingTaskMutex(this);
 
-				World *world = faction->getWorld();
+				if(this->faction == NULL) {
+					throw megaglest_runtime_error("this->faction == NULL");
+				}
+				World *world = this->faction->getWorld();
+				if(world == NULL) {
+					throw megaglest_runtime_error("world == NULL");
+				}
 
+				codeLocation = "7";
 				//Config &config= Config::getInstance();
 				//bool sortedUnitsAllowed = config.getBool("AllowGroupedUnitCommands","true");
 				bool sortedUnitsAllowed = false;
-				if(sortedUnitsAllowed) {
-					faction->sortUnitsByCommandGroups();
+				if(sortedUnitsAllowed == true) {
+					this->faction->sortUnitsByCommandGroups();
 				}
 
-				MutexSafeWrapper safeMutex(faction->getUnitMutex(),string(__FILE__) + "_" + intToStr(__LINE__));
-				int unitCount = faction->getUnitCount();
+				codeLocation = "8";
+				static string mutexOwnerId2 = string(__FILE__) + string("_") + intToStr(__LINE__);
+				MutexSafeWrapper safeMutex(faction->getUnitMutex(),mutexOwnerId2);
+
+				//if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
+				if(minorDebugPerformance) chrono.start();
+
+				//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+				codeLocation = "9";
+				int unitCount = this->faction->getUnitCount();
 				for(int j = 0; j < unitCount; ++j) {
-					Unit *unit = faction->getUnit(j);
+					codeLocation = "10";
+					Unit *unit = this->faction->getUnit(j);
 					if(unit == NULL) {
-						throw runtime_error("unit == NULL");
+						throw megaglest_runtime_error("unit == NULL");
 					}
+
+					codeLocation = "11";
+					int64 elapsed1 = 0;
+					if(minorDebugPerformance) elapsed1 = chrono.getMillis();
 
 					bool update = unit->needToUpdate();
+
+					codeLocation = "12";
+					if(minorDebugPerformance && (chrono.getMillis() - elapsed1) >= 1) printf("Faction [%d - %s] #1-unit threaded updates on frame: %d for [%d] unit # %d, unitCount = %d, took [%lld] msecs\n",faction->getStartLocationIndex(),faction->getType()->getName(false).c_str(),currentTriggeredFrameIndex,faction->getUnitPathfindingListCount(),j,unitCount,(long long int)chrono.getMillis() - elapsed1);
+
 					//update = true;
-					if(update == true) {
-						world->getUnitUpdater()->updateUnitCommand(unit,frameIndex.first);
+					if(update == true)
+					{
+						codeLocation = "13";
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
+							int64 updateProgressValue = unit->getUpdateProgress();
+							int64 speed = unit->getCurrSkill()->getTotalSpeed(unit->getTotalUpgrade());
+							int64 df = unit->getDiagonalFactor();
+							int64 hf = unit->getHeightFactor();
+							bool changedActiveCommand = unit->isChangedActiveCommand();
+
+							char szBuf[8096]="";
+							snprintf(szBuf,8096,"unit->needToUpdate() returned: %d updateProgressValue: %lld speed: %lld changedActiveCommand: %d df: %lld hf: %lld",update,(long long int)updateProgressValue,(long long int)speed,changedActiveCommand,(long long int)df,(long long int)hf);
+							unit->logSynchDataThreaded(__FILE__,__LINE__,szBuf);
+						}
+
+						int64 elapsed2 = 0;
+						if(minorDebugPerformance) elapsed2 = chrono.getMillis();
+
+						if(world->getUnitUpdater() == NULL) {
+							throw megaglest_runtime_error("world->getUnitUpdater() == NULL");
+						}
+
+						world->getUnitUpdater()->updateUnitCommand(unit,currentTriggeredFrameIndex);
+
+						codeLocation = "15";
+						if(minorDebugPerformance && (chrono.getMillis() - elapsed2) >= 1) printf("Faction [%d - %s] #2-unit threaded updates on frame: %d for [%d] unit # %d, unitCount = %d, took [%lld] msecs\n",faction->getStartLocationIndex(),faction->getType()->getName(false).c_str(),currentTriggeredFrameIndex,faction->getUnitPathfindingListCount(),j,unitCount,(long long int)chrono.getMillis() - elapsed2);
+					}
+					else {
+						codeLocation = "16";
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
+							int64 updateProgressValue = unit->getUpdateProgress();
+							int64 speed = unit->getCurrSkill()->getTotalSpeed(unit->getTotalUpgrade());
+							int64 df = unit->getDiagonalFactor();
+							int64 hf = unit->getHeightFactor();
+							bool changedActiveCommand = unit->isChangedActiveCommand();
+
+							char szBuf[8096]="";
+							snprintf(szBuf,8096,"unit->needToUpdate() returned: %d updateProgressValue: %lld speed: %lld changedActiveCommand: %d df: %lld hf: %lld",update,(long long int)updateProgressValue,(long long int)speed,changedActiveCommand,(long long int)df,(long long int)hf);
+							unit->logSynchDataThreaded(__FILE__,__LINE__,szBuf);
+						}
 					}
 				}
+
+				codeLocation = "17";
+				if(minorDebugPerformance && chrono.getMillis() >= 1) printf("Faction [%d - %s] threaded updates on frame: %d for [%d] units took [%lld] msecs\n",faction->getStartLocationIndex(),faction->getType()->getName(false).c_str(),currentTriggeredFrameIndex,faction->getUnitPathfindingListCount(),(long long int)chrono.getMillis());
+
+				//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
 				safeMutex.ReleaseLock();
 
-				setTaskCompleted(frameIndex.first);
+				codeLocation = "18";
+				//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+				setTaskCompleted(currentTriggeredFrameIndex);
+
+				//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
             }
 
+            //printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+			codeLocation = "19";
 			if(getQuitStatus() == true) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				break;
@@ -353,11 +451,18 @@ void FactionThread::execute() {
 	catch(const exception &ex) {
 		//setRunningStatus(false);
 
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Loc [%s] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,codeLocation.c_str(),ex.what());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-		throw runtime_error(ex.what());
+		throw megaglest_runtime_error(ex.what());
 	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error Loc [%s]\n",__FILE__,__FUNCTION__,__LINE__,codeLocation.c_str());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
@@ -367,7 +472,11 @@ void FactionThread::execute() {
 // =====================================================
 
 Faction::Faction() {
-	unitsMutex = new Mutex();
+	init();
+}
+
+void Faction::init() {
+	unitsMutex = new Mutex(CODE_AT_LINE);
 	texture = NULL;
 	//lastResourceTargettListPurge = 0;
 	cachingDisabled=false;
@@ -382,6 +491,15 @@ Faction::Faction() {
 	startLocationIndex=0;
 	thisFaction=false;
 	currentSwitchTeamVoteFactionIndex = -1;
+
+	loadWorldNode = NULL;
+	techTree = NULL;
+
+	control = ctClosed;
+
+	overridePersonalityType = fpt_EndCount;
+
+	upgradeManager = UpgradeManager();
 }
 
 Faction::~Faction() {
@@ -439,13 +557,118 @@ void Faction::end() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-Unit * Faction::getUnit(int i) const {
-	Unit *result = units[i];
+void Faction::notifyUnitAliveStatusChange(const Unit *unit) {
+	if(unit != NULL) {
+		if(unit->isAlive() == true) {
+			aliveUnitListCache[unit->getId()] = unit;
+
+			if(unit->getType()->isMobile() == true) {
+				mobileUnitListCache[unit->getId()] = unit;
+			}
+		}
+		else {
+			aliveUnitListCache.erase(unit->getId());
+			mobileUnitListCache.erase(unit->getId());
+			beingBuiltUnitListCache.erase(unit->getId());
+		}
+	}
+}
+
+void Faction::notifyUnitTypeChange(const Unit *unit, const UnitType *newType) {
+	if(unit != NULL) {
+		if(unit->getType()->isMobile() == true) {
+			mobileUnitListCache.erase(unit->getId());
+		}
+
+		if(newType != NULL && newType->isMobile() == true) {
+			mobileUnitListCache[unit->getId()] = unit;
+		}
+	}
+}
+
+void Faction::notifyUnitSkillTypeChange(const Unit *unit, const SkillType *newType) {
+	if(unit != NULL) {
+		if(unit->isBeingBuilt() == true) {
+			beingBuiltUnitListCache.erase(unit->getId());
+		}
+		if(newType != NULL && newType->getClass() == scBeBuilt) {
+			beingBuiltUnitListCache[unit->getId()] = unit;
+		}
+	}
+}
+
+bool Faction::hasAliveUnits(bool filterMobileUnits, bool filterBuiltUnits) const {
+	bool result = false;
+	if(aliveUnitListCache.empty() == false) {
+		if(filterMobileUnits == true) {
+			result = (mobileUnitListCache.empty() == false);
+		}
+		else {
+			result = true;
+		}
+
+		if(result == true && filterBuiltUnits == true) {
+			result = (beingBuiltUnitListCache.empty() == true);
+		}
+	}
 	return result;
 }
 
-int Faction::getUnitCount() const {
-	int result = units.size();
+FactionPersonalityType Faction::getPersonalityType() const {
+	if(overridePersonalityType != fpt_EndCount) {
+		return overridePersonalityType;
+	}
+	return factionType->getPersonalityType();
+}
+
+int Faction::getAIBehaviorStaticOverideValue(AIBehaviorStaticValueCategory type) const {
+	return factionType->getAIBehaviorStaticOverideValue(type);
+}
+
+void Faction::addUnitToMovingList(int unitId) {
+	unitsMovingList[unitId] = getWorld()->getFrameCount();
+}
+void Faction::removeUnitFromMovingList(int unitId) {
+	unitsMovingList.erase(unitId);
+}
+
+int Faction::getUnitMovingListCount() {
+	return (int)unitsMovingList.size();
+}
+
+void Faction::addUnitToPathfindingList(int unitId) {
+	//printf("ADD (1) Faction [%d - %s] threaded updates for [%d] units\n",this->getStartLocationIndex(),this->getType()->getName().c_str(),unitsPathfindingList.size());
+	unitsPathfindingList[unitId] = getWorld()->getFrameCount();
+	//printf("ADD (2) Faction [%d - %s] threaded updates for [%d] units\n",this->getStartLocationIndex(),this->getType()->getName().c_str(),unitsPathfindingList.size());
+}
+void Faction::removeUnitFromPathfindingList(int unitId) {
+	unitsPathfindingList.erase(unitId);
+}
+
+int Faction::getUnitPathfindingListCount() {
+	//printf("GET Faction [%d - %s] threaded updates for [%d] units\n",this->getStartLocationIndex(),this->getType()->getName().c_str(),unitsPathfindingList.size());
+	return (int)unitsPathfindingList.size();
+}
+
+void Faction::clearUnitsPathfinding() {
+	//printf("CLEAR Faction [%d - %s] threaded updates for [%d] units\n",this->getStartLocationIndex(),this->getType()->getName().c_str(),unitsPathfindingList.size());
+	if(unitsPathfindingList.empty() == false) {
+		unitsPathfindingList.clear();
+	}
+}
+
+bool Faction::canUnitsPathfind() {
+	bool result = true;
+	if(control == ctCpuEasy  || control == ctCpu ||
+	   control == ctCpuUltra || control == ctCpuMega) {
+		//printf("AI player for faction index: %d (%s) current pathfinding: %d\n",index,factionType->getName().c_str(),getUnitPathfindingListCount());
+
+		const int MAX_UNITS_PATHFINDING_PER_FRAME = 10;
+		result = (getUnitPathfindingListCount() <= MAX_UNITS_PATHFINDING_PER_FRAME);
+		if(result == false) {
+			//printf("WARNING limited AI player for faction index: %d (%s) current pathfinding: %d\n",index,factionType->getName().c_str(),getUnitPathfindingListCount());
+		}
+	}
 	return result;
 }
 
@@ -465,10 +688,13 @@ bool Faction::isWorkerThreadSignalCompleted(int frameIndex) {
 
 void Faction::init(
 	FactionType *factionType, ControlType control, TechTree *techTree, Game *game,
-	int factionIndex, int teamIndex, int startLocationIndex, bool thisFaction, bool giveResources)
+	int factionIndex, int teamIndex, int startLocationIndex, bool thisFaction, bool giveResources,
+	const XmlNode *loadWorldNode)
 {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+	this->techTree = techTree;
+	this->loadWorldNode = loadWorldNode;
 	this->control= control;
 	this->factionType= factionType;
 	this->startLocationIndex= startLocationIndex;
@@ -477,15 +703,19 @@ void Faction::init(
 	this->thisFaction= thisFaction;
 	this->world= game->getWorld();
 	this->scriptManager= game->getScriptManager();
-	cachingDisabled = (Config::getInstance().getBool("DisableCaching","false") == true);
+	//cachingDisabled = (Config::getInstance().getBool("DisableCaching","false") == true);
+	cachingDisabled = false;
 
 	resources.resize(techTree->getResourceTypeCount());
 	store.resize(techTree->getResourceTypeCount());
-	for(int i=0; i<techTree->getResourceTypeCount(); ++i){
-		const ResourceType *rt= techTree->getResourceType(i);
-		int resourceAmount= giveResources? factionType->getStartingResourceAmount(rt): 0;
-		resources[i].init(rt, resourceAmount);
-		store[i].init(rt, 0);
+
+	if(loadWorldNode == NULL) {
+		for(int i=0; i<techTree->getResourceTypeCount(); ++i){
+			const ResourceType *rt= techTree->getResourceType(i);
+			int resourceAmount= giveResources? factionType->getStartingResourceAmount(rt): 0;
+			resources[i].init(rt, resourceAmount);
+			store[i].init(rt, 0);
+		}
 	}
 
 	texture= Renderer::getInstance().newTexture2D(rsGame);
@@ -495,8 +725,13 @@ void Faction::init(
 		texture->load(playerTexture);
 	}
 
-	if( game->getGameSettings()->getPathFinderType() == pfBasic &&
-		Config::getInstance().getBool("EnableFactionWorkerThreads","true") == true) {
+	if(loadWorldNode != NULL) {
+		loadGame(loadWorldNode, this->index,game->getGameSettings(),game->getWorld());
+	}
+
+	if( game->getGameSettings()->getPathFinderType() == pfBasic) {
+//	if( game->getGameSettings()->getPathFinderType() == pfBasic &&
+//		Config::getInstance().getBool("EnableFactionWorkerThreads","true") == true) {
 		if(workerThread != NULL) {
 			workerThread->signalQuit();
 			if(workerThread->shutdownAndWait() == true) {
@@ -504,8 +739,9 @@ void Faction::init(
 			}
 			workerThread = NULL;
 		}
+		static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 		this->workerThread = new FactionThread(this);
-		this->workerThread->setUniqueID(__FILE__);
+		this->workerThread->setUniqueID(mutexOwnerId);
 		this->workerThread->start();
 	}
 
@@ -515,21 +751,31 @@ void Faction::init(
 // ================== get ==================
 
 const Resource *Faction::getResource(const ResourceType *rt) const{
-	for(int i=0; i<resources.size(); ++i){
+	for(int i = 0; i < (int)resources.size(); ++i){
 		if(rt==resources[i].getType()){
 			return &resources[i];
 		}
 	}
+	printf("ERROR cannot find resource type [%s] in list:\n",(rt != NULL ? rt->getName().c_str() : "null"));
+	for(int i=0; i < (int)resources.size(); ++i){
+		printf("Index %d [%s]",i,resources[i].getType()->getName().c_str());
+	}
+
 	assert(false);
 	return NULL;
 }
 
 int Faction::getStoreAmount(const ResourceType *rt) const{
-	for(int i=0; i<store.size(); ++i){
+	for(int i=0; i < (int)store.size(); ++i){
 		if(rt==store[i].getType()){
 			return store[i].getAmount();
 		}
 	}
+	printf("ERROR cannot find store type [%s] in list:\n",(rt != NULL ? rt->getName().c_str() : "null"));
+	for(int i=0; i < (int)store.size(); ++i){
+		printf("Index %d [%s]",i,store[i].getType()->getName().c_str());
+	}
+
 	assert(false);
 	return 0;
 }
@@ -606,7 +852,7 @@ bool Faction::reqsOk(const RequirableType *rt) const {
     }
 
     if(dynamic_cast<const UnitType *>(rt) != NULL ) {
-    	const UnitType *producedUnitType=(UnitType *) rt;
+    	const UnitType *producedUnitType= dynamic_cast<const UnitType *>(rt);
    		if(producedUnitType != NULL && producedUnitType->getMaxUnitCount() > 0) {
 			if(producedUnitType->getMaxUnitCount() <= getCountForMaxUnitCount(producedUnitType)) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__, __LINE__);
@@ -637,7 +883,7 @@ int Faction::getCountForMaxUnitCount(const UnitType *unitType) const{
 bool Faction::reqsOk(const CommandType *ct) const {
 	assert(ct != NULL);
 	if(ct == NULL) {
-	    throw runtime_error("In [Faction::reqsOk] ct == NULL");
+	    throw megaglest_runtime_error("In [Faction::reqsOk] ct == NULL");
 	}
 
 	if(ct->getProduced() != NULL && reqsOk(ct->getProduced()) == false) {
@@ -659,36 +905,44 @@ bool Faction::reqsOk(const CommandType *ct) const {
 // ================== cost application ==================
 
 //apply costs except static production (start building/production)
-bool Faction::applyCosts(const ProducibleType *p){
-
-	if(!checkCosts(p)){
-		return false;
+bool Faction::applyCosts(const ProducibleType *p,const CommandType *ct) {
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
 	}
 
-	assert(p != NULL);
-	//for each unit cost spend it
-    //pass 2, decrease resources, except negative static costs (ie: farms)
-	for(int i=0; i<p->getCostCount(); ++i) {
-		const Resource *r= p->getCost(i);
-        if(r == NULL) {
-        	char szBuf[1024]="";
-        	sprintf(szBuf,"cannot apply costs for p [%s] %d of %d costs resource is null",p->getName().c_str(),i,p->getCostCount());
-        	throw runtime_error(szBuf);
-        }
-
-        const ResourceType *rt= r->getType();
-        if(rt == NULL) {
-        	char szBuf[1024]="";
-        	sprintf(szBuf,"cannot apply costs for p [%s] %d of %d costs resourcetype [%s] is null",p->getName().c_str(),i,p->getCostCount(),r->getDescription().c_str());
-        	throw runtime_error(szBuf);
-        }
-		int cost= r->getAmount();
-		if((cost > 0 || (rt->getClass() != rcStatic)) && rt->getClass() != rcConsumable)
-		{
-            incResourceAmount(rt, -(cost));
+	if(ignoreResourceCosts == false) {
+		if(checkCosts(p,ct) == false) {
+			return false;
 		}
 
-    }
+		assert(p != NULL);
+		//for each unit cost spend it
+		//pass 2, decrease resources, except negative static costs (ie: farms)
+		for(int i=0; i<p->getCostCount(); ++i) {
+			const Resource *r= p->getCost(i);
+			if(r == NULL) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"cannot apply costs for p [%s] %d of %d costs resource is null",p->getName(false).c_str(),i,p->getCostCount());
+				throw megaglest_runtime_error(szBuf);
+			}
+
+			const ResourceType *rt= r->getType();
+			if(rt == NULL) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"cannot apply costs for p [%s] %d of %d costs resourcetype [%s] is null",p->getName(false).c_str(),i,p->getCostCount(),r->getDescription(false).c_str());
+				throw megaglest_runtime_error(szBuf);
+			}
+			int cost= r->getAmount();
+			if((cost > 0 || (rt->getClass() != rcStatic)) && rt->getClass() != rcConsumable) {
+				incResourceAmount(rt, -(cost));
+			}
+
+		}
+	}
     return true;
 }
 
@@ -710,100 +964,138 @@ void Faction::applyDiscount(const ProducibleType *p, int discount)
 }
 
 //apply static production (for starting units)
-void Faction::applyStaticCosts(const ProducibleType *p) {
+void Faction::applyStaticCosts(const ProducibleType *p,const CommandType *ct) {
 	assert(p != NULL);
-	//decrease static resources
-    for(int i=0; i < p->getCostCount(); ++i) {
-		const ResourceType *rt= p->getCost(i)->getType();
-		//assert(rt != NULL);
-		if(rt == NULL) {
-			throw runtime_error(string(__FUNCTION__) + " rt == NULL for ProducibleType [" + p->getName() + "] index: " + intToStr(i));
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
 		}
-        if(rt->getClass() == rcStatic) {
-            int cost= p->getCost(i)->getAmount();
-			if(cost > 0) {
-				incResourceAmount(rt, -cost);
+	}
+
+	if(ignoreResourceCosts == false) {
+		//decrease static resources
+		for(int i=0; i < p->getCostCount(); ++i) {
+			const ResourceType *rt= p->getCost(i)->getType();
+			//assert(rt != NULL);
+			if(rt == NULL) {
+				throw megaglest_runtime_error(string(__FUNCTION__) + " rt == NULL for ProducibleType [" + p->getName(false) + "] index: " + intToStr(i));
 			}
-        }
-    }
+			if(rt->getClass() == rcStatic) {
+				int cost= p->getCost(i)->getAmount();
+				if(cost > 0) {
+					incResourceAmount(rt, -cost);
+				}
+			}
+		}
+	}
 }
 
 //apply static production (when a mana source is done)
-void Faction::applyStaticProduction(const ProducibleType *p)
-{
+void Faction::applyStaticProduction(const ProducibleType *p,const CommandType *ct) {
 	assert(p != NULL);
-	//decrease static resources
-    for(int i=0; i<p->getCostCount(); ++i)
-    {
-		const ResourceType *rt= p->getCost(i)->getType();
-		assert(rt != NULL);
-        if(rt->getClass() == rcStatic)
-        {
-            int cost= p->getCost(i)->getAmount();
-			if(cost < 0)
-			{
-				incResourceAmount(rt, -cost);
+
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
+	}
+
+	if(ignoreResourceCosts == false) {
+		//decrease static resources
+		for(int i=0; i<p->getCostCount(); ++i) {
+			const ResourceType *rt= p->getCost(i)->getType();
+			assert(rt != NULL);
+			if(rt->getClass() == rcStatic) {
+				int cost= p->getCost(i)->getAmount();
+				if(cost < 0) {
+					incResourceAmount(rt, -cost);
+				}
 			}
-        }
-    }
+		}
+	}
 }
 
 //deapply all costs except static production (usually when a building is cancelled)
-void Faction::deApplyCosts(const ProducibleType *p)
-{
+void Faction::deApplyCosts(const ProducibleType *p,const CommandType *ct) {
 	assert(p != NULL);
-	//increase resources
-	for(int i=0; i<p->getCostCount(); ++i)
-	{
-		const ResourceType *rt= p->getCost(i)->getType();
-		assert(rt != NULL);
-        int cost= p->getCost(i)->getAmount();
-		if((cost > 0 || (rt->getClass() != rcStatic)) && rt->getClass() != rcConsumable)
-		{
-            incResourceAmount(rt, cost);
-		}
 
-    }
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
+	}
+
+	if(ignoreResourceCosts == false) {
+		//increase resources
+		for(int i=0; i<p->getCostCount(); ++i) {
+			const ResourceType *rt= p->getCost(i)->getType();
+			assert(rt != NULL);
+			int cost= p->getCost(i)->getAmount();
+			if((cost > 0 || (rt->getClass() != rcStatic)) && rt->getClass() != rcConsumable) {
+				incResourceAmount(rt, cost);
+			}
+		}
+	}
 }
 
 //deapply static costs (usually when a unit dies)
-void Faction::deApplyStaticCosts(const ProducibleType *p)
-{
+void Faction::deApplyStaticCosts(const ProducibleType *p,const CommandType *ct) {
 	assert(p != NULL);
-    //decrease resources
-	for(int i=0; i<p->getCostCount(); ++i)
-	{
-		const ResourceType *rt= p->getCost(i)->getType();
-		assert(rt != NULL);
-		if(rt->getClass() == rcStatic)
-		{
-		    if(rt->getRecoup_cost() == true)
-		    {
-                int cost= p->getCost(i)->getAmount();
-                incResourceAmount(rt, cost);
-		    }
-        }
-    }
+
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
+	}
+
+	if(ignoreResourceCosts == false) {
+		//decrease resources
+		for(int i=0; i<p->getCostCount(); ++i) {
+			const ResourceType *rt= p->getCost(i)->getType();
+			assert(rt != NULL);
+			if(rt->getClass() == rcStatic) {
+				if(rt->getRecoup_cost() == true) {
+					int cost= p->getCost(i)->getAmount();
+					incResourceAmount(rt, cost);
+				}
+			}
+		}
+	}
 }
 
 //deapply static costs, but not negative costs, for when building gets killed
-void Faction::deApplyStaticConsumption(const ProducibleType *p)
-{
+void Faction::deApplyStaticConsumption(const ProducibleType *p,const CommandType *ct) {
 	assert(p != NULL);
-    //decrease resources
-	for(int i=0; i<p->getCostCount(); ++i)
-	{
-		const ResourceType *rt= p->getCost(i)->getType();
-		assert(rt != NULL);
-		if(rt->getClass() == rcStatic)
-		{
-            int cost= p->getCost(i)->getAmount();
-			if(cost>0)
-			{
-				incResourceAmount(rt, cost);
+
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
+	}
+
+	if(ignoreResourceCosts == false) {
+		//decrease resources
+		for(int i=0; i<p->getCostCount(); ++i) {
+			const ResourceType *rt= p->getCost(i)->getType();
+			assert(rt != NULL);
+			if(rt->getClass() == rcStatic) {
+				int cost= p->getCost(i)->getAmount();
+				if(cost > 0) {
+					incResourceAmount(rt, cost);
+				}
 			}
-        }
-    }
+		}
+	}
 }
 
 //apply resource on interval (cosumable resouces)
@@ -852,7 +1144,7 @@ void Faction::applyCostsOnInterval(const ResourceType *rtApply) {
 				// Apply consequences to consumer units of this resource type
 				std::vector<Unit *> &resourceConsumers = iter->second.second;
 
-				for(int i = 0; i < resourceConsumers.size(); ++i) {
+				for(int i = 0; i < (int)resourceConsumers.size(); ++i) {
 					Unit *unit = resourceConsumers[i];
 
 					//decrease unit hp
@@ -860,7 +1152,7 @@ void Faction::applyCostsOnInterval(const ResourceType *rtApply) {
 						bool decHpResult = unit->decHp(unit->getType()->getMaxHp() / 3);
 						if(decHpResult) {
 							unit->setCauseOfDeath(ucodStarvedResource);
-							world->getStats()->die(unit->getFactionIndex());
+							world->getStats()->die(unit->getFactionIndex(),unit->getType()->getCountUnitDeathInStats());
 							scriptManager->onUnitDied(unit);
 						}
 						StaticSound *sound= unit->getType()->getFirstStOfClass(scDie)->getSound();
@@ -875,19 +1167,31 @@ void Faction::applyCostsOnInterval(const ResourceType *rtApply) {
 	}
 }
 
-bool Faction::checkCosts(const ProducibleType *pt){
+bool Faction::checkCosts(const ProducibleType *pt,const CommandType *ct) {
 	assert(pt != NULL);
-	//for each unit cost check if enough resources
-	for(int i=0; i<pt->getCostCount(); ++i){
-		const ResourceType *rt= pt->getCost(i)->getType();
-		int cost= pt->getCost(i)->getAmount();
-		if(cost > 0) {
-			int available= getResource(rt)->getAmount();
-			if(cost > available){
-				return false;
+
+	bool ignoreResourceCosts = false;
+	if(ct != NULL && ct->getClass() == ccMorph) {
+		const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
+		if(mct != NULL) {
+			ignoreResourceCosts = mct->getIgnoreResourceRequirements();
+		}
+		//printf("Checking costs = %d for commandtype:\n%s\n",ignoreResourceCosts,mct->getDesc(NULL).c_str());
+	}
+
+	if(ignoreResourceCosts == false) {
+		//for each unit cost check if enough resources
+		for(int i = 0; i < pt->getCostCount(); ++i) {
+			const ResourceType *rt= pt->getCost(i)->getType();
+			int cost= pt->getCost(i)->getAmount();
+			if(cost > 0) {
+				int available= getResource(rt)->getAmount();
+				if(cost > available){
+					return false;
+				}
 			}
 		}
-    }
+	}
 
 	return true;
 }
@@ -896,13 +1200,14 @@ bool Faction::checkCosts(const ProducibleType *pt){
 
 bool Faction::isAlly(const Faction *faction) {
 	assert(faction != NULL);
-	return teamIndex==faction->getTeam();
+	return (teamIndex == faction->getTeam() ||
+			faction->getTeam() == GameConstants::maxPlayers -1 + fpt_Observer);
 }
 
 // ================== misc ==================
 
 void Faction::incResourceAmount(const ResourceType *rt, int amount) {
-	for(int i=0; i<resources.size(); ++i) {
+	for(int i=0; i < (int)resources.size(); ++i) {
 		Resource *r= &resources[i];
 		if(r->getType()==rt) {
 			r->setAmount(r->getAmount()+amount);
@@ -916,7 +1221,7 @@ void Faction::incResourceAmount(const ResourceType *rt, int amount) {
 }
 
 void Faction::setResourceBalance(const ResourceType *rt, int balance){
-	for(int i=0; i<resources.size(); ++i){
+	for(int i=0; i < (int)resources.size(); ++i){
 		Resource *r= &resources[i];
 		if(r->getType()==rt){
 			r->setBalance(balance);
@@ -946,7 +1251,7 @@ void Faction::removeUnit(Unit *unit){
 	assert(units.size()==unitMap.size());
 
 	int unitId = unit->getId();
-	for(int i=0; i<units.size(); ++i) {
+	for(int i=0; i < (int)units.size(); ++i) {
 		if(units[i]->getId() == unitId) {
 			units.erase(units.begin()+i);
 			unitMap.erase(unitId);
@@ -955,18 +1260,29 @@ void Faction::removeUnit(Unit *unit){
 		}
 	}
 
-	throw runtime_error("Could not remove unit from faction!");
-	assert(false);
+	throw megaglest_runtime_error("Could not remove unit from faction!");
+	//assert(false);
 }
 
-void Faction::addStore(const UnitType *unitType){
+void Faction::addStore(const UnitType *unitType, bool replaceStorage) {
 	assert(unitType != NULL);
-	for(int i=0; i<unitType->getStoredResourceCount(); ++i){
-		const Resource *r= unitType->getStoredResource(i);
-		for(int j=0; j<store.size(); ++j){
-			Resource *storedResource= &store[j];
-			if(storedResource->getType() == r->getType()){
-				storedResource->setAmount(storedResource->getAmount() + r->getAmount());
+	for(int newUnitStoredResourceIndex = 0;
+			newUnitStoredResourceIndex < unitType->getStoredResourceCount();
+			++newUnitStoredResourceIndex) {
+		const Resource *newUnitStoredResource = unitType->getStoredResource(newUnitStoredResourceIndex);
+
+		for(int currentStoredResourceIndex = 0;
+				currentStoredResourceIndex < (int)store.size();
+				++currentStoredResourceIndex) {
+			Resource *storedResource= &store[currentStoredResourceIndex];
+
+			if(storedResource->getType() == newUnitStoredResource->getType()) {
+				if(replaceStorage == true) {
+					storedResource->setAmount(newUnitStoredResource->getAmount());
+				}
+				else {
+					storedResource->setAmount(storedResource->getAmount() + newUnitStoredResource->getAmount());
+				}
 			}
 		}
 	}
@@ -976,7 +1292,7 @@ void Faction::removeStore(const UnitType *unitType){
 	assert(unitType != NULL);
 	for(int i=0; i<unitType->getStoredResourceCount(); ++i){
 		const Resource *r= unitType->getStoredResource(i);
-		for(int j=0; j<store.size(); ++j){
+		for(int j=0; j < (int)store.size(); ++j){
 			Resource *storedResource= &store[j];
 			if(storedResource->getType() == r->getType()){
 				storedResource->setAmount(storedResource->getAmount() - r->getAmount());
@@ -987,7 +1303,7 @@ void Faction::removeStore(const UnitType *unitType){
 }
 
 void Faction::limitResourcesToStore() {
-	for(int i=0; i<resources.size(); ++i) {
+	for(int i=0; i < (int)resources.size(); ++i) {
 		Resource *r= &resources[i];
 		Resource *s= &store[i];
 		if(r->getType()->getClass() != rcStatic && r->getAmount()>s->getAmount()) {
@@ -997,7 +1313,7 @@ void Faction::limitResourcesToStore() {
 }
 
 void Faction::resetResourceAmount(const ResourceType *rt){
-	for(int i=0; i<resources.size(); ++i){
+	for(int i=0; i < (int)resources.size(); ++i){
 		if(resources[i].getType()==rt){
 			resources[i].setAmount(0);
 			return;
@@ -1033,8 +1349,8 @@ void Faction::addResourceTargetToCache(const Vec2i &pos,bool incrementUseCounter
 			cacheResourceTargetList[pos] = 1;
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
-				char szBuf[4096]="";
-				sprintf(szBuf,"[addResourceTargetToCache] pos [%s]cacheResourceTargetList.size() [%ld]",
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"[addResourceTargetToCache] pos [%s]cacheResourceTargetList.size() [" MG_SIZE_T_SPECIFIER "]",
 								pos.getString().c_str(),cacheResourceTargetList.size());
 
 				//unit->logSynchData(szBuf);
@@ -1056,8 +1372,8 @@ void Faction::removeResourceTargetFromCache(const Vec2i &pos) {
 				cacheResourceTargetList.erase(pos);
 
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
-					char szBuf[4096]="";
-					sprintf(szBuf,"[removeResourceTargetFromCache] pos [%s]cacheResourceTargetList.size() [%ld]",
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[removeResourceTargetFromCache] pos [%s]cacheResourceTargetList.size() [" MG_SIZE_T_SPECIFIER "]",
 									pos.getString().c_str(),cacheResourceTargetList.size());
 
 					//unit->logSynchData(szBuf);
@@ -1097,11 +1413,24 @@ void Faction::addCloseResourceTargetToCache(const Vec2i &pos) {
 	}
 }
 
-Vec2i Faction::getClosestResourceTypeTargetFromCache(Unit *unit, const ResourceType *type) {
+Vec2i Faction::getClosestResourceTypeTargetFromCache(Unit *unit, const ResourceType *type, int frameIndex) {
 	Vec2i result(-1);
 
 	if(cachingDisabled == false) {
 		if(cacheResourceTargetList.empty() == false) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"cacheResourceTargetList.size() [" MG_SIZE_T_SPECIFIER "]",cacheResourceTargetList.size());
+
+				if(frameIndex < 0) {
+					unit->logSynchData(__FILE__,__LINE__,szBuf);
+				}
+				else {
+					unit->logSynchDataThreaded(__FILE__,__LINE__,szBuf);
+				}
+			}
+
+
 			std::vector<Vec2i> deleteList;
 
 			const int harvestDistance = 5;
@@ -1200,14 +1529,19 @@ Vec2i Faction::getClosestResourceTypeTargetFromCache(Unit *unit, const ResourceT
 
 			if(deleteList.empty() == false) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
-					char szBuf[4096]="";
-								sprintf(szBuf,"[cleaning old resource targets] deleteList.size() [%ld] cacheResourceTargetList.size() [%ld] result [%s]",
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[cleaning old resource targets] deleteList.size() [" MG_SIZE_T_SPECIFIER "] cacheResourceTargetList.size() [" MG_SIZE_T_SPECIFIER "] result [%s]",
 										deleteList.size(),cacheResourceTargetList.size(),result.getString().c_str());
 
-					unit->logSynchData(__FILE__,__LINE__,szBuf);
+					if(frameIndex < 0) {
+						unit->logSynchData(__FILE__,__LINE__,szBuf);
+					}
+					else {
+						unit->logSynchDataThreaded(__FILE__,__LINE__,szBuf);
+					}
 				}
 
-				cleanupResourceTypeTargetCache(&deleteList);
+				cleanupResourceTypeTargetCache(&deleteList,frameIndex);
 			}
 		}
 	}
@@ -1310,26 +1644,13 @@ Vec2i Faction::getClosestResourceTypeTargetFromCache(const Vec2i &pos, const Res
 					//}
 				}
 			}
-
-		  	//char szBuf[4096]="";
-		  	//sprintf(szBuf,"[%s::%s Line: %d] [looking for resource targets] result [%s] deleteList.size() [%ld] cacheResourceTargetList.size() [%ld] foundCloseResource [%d]",
-			//	    			__FILE__,__FUNCTION__,__LINE__,result.getString().c_str(),deleteList.size(),cacheResourceTargetList.size(),foundCloseResource);
-
-		    //unit->logSynchData(szBuf);
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"----------------------------------- START [%d] ------------------------------------------------\n",getFrameCount());
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s",szBuf);
-			//SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"------------------------------------ END [%d] -------------------------------------------------\n",getFrameCount());
-
-			//if(deleteList.empty() == false) {
-			//	cleanupResourceTypeTargetCache(&deleteList);
-			//}
 		}
 	}
 
 	return result;
 }
 
-void Faction::cleanupResourceTypeTargetCache(std::vector<Vec2i> *deleteListPtr) {
+void Faction::cleanupResourceTypeTargetCache(std::vector<Vec2i> *deleteListPtr,int frameIndex) {
 	if(cachingDisabled == false) {
 		if(cacheResourceTargetList.empty() == false) {
 			const int cleanupInterval = (GameConstants::updateFps * 5);
@@ -1360,17 +1681,33 @@ void Faction::cleanupResourceTypeTargetCache(std::vector<Vec2i> *deleteListPtr) 
 
 				if(deleteList.empty() == false) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
-						char szBuf[4096]="";
-									sprintf(szBuf,"[cleaning old resource targets] deleteList.size() [%ld] cacheResourceTargetList.size() [%ld], needToCleanup [%d]",
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"[cleaning old resource targets] deleteList.size() [" MG_SIZE_T_SPECIFIER "] cacheResourceTargetList.size() [" MG_SIZE_T_SPECIFIER "], needToCleanup [%d]",
 											deleteList.size(),cacheResourceTargetList.size(),needToCleanup);
 						//unit->logSynchData(szBuf);
-						SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"----------------------------------- START [%d] ------------------------------------------------\n",getFrameCount());
-						SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"[%s::%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
-						SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s\n",szBuf);
-						SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"------------------------------------ END [%d] -------------------------------------------------\n",getFrameCount());
+
+						char szBuf1[8096]="";
+						snprintf(szBuf1,8096,"----------------------------------- START [%d] ------------------------------------------------\n",getFrameCount());
+						string logDataText = szBuf1;
+
+						snprintf(szBuf1,8096,"[%s::%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
+						logDataText += szBuf1;
+
+						snprintf(szBuf1,8096,"%s\n",szBuf);
+						logDataText += szBuf1;
+
+						snprintf(szBuf1,8096,"------------------------------------ END [%d] -------------------------------------------------\n",getFrameCount());
+						logDataText += szBuf1;
+
+						if(frameIndex < 0) {
+							SystemFlags::OutputDebug(SystemFlags::debugWorldSynch,"%s",logDataText.c_str());
+						}
+						else {
+							addWorldSynchThreadedLogList(logDataText);
+						}
 					}
 
-					for(int i = 0; i < deleteList.size(); ++i) {
+					for(int i = 0; i < (int)deleteList.size(); ++i) {
 						Vec2i &cache = deleteList[i];
 						cacheResourceTargetList.erase(cache);
 					}
@@ -1548,7 +1885,7 @@ Unit * Faction::findClosestUnitWithSkillClass(	const Vec2i &pos,const CommandCla
 			if(isUnitPossibleCandidate == true && skillClassList.empty() == false) {
 				isUnitPossibleCandidate = false;
 
-				for(int j = 0; j < skillClassList.size(); ++j) {
+				for(int j = 0; j < (int)skillClassList.size(); ++j) {
 					SkillClass skValue = skillClassList[j];
 					if(curUnit->getCurrSkill()->getClass() == skValue) {
 						isUnitPossibleCandidate = true;
@@ -1626,7 +1963,7 @@ bool Faction::canCreateUnit(const UnitType *ut, bool checkBuild, bool checkProdu
 
 						if( produceUnit != NULL &&
 							ut->getId() != unitType2->getId() &&
-							ut->getName() == produceUnit->getName()) {
+							ut->getName(false) == produceUnit->getName(false)) {
 							 foundUnit = true;
 							 break;
 						}
@@ -1635,27 +1972,31 @@ bool Faction::canCreateUnit(const UnitType *ut, bool checkBuild, bool checkProdu
 				// Check if this is a build command
 				else if(checkBuild == true && cmdType->getClass() == ccBuild) {
 					const BuildCommandType *build = dynamic_cast<const BuildCommandType *>(cmdType);
-					for(int k = 0; k < build->getBuildingCount() && foundUnit == false; ++k) {
-						const UnitType *buildUnit = build->getBuilding(k);
+					if(build != NULL) {
+						for(int k = 0; k < build->getBuildingCount() && foundUnit == false; ++k) {
+							const UnitType *buildUnit = build->getBuilding(k);
 
-						if( buildUnit != NULL &&
-							ut->getId() != unitType2->getId() &&
-							ut->getName() == buildUnit->getName()) {
-							 foundUnit = true;
-							 break;
+							if( buildUnit != NULL &&
+								ut->getId() != unitType2->getId() &&
+								ut->getName(false) == buildUnit->getName(false)) {
+								 foundUnit = true;
+								 break;
+							}
 						}
 					}
 				}
 				// Check if this is a morph command
 				else if(checkMorph == true && cmdType->getClass() == ccMorph) {
 					const MorphCommandType *morph = dynamic_cast<const MorphCommandType *>(cmdType);
-					const UnitType *morphUnit = morph->getMorphUnit();
+					if(morph != NULL) {
+						const UnitType *morphUnit = morph->getMorphUnit();
 
-					if( morphUnit != NULL &&
-						ut->getId() != unitType2->getId() &&
-						ut->getName() == morphUnit->getName()) {
-						 foundUnit = true;
-						 break;
+						if( morphUnit != NULL &&
+							ut->getId() != unitType2->getId() &&
+							ut->getName(false) == morphUnit->getName(false)) {
+							 foundUnit = true;
+							 break;
+						}
 					}
 				}
 			}
@@ -1665,19 +2006,49 @@ bool Faction::canCreateUnit(const UnitType *ut, bool checkBuild, bool checkProdu
 	return foundUnit;
 }
 
-uint64 Faction::getCacheKBytes(uint64 *cache1Size, uint64 *cache2Size) {
+void Faction::clearCaches() {
+	cacheResourceTargetList.clear();
+	cachedCloseResourceTargetLookupList.clear();
+
+	//aliveUnitListCache.clear();
+	//mobileUnitListCache.clear();
+	//beingBuiltUnitListCache.clear();
+
+	unsigned int unitCount = this->getUnitCount();
+	for(unsigned int i = 0; i < unitCount; ++i) {
+		Unit *unit = this->getUnit(i);
+		if(unit != NULL) {
+			unit->clearCaches();
+		}
+	}
+}
+
+uint64 Faction::getCacheKBytes(uint64 *cache1Size, uint64 *cache2Size, uint64 *cache3Size, uint64 *cache4Size, uint64 *cache5Size) {
 	uint64 cache1Count = 0;
 	uint64 cache2Count = 0;
+	uint64 cache3Count = 0;
+	uint64 cache4Count = 0;
+	uint64 cache5Count = 0;
 
-	//std::map<Vec2i,int> cacheResourceTargetList;
 	for(std::map<Vec2i,int>::iterator iterMap1 = cacheResourceTargetList.begin();
 		iterMap1 != cacheResourceTargetList.end(); ++iterMap1) {
 		cache1Count++;
 	}
-	//std::map<Vec2i,bool> cachedCloseResourceTargetLookupList;
 	for(std::map<Vec2i,bool>::iterator iterMap1 = cachedCloseResourceTargetLookupList.begin();
 		iterMap1 != cachedCloseResourceTargetLookupList.end(); ++iterMap1) {
 		cache2Count++;
+	}
+	for(std::map<int,const Unit *>::iterator iterMap1 = aliveUnitListCache.begin();
+		iterMap1 != aliveUnitListCache.end(); ++iterMap1) {
+		cache3Count++;
+	}
+	for(std::map<int,const Unit *>::iterator iterMap1 = mobileUnitListCache.begin();
+		iterMap1 != mobileUnitListCache.end(); ++iterMap1) {
+		cache4Count++;
+	}
+	for(std::map<int,const Unit *>::iterator iterMap1 = beingBuiltUnitListCache.begin();
+		iterMap1 != beingBuiltUnitListCache.end(); ++iterMap1) {
+		cache5Count++;
 	}
 
 	if(cache1Size) {
@@ -1686,9 +2057,21 @@ uint64 Faction::getCacheKBytes(uint64 *cache1Size, uint64 *cache2Size) {
 	if(cache2Size) {
 		*cache2Size = cache2Count;
 	}
+	if(cache3Size) {
+		*cache3Size = cache3Count;
+	}
+	if(cache4Size) {
+		*cache4Size = cache4Count;
+	}
+	if(cache5Size) {
+		*cache5Size = cache5Count;
+	}
 
 	uint64 totalBytes = cache1Count * sizeof(int);
 	totalBytes += cache2Count * sizeof(bool);
+	totalBytes += cache3Count * (sizeof(int) + sizeof(const Unit *));
+	totalBytes += cache4Count * (sizeof(int) + sizeof(const Unit *));
+	totalBytes += cache5Count * (sizeof(int) + sizeof(const Unit *));
 
 	totalBytes /= 1000;
 
@@ -1701,12 +2084,10 @@ string Faction::getCacheStats() {
 	int cache1Count = 0;
 	int cache2Count = 0;
 
-	//std::map<Vec2i,int> cacheResourceTargetList;
 	for(std::map<Vec2i,int>::iterator iterMap1 = cacheResourceTargetList.begin();
 		iterMap1 != cacheResourceTargetList.end(); ++iterMap1) {
 		cache1Count++;
 	}
-	//std::map<Vec2i,bool> cachedCloseResourceTargetLookupList;
 	for(std::map<Vec2i,bool>::iterator iterMap1 = cachedCloseResourceTargetLookupList.begin();
 		iterMap1 != cachedCloseResourceTargetLookupList.end(); ++iterMap1) {
 		cache2Count++;
@@ -1717,20 +2098,20 @@ string Faction::getCacheStats() {
 
 	totalBytes /= 1000;
 
-	char szBuf[1024]="";
-	sprintf(szBuf,"cache1Count [%d] cache2Count [%d] total KB: %s",cache1Count,cache2Count,formatNumber(totalBytes).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"cache1Count [%d] cache2Count [%d] total KB: %s",cache1Count,cache2Count,formatNumber(totalBytes).c_str());
 	result = szBuf;
 	return result;
 }
 
-std::string Faction::toString() const {
-	std::string result = "";
-
-    result = "FactionIndex = " + intToStr(this->index) + "\n";
+std::string Faction::toString(bool crcMode) const {
+	std::string result = "FactionIndex = " + intToStr(this->index) + "\n";
     result += "teamIndex = " + intToStr(this->teamIndex) + "\n";
     result += "startLocationIndex = " + intToStr(this->startLocationIndex) + "\n";
-    result += "thisFaction = " + intToStr(this->thisFaction) + "\n";
-    result += "control = " + intToStr(this->control) + "\n";
+    if(crcMode == false) {
+    	result += "thisFaction = " + intToStr(this->thisFaction) + "\n";
+    	result += "control = " + intToStr(this->control) + "\n";
+    }
 
     if(this->factionType != NULL) {
     	result += this->factionType->toString() + "\n";
@@ -1739,26 +2120,373 @@ std::string Faction::toString() const {
 	result += this->upgradeManager.toString() + "\n";
 
 	result += "ResourceCount = " + intToStr(resources.size()) + "\n";
-	for(int idx = 0; idx < resources.size(); idx ++) {
-		result += "index = " + intToStr(idx) + " " + resources[idx].getDescription() + "\n";
+	for(int idx = 0; idx < (int)resources.size(); idx ++) {
+		result += "index = " + intToStr(idx) + " " + resources[idx].toString() + "\n";
 	}
 
 	result += "StoreCount = " + intToStr(store.size()) + "\n";
-	for(int idx = 0; idx < store.size(); idx ++) {
-		result += "index = " + intToStr(idx) + " " + store[idx].getDescription()  + "\n";
+	for(int idx = 0; idx < (int)store.size(); idx ++) {
+		result += "index = " + intToStr(idx) + " " + store[idx].toString()  + "\n";
 	}
 
 	result += "Allies = " + intToStr(allies.size()) + "\n";
-	for(int idx = 0; idx < allies.size(); idx ++) {
-		result += "index = " + intToStr(idx) + " name: " + allies[idx]->factionType->getName() + " factionindex = " + intToStr(allies[idx]->index)  + "\n";
+	for(int idx = 0; idx < (int)allies.size(); idx ++) {
+		result += "index = " + intToStr(idx) + " name: " + allies[idx]->factionType->getName(false) + " factionindex = " + intToStr(allies[idx]->index)  + "\n";
 	}
 
 	result += "Units = " + intToStr(units.size()) + "\n";
-	for(int idx = 0; idx < units.size(); idx ++) {
-		result += units[idx]->toString() + "\n";
+	for(int idx = 0; idx < (int)units.size(); idx ++) {
+		result += units[idx]->toString(crcMode) + "\n";
 	}
 
 	return result;
+}
+
+void Faction::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *factionNode = rootNode->addChild("Faction");
+
+//	UpgradeManager upgradeManager;
+	upgradeManager.saveGame(factionNode);
+//    Resources resources;
+	for(unsigned int i = 0; i < resources.size(); ++i) {
+		Resource &resource = resources[i];
+		resource.saveGame(factionNode);
+	}
+//    Store store;
+	XmlNode *storeNode = factionNode->addChild("Store");
+	for(unsigned int i = 0; i < store.size(); ++i) {
+		Resource &resource = store[i];
+		resource.saveGame(storeNode);
+	}
+
+//	Allies allies;
+	for(unsigned int i = 0; i < allies.size(); ++i) {
+		Faction *ally = allies[i];
+		XmlNode *allyNode = factionNode->addChild("Ally");
+		allyNode->addAttribute("allyFactionIndex",intToStr(ally->getIndex()), mapTagReplacements);
+	}
+//	Mutex *unitsMutex;
+//	Units units;
+	for(unsigned int i = 0; i < units.size(); ++i) {
+		Unit *unit = units[i];
+		unit->saveGame(factionNode);
+	}
+//	UnitMap unitMap;
+//	World *world;
+//	ScriptManager *scriptManager;
+//
+//    ControlType control;
+	factionNode->addAttribute("control",intToStr(control), mapTagReplacements);
+
+	factionNode->addAttribute("overridePersonalityType",intToStr(overridePersonalityType), mapTagReplacements);
+//	Texture2D *texture;
+//	FactionType *factionType;
+	factionNode->addAttribute("factiontype",factionType->getName(false), mapTagReplacements);
+//	int index;
+	factionNode->addAttribute("index",intToStr(index), mapTagReplacements);
+//	int teamIndex;
+	factionNode->addAttribute("teamIndex",intToStr(teamIndex), mapTagReplacements);
+//	int startLocationIndex;
+	factionNode->addAttribute("startLocationIndex",intToStr(startLocationIndex), mapTagReplacements);
+//	bool thisFaction;
+	factionNode->addAttribute("thisFaction",intToStr(thisFaction), mapTagReplacements);
+//	bool factionDisconnectHandled;
+//
+//	bool cachingDisabled;
+//	std::map<Vec2i,int> cacheResourceTargetList;
+	for(std::map<Vec2i,int>::iterator iterMap = cacheResourceTargetList.begin();
+			iterMap != cacheResourceTargetList.end(); ++iterMap) {
+		XmlNode *cacheResourceTargetListNode = factionNode->addChild("cacheResourceTargetList");
+
+		cacheResourceTargetListNode->addAttribute("key",iterMap->first.getString(), mapTagReplacements);
+		cacheResourceTargetListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+//	std::map<Vec2i,bool> cachedCloseResourceTargetLookupList;
+	for(std::map<Vec2i,bool>::iterator iterMap = cachedCloseResourceTargetLookupList.begin();
+			iterMap != cachedCloseResourceTargetLookupList.end(); ++iterMap) {
+		XmlNode *cachedCloseResourceTargetLookupListNode = factionNode->addChild("cachedCloseResourceTargetLookupList");
+
+		cachedCloseResourceTargetLookupListNode->addAttribute("key",iterMap->first.getString(), mapTagReplacements);
+		cachedCloseResourceTargetLookupListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+//	RandomGen random;
+	factionNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	FactionThread *workerThread;
+//
+//	std::map<int,SwitchTeamVote> switchTeamVotes;
+//	int currentSwitchTeamVoteFactionIndex;
+	factionNode->addAttribute("currentSwitchTeamVoteFactionIndex",intToStr(currentSwitchTeamVoteFactionIndex), mapTagReplacements);
+//	set<int> livingUnits;
+//	set<Unit*> livingUnitsp;
+
+	for(std::map<int,int>::iterator iterMap = unitsMovingList.begin();
+			iterMap != unitsMovingList.end(); ++iterMap) {
+		XmlNode *unitsMovingListNode = factionNode->addChild("unitsMovingList");
+
+		unitsMovingListNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+		unitsMovingListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+
+	for(std::map<int,int>::iterator iterMap = unitsPathfindingList.begin();
+			iterMap != unitsPathfindingList.end(); ++iterMap) {
+		XmlNode *unitsPathfindingListNode = factionNode->addChild("unitsPathfindingList");
+
+		unitsPathfindingListNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+		unitsPathfindingListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+}
+
+void Faction::loadGame(const XmlNode *rootNode, int factionIndex,GameSettings *settings,World *world) {
+	XmlNode *factionNode = NULL;
+	vector<XmlNode *> factionNodeList = rootNode->getChildList("Faction");
+	for(unsigned int i = 0; i < factionNodeList.size(); ++i) {
+		XmlNode *node = factionNodeList[i];
+		if(node->getAttribute("index")->getIntValue() == factionIndex) {
+			factionNode = node;
+			break;
+		}
+	}
+
+	if(factionNode != NULL) {
+		//printf("Loading faction index = %d [%s] [%s]\n",factionIndex,factionType->getName().c_str(),factionNode->getAttribute("factiontype")->getValue().c_str());
+
+		//	Allies allies;
+		allies.clear();
+		vector<XmlNode *> allyNodeList = factionNode->getChildList("Ally");
+		for(unsigned int i = 0; i < allyNodeList.size(); ++i) {
+			XmlNode *allyNode = allyNodeList[i];
+
+			int allyFactionIndex = allyNode->getAttribute("allyFactionIndex")->getIntValue();
+			allies.push_back(world->getFaction(allyFactionIndex));
+		}
+
+		vector<XmlNode *> unitNodeList = factionNode->getChildList("Unit");
+		for(unsigned int i = 0; i < unitNodeList.size(); ++i) {
+			XmlNode *unitNode = unitNodeList[i];
+			Unit *unit = Unit::loadGame(unitNode,settings,this, world);
+			this->addUnit(unit);
+		}
+
+		//description = gameSettingsNode->getAttribute("description")->getValue();
+
+		//resources.resize(techTree->getResourceTypeCount());
+		//store.resize(techTree->getResourceTypeCount());
+
+	//	for(int i=0; i<techTree->getResourceTypeCount(); ++i){
+	//		const ResourceType *rt= techTree->getResourceType(i);
+	//		int resourceAmount= giveResources? factionType->getStartingResourceAmount(rt): 0;
+	//		resources[i].init(rt, resourceAmount);
+	//		store[i].init(rt, 0);
+	//	}
+
+		for(unsigned int i = 0; i < resources.size(); ++i) {
+			Resource &resource = resources[i];
+			resource.loadGame(factionNode,i,techTree);
+		}
+		XmlNode *storeNode = factionNode->getChild("Store");
+		for(unsigned int i = 0; i < store.size(); ++i) {
+			Resource &resource = store[i];
+			resource.loadGame(storeNode,i,techTree);
+		}
+
+		upgradeManager.loadGame(factionNode,this);
+
+		//    ControlType control;
+		control = static_cast<ControlType>(factionNode->getAttribute("control")->getIntValue());
+
+		if(factionNode->hasAttribute("overridePersonalityType") == true) {
+			overridePersonalityType = static_cast<FactionPersonalityType>(factionNode->getAttribute("overridePersonalityType")->getIntValue());
+		}
+
+		//	Texture2D *texture;
+		//	FactionType *factionType;
+		//factionNode->addAttribute("factiontype",factionType->getName(), mapTagReplacements);
+		//	int index;
+		//factionNode->addAttribute("index",intToStr(index), mapTagReplacements);
+		//	int teamIndex;
+		//factionNode->addAttribute("teamIndex",intToStr(teamIndex), mapTagReplacements);
+		teamIndex = factionNode->getAttribute("teamIndex")->getIntValue();
+		//	int startLocationIndex;
+		startLocationIndex = factionNode->getAttribute("startLocationIndex")->getIntValue();
+		//	bool thisFaction;
+		thisFaction = factionNode->getAttribute("thisFaction")->getIntValue() != 0;
+		//	bool factionDisconnectHandled;
+
+		//printf("**LOAD FACTION thisFaction = %d\n",thisFaction);
+
+//		for(std::map<Vec2i,int>::iterator iterMap = cacheResourceTargetList.begin();
+//				iterMap != cacheResourceTargetList.end(); ++iterMap) {
+//			XmlNode *cacheResourceTargetListNode = factionNode->addChild("cacheResourceTargetList");
+//
+//			cacheResourceTargetListNode->addAttribute("key",iterMap->first.getString(), mapTagReplacements);
+//			cacheResourceTargetListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//		}
+//	//	std::map<Vec2i,bool> cachedCloseResourceTargetLookupList;
+//		for(std::map<Vec2i,bool>::iterator iterMap = cachedCloseResourceTargetLookupList.begin();
+//				iterMap != cachedCloseResourceTargetLookupList.end(); ++iterMap) {
+//			XmlNode *cachedCloseResourceTargetLookupListNode = factionNode->addChild("cachedCloseResourceTargetLookupList");
+//
+//			cachedCloseResourceTargetLookupListNode->addAttribute("key",iterMap->first.getString(), mapTagReplacements);
+//			cachedCloseResourceTargetLookupListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//		}
+		vector<XmlNode *> cacheResourceTargetListNodeList = factionNode->getChildList("cacheResourceTargetList");
+		for(unsigned int i = 0; i < cacheResourceTargetListNodeList.size(); ++i) {
+			XmlNode *cacheResourceTargetListNode = cacheResourceTargetListNodeList[i];
+
+			Vec2i vec = Vec2i::strToVec2(cacheResourceTargetListNode->getAttribute("key")->getValue());
+			cacheResourceTargetList[vec] = cacheResourceTargetListNode->getAttribute("value")->getIntValue();
+		}
+		vector<XmlNode *> cachedCloseResourceTargetLookupListNodeList = factionNode->getChildList("cachedCloseResourceTargetLookupList");
+		for(unsigned int i = 0; i < cachedCloseResourceTargetLookupListNodeList.size(); ++i) {
+			XmlNode *cachedCloseResourceTargetLookupListNode = cachedCloseResourceTargetLookupListNodeList[i];
+
+			Vec2i vec = Vec2i::strToVec2(cachedCloseResourceTargetLookupListNode->getAttribute("key")->getValue());
+			cachedCloseResourceTargetLookupList[vec] = cachedCloseResourceTargetLookupListNode->getAttribute("value")->getIntValue() != 0;
+		}
+
+		//	RandomGen random;
+		random.setLastNumber(factionNode->getAttribute("random")->getIntValue());
+
+//		for(std::map<int,int>::iterator iterMap = unitsMovingList.begin();
+//				iterMap != unitsMovingList.end(); ++iterMap) {
+//			XmlNode *unitsMovingListNode = factionNode->addChild("unitsMovingList");
+//
+//			unitsMovingListNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+//			unitsMovingListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//		}
+//
+//		for(std::map<int,int>::iterator iterMap = unitsPathfindingList.begin();
+//				iterMap != unitsPathfindingList.end(); ++iterMap) {
+//			XmlNode *unitsPathfindingListNode = factionNode->addChild("unitsPathfindingList");
+//
+//			unitsPathfindingListNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+//			unitsPathfindingListNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//		}
+
+		vector<XmlNode *> unitsMovingListNodeList = factionNode->getChildList("unitsMovingList");
+		for(unsigned int i = 0; i < unitsMovingListNodeList.size(); ++i) {
+			XmlNode *unitsMovingListNode = unitsMovingListNodeList[i];
+
+			int unitId = unitsMovingListNode->getAttribute("key")->getIntValue();
+			unitsMovingList[unitId] = unitsMovingListNode->getAttribute("value")->getIntValue();
+		}
+		vector<XmlNode *> unitsPathfindingListNodeList = factionNode->getChildList("unitsPathfindingList");
+		for(unsigned int i = 0; i < unitsPathfindingListNodeList.size(); ++i) {
+			XmlNode *unitsPathfindingListNode = unitsPathfindingListNodeList[i];
+
+			int unitId = unitsPathfindingListNode->getAttribute("key")->getIntValue();
+			unitsPathfindingList[unitId] = unitsPathfindingListNode->getAttribute("value")->getIntValue();
+		}
+	}
+}
+
+Checksum Faction::getCRC() {
+	const bool consoleDebug = false;
+
+	Checksum crcForFaction;
+
+	// UpgradeManager upgradeManager;
+
+	for(unsigned int i = 0; i < resources.size(); ++i) {
+		Resource &resource = resources[i];
+		//crcForFaction.addSum(resource.getCRC().getSum());
+		uint32 crc = resource.getCRC().getSum();
+		crcForFaction.addBytes(&crc,sizeof(uint32));
+	}
+
+	if(consoleDebug) {
+		if(getWorld()->getFrameCount() % 40 == 0) {
+			printf("#1 Frame #: %d Faction: %d CRC: %u\n",getWorld()->getFrameCount(),index,crcForFaction.getSum());
+		}
+	}
+
+	for(unsigned int i = 0; i < store.size(); ++i) {
+		Resource &resource = store[i];
+		//crcForFaction.addSum(resource.getCRC().getSum());
+		uint32 crc = resource.getCRC().getSum();
+		crcForFaction.addBytes(&crc,sizeof(uint32));
+	}
+
+	if(consoleDebug) {
+		if(getWorld()->getFrameCount() % 40 == 0) {
+			printf("#2 Frame #: %d Faction: %d CRC: %u\n",getWorld()->getFrameCount(),index,crcForFaction.getSum());
+		}
+	}
+
+	for(unsigned int i = 0; i < units.size(); ++i) {
+		Unit *unit = units[i];
+		//crcForFaction.addSum(unit->getCRC().getSum());
+		uint32 crc = unit->getCRC().getSum();
+		crcForFaction.addBytes(&crc,sizeof(uint32));
+	}
+
+	if(consoleDebug) {
+		if(getWorld()->getFrameCount() % 40 == 0) {
+			printf("#3 Frame #: %d Faction: %d CRC: %u\n",getWorld()->getFrameCount(),index,crcForFaction.getSum());
+		}
+	}
+
+	return crcForFaction;
+}
+
+void Faction::addCRC_DetailsForWorldFrame(int worldFrameCount,bool isNetworkServer) {
+	unsigned int MAX_FRAME_CACHE = 250;
+	if(isNetworkServer == true) {
+		MAX_FRAME_CACHE += 250;
+	}
+	crcWorldFrameDetails[worldFrameCount] = this->toString(true);
+	//if(worldFrameCount <= 0) printf("Adding world frame: %d log entries: %lld\n",worldFrameCount,(long long int)crcWorldFrameDetails.size());
+
+	for(unsigned int i = 0; i < units.size(); ++i) {
+		Unit *unit = units[i];
+
+		unit->getRandom()->clearLastCaller();
+		unit->clearNetworkCRCDecHpList();
+		unit->clearParticleInfo();
+	}
+
+	if((unsigned int)crcWorldFrameDetails.size() > MAX_FRAME_CACHE) {
+		//printf("===> Removing older world frame log entries: %lld\n",(long long int)crcWorldFrameDetails.size());
+
+		for(;(unsigned int)crcWorldFrameDetails.size() - MAX_FRAME_CACHE > 0;) {
+			crcWorldFrameDetails.erase(crcWorldFrameDetails.begin());
+		}
+	}
+}
+
+string Faction::getCRC_DetailsForWorldFrame(int worldFrameCount) {
+	if(crcWorldFrameDetails.empty()) {
+		return "";
+	}
+	return crcWorldFrameDetails[worldFrameCount];
+}
+
+std::pair<int,string> Faction::getCRC_DetailsForWorldFrameIndex(int worldFrameIndex) const {
+	if(crcWorldFrameDetails.empty()) {
+		return make_pair<int,string>(0,"");
+	}
+	std::map<int,string>::const_iterator iterMap = crcWorldFrameDetails.begin();
+	std::advance( iterMap, worldFrameIndex );
+	if(iterMap == crcWorldFrameDetails.end()) {
+		return make_pair<int,string>(0,"");
+	}
+	return std::pair<int,string>(iterMap->first,iterMap->second);
+}
+
+string Faction::getCRC_DetailsForWorldFrames() const {
+	string result = "";
+	for(std::map<int,string>::const_iterator iterMap = crcWorldFrameDetails.begin();
+			iterMap != crcWorldFrameDetails.end(); ++iterMap) {
+		result += string("============================================================================\n");
+		result += string("** world frame: ") + intToStr(iterMap->first) + string(" detail: ") + iterMap->second;
+	}
+	return result;
+}
+
+uint64 Faction::getCRC_DetailsForWorldFrameCount() const {
+	return crcWorldFrameDetails.size();
 }
 
 }}//end namespace

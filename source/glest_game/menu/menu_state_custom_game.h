@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -20,10 +20,15 @@
 
 using namespace Shared::Map;
 
+namespace Shared { namespace Graphics {
+	class VideoPlayer;
+}}
+
 namespace Glest { namespace Game {
 
 class SwitchSetupRequest;
 class ServerInterface;
+class TechTree;
 
 enum ParentMenuState {
 	pNewGame,
@@ -51,9 +56,9 @@ private:
 	GraphicLabel labelMapInfo;
 	//GraphicLabel labelEnableObserverMode;
 	//GraphicLabel labelEnableServerControlledAI;
+	GraphicLabel labelLocalGameVersion;
 	GraphicLabel labelLocalIP;
 	GraphicLabel labelGameName;
-	GraphicLabel labelGameNameLabel;
 
 	GraphicListBox listBoxMap;
 	GraphicListBox listBoxFogOfWar;
@@ -81,7 +86,8 @@ private:
 	GraphicButton buttonClearBlockedPlayers;
 
 	GraphicLabel labelPublishServer;
-	GraphicListBox listBoxPublishServer;
+	//GraphicListBox listBoxPublishServer;
+	GraphicCheckBox checkBoxPublishServer;
 
 	GraphicMessageBox mainMessageBox;
 	int mainMessageBoxState;
@@ -90,19 +96,22 @@ private:
 	//GraphicLabel labelNetworkFramePeriod;
 
 	GraphicLabel labelNetworkPauseGameForLaggedClients;
-	GraphicListBox listBoxNetworkPauseGameForLaggedClients;
+	//GraphicListBox listBoxNetworkPauseGameForLaggedClients;
+	GraphicCheckBox checkBoxNetworkPauseGameForLaggedClients;
 
-	GraphicLabel labelPathFinderType;
-	GraphicListBox listBoxPathFinderType;
+	//GraphicLabel labelPathFinderType;
+	//GraphicListBox listBoxPathFinderType;
 
 	GraphicLabel labelMapFilter;
 	GraphicListBox listBoxMapFilter;
 
 	GraphicLabel labelAdvanced;
-	GraphicListBox listBoxAdvanced;
+	//GraphicListBox listBoxAdvanced;
+	GraphicCheckBox checkBoxAdvanced;
 
 	GraphicLabel labelAllowObservers;
-	GraphicListBox listBoxAllowObservers;
+	//GraphicListBox listBoxAllowObservers;
+	GraphicCheckBox checkBoxAllowObservers;
 
 	GraphicLabel *activeInputLabel;
 
@@ -110,9 +119,31 @@ private:
 	GraphicListBox listBoxPlayerStatus;
 
 	GraphicLabel labelEnableSwitchTeamMode;
-	GraphicListBox listBoxEnableSwitchTeamMode;
+	//GraphicListBox listBoxEnableSwitchTeamMode;
+	GraphicCheckBox checkBoxEnableSwitchTeamMode;
+
 	GraphicLabel labelAISwitchTeamAcceptPercent;
 	GraphicListBox listBoxAISwitchTeamAcceptPercent;
+	GraphicLabel labelFallbackCpuMultiplier;
+	GraphicListBox listBoxFallbackCpuMultiplier;
+
+	GraphicLabel labelAllowInGameJoinPlayer;
+	GraphicCheckBox checkBoxAllowInGameJoinPlayer;
+
+	GraphicLabel labelAllowNativeLanguageTechtree;
+	GraphicCheckBox checkBoxAllowNativeLanguageTechtree;
+
+	GraphicCheckBox checkBoxScenario;
+	GraphicLabel labelScenario;
+	GraphicListBox listBoxScenario;
+	vector<string> scenarioFiles;
+    ScenarioInfo scenarioInfo;
+	vector<string> dirList;
+	string autoloadScenarioName;
+	time_t previewLoadDelayTimer;
+	bool needToLoadTextures;
+	bool enableScenarioTexturePreview;
+	Texture2D *scenarioLogoTexture;
 
 	bool needToSetChangedGameSettings;
 	time_t lastSetChangedGameSettings;
@@ -125,10 +156,12 @@ private:
 	bool needToBroadcastServerSettings;
 	std::map<string,string> publishToServerInfo;
 	SimpleTaskThread *publishToMasterserverThread;
+	SimpleTaskThread *publishToClientsThread;
 
 	ParentMenuState parentMenuState;
 	int soundConnectionCount;
 
+	time_t tMasterserverErrorElapsed;
 	bool showMasterserverError;
 	string masterServererErrorToShow;
 
@@ -154,9 +187,16 @@ private:
 	string currentFactionName_factionPreview;
 	string currentFactionLogo;
 	Texture2D *factionTexture;
+	::Shared::Graphics::VideoPlayer *factionVideo;
+	bool factionVideoSwitchedOffVolume;
 
 	MapPreview mapPreview;
 	Texture2D *mapPreviewTexture;
+	bool zoomedMap;
+	int render_mapPreviewTexture_X;
+	int render_mapPreviewTexture_Y;
+	int render_mapPreviewTexture_W;
+	int render_mapPreviewTexture_H;
 
 	bool autostart;
 	GameSettings *autoStartSettings;
@@ -168,20 +208,29 @@ private:
     string lastCheckedCRCTilesetName;
     string lastCheckedCRCTechtreeName;
     string lastCheckedCRCMapName;
-    int32 lastCheckedCRCTilesetValue;
-    int32 lastCheckedCRCTechtreeValue;
-    int32 lastCheckedCRCMapValue;
-    vector<pair<string,int32> > factionCRCList;
+
+    string last_Forced_CheckedCRCTilesetName;
+    string last_Forced_CheckedCRCTechtreeName;
+    string last_Forced_CheckedCRCMapName;
+
+    uint32 lastCheckedCRCTilesetValue;
+    uint32 lastCheckedCRCTechtreeValue;
+    uint32 lastCheckedCRCMapValue;
+    vector<pair<string,uint32> > factionCRCList;
 
     bool forceWaitForShutdown;
-    bool masterserverMode;
+    bool headlessServerMode;
     bool masterserverModeMinimalResources;
     int lastMasterServerSettingsUpdateCount;
 
+    std::auto_ptr<TechTree> techTree;
+
+    string gameUUID;
 public:
 	MenuStateCustomGame(Program *program, MainMenu *mainMenu ,
 			bool openNetworkSlots= false, ParentMenuState parentMenuState=pNewGame,
-			bool autostart=false,GameSettings *settings=NULL,bool masterserverMode=false);
+			bool autostart=false,GameSettings *settings=NULL,bool masterserverMode=false,
+			string autoloadScenarioName="");
 	virtual ~MenuStateCustomGame();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
@@ -194,13 +243,16 @@ public:
     virtual void keyUp(SDL_KeyboardEvent key);
 
 
-    virtual void simpleTask(BaseThread *callingThread);
-	virtual void setupTask(BaseThread *callingThread);
-	virtual void shutdownTask(BaseThread *callingThread);
+    virtual void simpleTask(BaseThread *callingThread,void *userdata);
+	virtual void setupTask(BaseThread *callingThread,void *userdata);
+	virtual void shutdownTask(BaseThread *callingThread,void *userdata);
+	static void setupTaskStatic(BaseThread *callingThread);
+	static void shutdownTaskStatic(BaseThread *callingThread);
 
     virtual bool isInSpecialKeyCaptureEvent();
     virtual bool isMasterserverMode() const;
 
+    virtual bool isVideoPlaying();
 private:
 
     bool hasNetworkGameSettings();
@@ -208,7 +260,6 @@ private:
 	void loadMapInfo(string file, MapInfo *mapInfo,bool loadMapPreview);
 	void cleanupMapPreviewTexture();
 
-	void reloadFactions(bool keepExistingSelectedItem);
 	void updateControlers();
 	void closeUnusedSlots();
 	void updateNetworkSlots();
@@ -221,12 +272,13 @@ private:
 	void updateAllResourceMultiplier();
 	void updateResourceMultiplier(const int index);
 	string getCurrentMapFile();
-	GameSettings loadGameSettingsFromFile(std::string fileName);
 	void setActiveInputLabel(GraphicLabel *newLable);
 	string getHumanPlayerName(int index=-1);
 
 	void loadFactionTexture(string filepath);
 
+	GameSettings loadGameSettingsFromFile(std::string fileName);
+	void loadGameSettings(std::string fileName);
 	void RestoreLastGameSettings();
 	void PlayNow(bool saveGame);
 
@@ -241,6 +293,22 @@ private:
 			bool onlyNetworkUnassigned);
 
 	void reloadUI();
+	void loadScenarioInfo(string file, ScenarioInfo *scenarioInfo);
+	void processScenario();
+	void SetupUIForScenarios();
+	int setupMapList(string scenario);
+	int setupTechList(string scenario, bool forceLoad=false);
+	void reloadFactions(bool keepExistingSelectedItem, string scenario);
+	void setupTilesetList(string scenario);
+	void setSlotHuman(int i);
+
+	void initFactionPreview(const GameSettings *gameSettings);
+
+	bool checkNetworkPlayerDataSynch(bool checkMapCRC,bool checkTileSetCRC, bool checkTechTreeCRC);
+
+	void cleanupThread(SimpleTaskThread **thread);
+	void simpleTaskForMasterServer(BaseThread *callingThread);
+	void simpleTaskForClients(BaseThread *callingThread);
 };
 
 }}//end namespace

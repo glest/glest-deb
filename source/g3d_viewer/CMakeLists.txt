@@ -83,6 +83,7 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 	    ${GLEST_LIB_INCLUDE_ROOT}map
 	    ${GLEST_LIB_INCLUDE_ROOT}sound
 	    ${GLEST_LIB_INCLUDE_ROOT}xml
+            ${GLEST_LIB_INCLUDE_ROOT}xml/rapidxml
 	    ${GLEST_MAIN_INCLUDE_ROOT}facilities
 	    ${GLEST_MAIN_INCLUDE_ROOT}graphics
 	    ${GLEST_MAIN_INCLUDE_ROOT}game
@@ -124,12 +125,21 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 			ENDIF(APPLE)
 	ENDFOREACH(DIR)
 	
+        OPTION(WANT_DEV_OUTPATH "use developer friendly output paths" OFF)
+        IF(WANT_DEV_OUTPATH)
+	        IF(UNIX AND NOT APPLE)
+		        SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/mk/linux/)
+	        ELSE()
+		        SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/data/glest_game/)
+	        ENDIF()
+        ENDIF()
 
-	IF(UNIX AND NOT APPLE)
-		SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/mk/linux)
-	ELSE()
-		SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/data/glest_game)
-	ENDIF()
+        SET(HELP2MAN_OUT_PATH ${EXECUTABLE_OUTPUT_PATH})
+        IF("${EXECUTABLE_OUTPUT_PATH}" STREQUAL "")
+                SET(HELP2MAN_OUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/")
+        ENDIF()
+
+        MESSAGE(STATUS "***Note: The final output path for Megaglest G3d Viewer will be [${HELP2MAN_OUT_PATH}]")
 
 	FIND_PROGRAM(HELP2MAN "help2man")
 
@@ -149,7 +159,7 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 	TARGET_LINK_LIBRARIES(${TARGET_NAME} ${EXTERNAL_LIBS})
 
 	IF(EXISTS ${HELP2MAN})
-		MESSAGE("***-- Found help2man: ${HELP2MAN} about to build manpage in [${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE}]")
+		MESSAGE("***-- Found help2man: ${HELP2MAN} about to build manpage in [${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE}]")
 
                 SET(MG_MANPAGE_DESCRIPTION "G3D Model editor for the popular 3D realtime stragegy game")
 
@@ -157,42 +167,45 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER)
 			MESSAGE("***-- Found xvfb-run: ${XVFB_EXEC} about to build manpage with it.")
 
 		  	add_custom_target(${TARGET_NAME_MANPAGE} ALL
-		    		COMMAND ${XVFB_EXEC} --auto-servernum --server-num=770 ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE} ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}
+		    		COMMAND ${XVFB_EXEC} --auto-servernum --server-num=770 ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE} ${HELP2MAN_OUT_PATH}${TARGET_NAME}
 		    	DEPENDS ${TARGET_NAME})
 		ELSE()
 		  	add_custom_target(${TARGET_NAME_MANPAGE} ALL
-		    		COMMAND ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE} ${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME}
+		    		COMMAND ${HELP2MAN} --name='${MG_MANPAGE_DESCRIPTION}' --section=6 -N -o ${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE} ${HELP2MAN_OUT_PATH}${TARGET_NAME}
 		    	DEPENDS ${TARGET_NAME})
 		ENDIF()
 	ENDIF()
-ENDIF()
 
-# Requires an install prefix for the items below to work
-IF(NOT CMAKE_INSTALL_PREFIX STREQUAL "")
-	# Installation of the program
-	INSTALL(TARGETS 
-		${TARGET_NAME} 
-		DESTINATION ${MEGAGLEST_BIN_INSTALL_PATH})
+        # Requires an install prefix for the items below to work
+        IF(NOT CMAKE_INSTALL_PREFIX STREQUAL "")
+	        # Installation of the program
+	        INSTALL(TARGETS 
+		        ${TARGET_NAME} 
+		        DESTINATION ${MEGAGLEST_BIN_INSTALL_PATH})
 
-	IF(EXISTS ${HELP2MAN})
- 		MESSAGE(STATUS "**NOTE: Will Install manpage [${TARGET_NAME_MANPAGE}] to [${MEGAGLEST_MANPAGE_INSTALL_PATH}]")	
+	        IF(EXISTS ${HELP2MAN})
+         		MESSAGE(STATUS "**NOTE: Will Install manpage [${TARGET_NAME_MANPAGE}] to [${MEGAGLEST_MANPAGE_INSTALL_PATH}]")	
 
-		# Installation of the program manpage file
-		INSTALL(FILES 
-		  "${EXECUTABLE_OUTPUT_PATH}/${TARGET_NAME_MANPAGE}"
-		  DESTINATION ${MEGAGLEST_MANPAGE_INSTALL_PATH})
-	ENDIF()
+		        # Installation of the program manpage file
+		        INSTALL(FILES 
+		          "${HELP2MAN_OUT_PATH}${TARGET_NAME_MANPAGE}"
+		          DESTINATION ${MEGAGLEST_MANPAGE_INSTALL_PATH})
+	        ENDIF()
 
-	# Installation of the program config and image files
-	#INSTALL(FILES 
-	#  "${PROJECT_SOURCE_DIR}/mk/linux/glest.ini"
-	#  "${PROJECT_SOURCE_DIR}/mk/linux/glestkeys.ini"
-	#  "${PROJECT_SOURCE_DIR}/data/glest_game/g3dviewer.ico"
-	#  DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH})
+                # Installation of the program config and image files
+	        INSTALL(FILES 
+	          "${PROJECT_SOURCE_DIR}/g3dviewer.ico"
+	          DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH})
 
-	# Installation of the program desktop icon file
-	#INSTALL(FILES 
-	#  "${PROJECT_SOURCE_DIR}/data/glest_game/g3dviewer.ico"
-	#  DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
+	        # Installation of the program desktop file
+                SET(MG_DESKTOP_FILE ${PROJECT_SOURCE_DIR}/mk/linux/megaglest_g3dviewer.desktop)
+                IF(NOT EXISTS ${MG_DESKTOP_FILE})
+                        SET(MG_DESKTOP_FILE ${PROJECT_SOURCE_DIR}/megaglest_g3dviewer.desktop)
+                ENDIF()
 
+                INSTALL(FILES
+	          "${MG_DESKTOP_FILE}"
+	          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
+
+        ENDIF()
 ENDIF()

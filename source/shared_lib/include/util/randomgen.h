@@ -1,7 +1,8 @@
 // ==============================================================
-//	This file is part of Glest Shared Library (www.glest.org)
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
 //
-//	Copyright (C) 2001-2008 Martiño Figueroa
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//                2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under 
 //	the terms of the GNU General Public License as published 
@@ -12,6 +13,8 @@
 #ifndef _SHARED_UTIL_RANDOM_H_
 #define _SHARED_UTIL_RANDOM_H_
 
+#include <string>
+#include <vector>
 #include "leak_dumper.h"
 
 namespace Shared { namespace Util {
@@ -28,17 +31,25 @@ private:
 
 private:
 	int lastNumber;
-//#ifdef USE_STREFLOP
-//	streflop::RandomState randomState;
-//#endif
+	std::vector<std::string> lastCaller;
+	bool disableLastCallerTracking;
+
+	int rand(std::string lastCaller);
 
 public:
 	RandomGen();
 	void init(int seed);
 
-	int rand();
-	int randRange(int min, int max);
-	float randRange(float min, float max);
+	int randRange(int min, int max,std::string lastCaller="");
+	float randRange(float min, float max,std::string lastCaller="");
+
+	int getLastNumber() const { return lastNumber; }
+	void setLastNumber(int value) { lastNumber = value; }
+
+	std::string getLastCaller() const;
+	void clearLastCaller();
+	void addLastCaller(std::string text);
+	void setDisableLastCallerTracking(bool value) { disableLastCallerTracking = value; }
 };
 
 }}//end namespace

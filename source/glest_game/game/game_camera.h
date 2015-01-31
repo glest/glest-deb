@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_GAMECAMERA_H_
 #define _GLEST_GAME_GAMECAMERA_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "vec.h"
 #include "math_util.h"
 #include <map>
@@ -24,10 +29,10 @@ namespace Shared { namespace Xml {
 
 namespace Glest{ namespace Game{
 
-using Shared::Graphics::Quad2i;
-using Shared::Graphics::Vec3f;
-using Shared::Graphics::Vec2f;
-using Shared::Xml::XmlNode;
+using ::Shared::Graphics::Quad2i;
+using ::Shared::Graphics::Vec3f;
+using ::Shared::Graphics::Vec2f;
+using ::Shared::Xml::XmlNode;
 
 class Config;
 
@@ -49,7 +54,8 @@ public:
 public:
 	enum State{
 		sGame,
-		sFree
+		sFree,
+		sUnit
 	};
 
 private:
@@ -74,6 +80,7 @@ private:
 	//config
 	float speed;
 	bool clampBounds;
+	bool clampDisable;
 	//float maxRenderDistance;
 	float maxHeight;
 	float minHeight;
@@ -98,15 +105,28 @@ public:
 	float getHAng() const		{return hAng;};
 	float getVAng() const		{return vAng;}
 	State getState() const		{return state;}
+	void  setState(State s);
+	void resetCamera() {setState(sGame);}
+
 	const Vec3f &getPos() const	{return pos;}
 	float getFov() const 		{return fov;}
     //set
 	void setRotate(float rotate){this->rotate= rotate;}
 	void setPos(Vec2f pos);
+	void setPos(Vec3f pos);
 
 	void setMoveX(float f)		{this->move.x= f;}
 	void setMoveY(float f)		{this->move.y= f;}
 	void setMoveZ(float f)		{this->move.z= f;}
+
+	inline bool isMoving() const {
+		return (this->move.x != 0.0 || this->move.y != 0.0 || this->move.z != 0.0);
+	}
+	inline void stopMove() {
+		this->move.x = 0.0;
+		this->move.y = 0.0;
+		this->move.z = 0.0;
+	}
 
 	void stop() {
 		destPos = pos;
@@ -119,13 +139,13 @@ public:
     //other
     void update();
     Quad2i computeVisibleQuad();
-	void switchState();
-	void resetPosition();
+
 
 	void centerXZ(float x, float z);
-	void rotateHV(float h, float v);
 	void transitionXYZ(float x, float y, float z);
 	void transitionVH(float v, float h);
+	void rotateToVH(float v, float h);
+
 	void zoom(float dist);
 	void moveForwardH(float dist, float response);	// response: 1.0 for immediate, 0 for full inertia
 	void moveSideH(float dist, float response);
@@ -133,7 +153,6 @@ public:
 	void load(const XmlNode *node);
 	void save(XmlNode *node) const;
 
-	void setClampBounds(bool value) { clampBounds = value; }
 	void setMaxHeight(float value);
 	float getCalculatedDefault() const{ return calculatedDefault; }
 	void setCalculatedDefault(float calculatedDefault);
@@ -143,11 +162,22 @@ public:
 	void setMinVAng(float value) { minVAng = value; }
 	void setMaxVAng(float value) { maxVAng = value; }
 
+	void setHAng(float value) { hAng=value;};
+	void setVAng(float value) { vAng=value;}
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
+
 private:
+	void setClampBounds(bool value) { clampBounds = value; }
+	void resetPosition();
+	void setClampDisabled(bool value) { clampDisable = value; };
 	void clampPosXYZ(float x1, float x2, float y1, float y2, float z1, float z2);
 	void clampPosXZ(float x1, float x2, float z1, float z2);
 	void clampAng();
 	void moveUp(float dist);
+	void rotateHV(float h, float v);
+
 };
 
 }} //end namespace

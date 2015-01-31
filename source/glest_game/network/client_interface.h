@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_CLIENTINTERFACE_H_
 #define _GLEST_GAME_CLIENTINTERFACE_H_
 
-#include <vector>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <vector>
 #include "network_interface.h"
 #include "socket.h"
 #include "leak_dumper.h"
@@ -23,6 +27,26 @@ using Shared::Platform::ClientSocket;
 using std::vector;
 
 namespace Glest{ namespace Game{
+
+class ClientInterface;
+
+class ClientInterfaceThread : public BaseThread, public SlaveThreadControllerInterface {
+protected:
+
+	ClientInterface *clientInterface;
+
+	virtual void setQuitStatus(bool value);
+
+public:
+	ClientInterfaceThread(ClientInterface *client);
+	virtual ~ClientInterfaceThread();
+    virtual void execute();
+
+    virtual void setMasterController(MasterSlaveThreadController *master) { }
+	virtual void signalSlave(void *userdata) { }
+
+	virtual bool canShutdown(bool deleteSelfIfShutdownDelayed=false);
+};
 
 // =====================================================
 //	class ClientInterface
@@ -36,7 +60,6 @@ private:
 
 private:
 	ClientSocket *clientSocket;
-	//GameSettings gameSettings;
 	string serverName;
 	bool introDone;
 	bool launchGame;
@@ -50,6 +73,7 @@ private:
 	int port;
 
 	int currentFrameCount;
+	int lastSentFrameCount;
 	time_t lastNetworkCommandListSendTime;
 
 	time_t clientSimulationLagStartTime;
@@ -57,18 +81,55 @@ private:
 	int sessionKey;
 	int serverFTPPort;
 
+	string serverUUID;
+	string serverPlatform;
+
+	ClientInterfaceThread *networkCommandListThread;
+
+	Mutex *networkCommandListThreadAccessor;
+	std::map<int,Commands> cachedPendingCommands;	//commands ready to be given
+	std::map<int,vector<uint32> > cachedPendingCommandCRCs;	//commands ready to be given
+	uint64 cachedPendingCommandsIndex;
+	uint64 cachedLastPendingFrameCount;
+	int64 timeClientWaitedForLastMessage;
+
+	Mutex *flagAccessor;
+	bool joinGameInProgress;
+	bool joinGameInProgressLaunch;
+	bool readyForInGameJoin;
+	bool resumeInGameJoin;
+
+	Mutex *quitThreadAccessor;
+	bool quitThread;
+
+	bool getQuitThread();
+	void setQuitThread(bool value);
+	bool getQuit();
+	void setQuit(bool value);
+
 public:
 	ClientInterface();
 	virtual ~ClientInterface();
 
 	virtual Socket* getSocket(bool mutexLock=true)					{return clientSocket;}
-	//virtual const Socket* getSocket() const		{return clientSocket;}
 	virtual void close();
+
+	bool getJoinGameInProgress();
+	bool getJoinGameInProgressLaunch();
+
+	bool getReadyForInGameJoin();
+
+	bool getResumeInGameJoin();
+	void sendResumeGameMessage();
+
+	uint64 getCachedLastPendingFrameCount();
+	int64 getTimeClientWaitedForLastMessage();
 
 	//message processing
 	virtual void update();
 	virtual void updateLobby();
 	virtual void updateKeyframe(int frameCount);
+	virtual void setKeyframe(int frameCount) { currentFrameCount = frameCount; }
 	virtual void waitUntilReady(Checksum* checksum);
 
 	// message sending
@@ -76,6 +137,9 @@ public:
 			string targetLanguage);
 	virtual void quitGame(bool userManuallyQuit);
 
+	virtual void sendMarkCellMessage(Vec2i targetPos, int factionIndex, string note,int playerIndex);
+	virtual void sendUnMarkCellMessage(Vec2i targetPos, int factionIndex);
+	virtual void sendHighlightCellMessage(Vec2i targetPos, int factionIndex);
 	//misc
 	virtual string getNetworkStatus() ;
 
@@ -89,7 +153,6 @@ public:
 	int getGameSettingsReceivedCount() const { return gameSettingsReceivedCount; }
 
 	int getPlayerIndex() const				{return playerIndex;}
-	//const GameSettings *getGameSettings()	{return &gameSettings;}
 
 	void connect(const Ip &ip, int port);
 	void reset();
@@ -97,8 +160,8 @@ public:
 	void discoverServers(DiscoveredServersInterface *cb);
 	void stopServerDiscovery();
 	
-	void sendSwitchSetupRequest(string selectedFactionName, int8 currentFactionIndex,
-								int8 toFactionIndex, int8 toTeam,string networkPlayerName,
+	void sendSwitchSetupRequest(string selectedFactionName, int8 currentSlotIndex,
+								int8 toSlotIndex, int8 toTeam,string networkPlayerName,
 								int8 networkPlayerStatus, int8 flags,
 								string language);
 	virtual bool getConnectHasHandshaked() const { return gotIntro; }
@@ -114,16 +177,27 @@ public:
 	int getServerFTPPort() const { return serverFTPPort; }
 
 	int getSessionKey() const { return sessionKey; }
+	bool isMasterServerAdminOverride();
 
     void setGameSettings(GameSettings *serverGameSettings);
     void broadcastGameSetup(const GameSettings *gameSettings);
     void broadcastGameStart(const GameSettings *gameSettings);
 
+    void updateNetworkFrame();
+
+    virtual void saveGame(XmlNode *rootNode) {};
+
 protected:
 
 	Mutex * getServerSynchAccessor() { return NULL; }
-	NetworkMessageType waitForMessage();
+	NetworkMessageType waitForMessage(int waitMicroseconds=0);
 	bool shouldDiscardNetworkMessage(NetworkMessageType networkMessageType);
+
+	void updateFrame(int *checkFrame);
+	void shutdownNetworkCommandListThread(MutexSafeWrapper &safeMutexWrapper);
+	bool getNetworkCommand(int frameCount, int currentCachedPendingCommandsIndex);
+
+	void close(bool lockMutex);
 };
 
 }}//end namespace

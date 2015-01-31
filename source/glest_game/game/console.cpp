@@ -37,10 +37,11 @@ Console::Console() {
 	timeElapsed		= 0.0f;
 	xPos=20;
 	yPos=20;
-	lineHeight=20;
+	lineHeight=Config::getInstance().getInt("FontConsoleBaseSize","18")+2;
 	font=CoreData::getInstance().getConsoleFont();
 	font3D=CoreData::getInstance().getConsoleFont3D();
 	stringToHighlight="";
+	onlyChatMessagesInStoredLines=true;
 }
 
 void Console::resetFonts() {
@@ -48,15 +49,38 @@ void Console::resetFonts() {
 	font3D=CoreData::getInstance().getConsoleFont3D();
 }
 
-void Console::addStdMessage(const string &s) {
-	addLine(Lang::getInstance().get(s));
+void Console::addStdMessage(const string &s,bool clearOtherLines) {
+	if(clearOtherLines == true) {
+		addLineOnly(Lang::getInstance().getString(s));
+	}
+	else {
+		addLine(Lang::getInstance().getString(s));
+	}
 }
 
-void Console::addStdScenarioMessage(const string &s) {
-	addLine(Lang::getInstance().getScenarioString(s));
+void Console::addStdMessage(const string &s,string failText, bool clearOtherLines) {
+	if(clearOtherLines == true) {
+		addLineOnly(Lang::getInstance().getString(s) + failText);
+	}
+	else {
+		addLine(Lang::getInstance().getString(s) + failText);
+	}
 }
 
-void Console::addLine(string line, bool playSound, int playerIndex, Vec3f textColor, bool teamMode) {
+void Console::addStdScenarioMessage(const string &s,bool clearOtherLines) {
+	if(clearOtherLines == true) {
+		addLineOnly(Lang::getInstance().getScenarioString(s));
+	}
+	else {
+		addLine(Lang::getInstance().getScenarioString(s));
+	}
+}
+
+void Console::addLineOnly(string line) {
+	addLine(line,false,-1,Vec3f(1.f, 1.f, 1.f),false,true);
+}
+
+void Console::addLine(string line, bool playSound, int playerIndex, Vec3f textColor, bool teamMode,bool clearOtherLines) {
 	try {
 		if(playSound == true) {
 			SoundRenderer::getInstance().playFx(CoreData::getInstance().getClickSoundA());
@@ -79,20 +103,26 @@ void Console::addLine(string line, bool playSound, int playerIndex, Vec3f textCo
 		}
 		//printf("info.PlayerIndex = %d, line [%s]\n",info.PlayerIndex,info.originalPlayerName.c_str());
 
+		if(clearOtherLines == true) {
+			lines.clear();
+			storedLines.clear();
+		}
 		lines.insert(lines.begin(), info);
-		if(lines.size() > maxLines) {
+		if((int)lines.size() > maxLines) {
 			lines.pop_back();
 		}
-		storedLines.insert(storedLines.begin(), info);
-		if(storedLines.size() > maxStoredLines) {
-			storedLines.pop_back();
+		if(onlyChatMessagesInStoredLines==false || info.PlayerIndex!=-1) {
+			storedLines.insert(storedLines.begin(), info);
+			if((int)storedLines.size() > maxStoredLines) {
+				storedLines.pop_back();
+			}
 		}
 	}
 	catch(const exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 
@@ -114,19 +144,19 @@ void Console::addLine(string line, bool playSound, string playerName, Vec3f text
 		//printf("info.PlayerIndex = %d, line [%s]\n",info.PlayerIndex,info.originalPlayerName.c_str());
 
 		lines.insert(lines.begin(), info);
-		if(lines.size() > maxLines) {
+		if((int)lines.size() > maxLines) {
 			lines.pop_back();
 		}
 		storedLines.insert(storedLines.begin(), info);
-		if(storedLines.size() > maxStoredLines) {
+		if((int)storedLines.size() > maxStoredLines) {
 			storedLines.pop_back();
 		}
 	}
 	catch(const exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 
@@ -151,26 +181,26 @@ bool Console::isEmpty() {
 }
 
 string Console::getLine(int i) const {
-	if(i < 0 || i >= lines.size())
-		throw runtime_error("i >= Lines.size()");
+	if(i < 0 || i >= (int)lines.size())
+		throw megaglest_runtime_error("i >= Lines.size()");
 	return lines[i].text;
 }
 
 string Console::getStoredLine(int i) const {
-	if(i < 0 || i >= storedLines.size())
-		throw runtime_error("i >= storedLines.size()");
+	if(i < 0 || i >= (int)storedLines.size())
+		throw megaglest_runtime_error("i >= storedLines.size()");
 	return storedLines[i].text;
 }
 
 ConsoleLineInfo Console::getLineItem(int i) const {
-	if(i < 0 || i >= lines.size())
-		throw runtime_error("i >= Lines.size()");
+	if(i < 0 || i >= (int)lines.size())
+		throw megaglest_runtime_error("i >= Lines.size()");
 	return lines[i];
 }
 
 ConsoleLineInfo Console::getStoredLineItem(int i) const {
-	if(i < 0 || i >= storedLines.size())
-		throw runtime_error("i >= storedLines.size()");
+	if(i < 0 || i >= (int)storedLines.size())
+		throw megaglest_runtime_error("i >= storedLines.size()");
 	return storedLines[i];
 }
 

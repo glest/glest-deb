@@ -18,10 +18,13 @@
 #include "pixmap.h"
 #include "texture_manager.h"
 #include "randomgen.h"
+#include "xml_parser.h"
 #include "leak_dumper.h"
+#include "interpolation.h"
 
 using std::list;
 using Shared::Util::RandomGen;
+using Shared::Xml::XmlNode;
 
 namespace Shared{ namespace Graphics{
 
@@ -64,16 +67,28 @@ public:
 	Vec4f getColor() const		{return color;}
 	float getSize() const		{return size;}
 	int getEnergy()	const		{return energy;}
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 
 // =====================================================
 //	class ParticleObserver
 // =====================================================
 
-class ParticleObserver{
+class ParticleObserver {
 public:
 	virtual ~ParticleObserver(){};
 	virtual void update(ParticleSystem *particleSystem)= 0;
+	virtual void saveGame(XmlNode *rootNode) = 0;
+	virtual void loadGame(const XmlNode *rootNode, void *genericData) = 0;
+};
+
+class ParticleOwner {
+public:
+	virtual ~ParticleOwner() {}
+	virtual void end(ParticleSystem *particleSystem)= 0;
+	virtual void logParticleInfo(string info)= 0;
 };
 
 // =====================================================
@@ -117,6 +132,10 @@ protected:
 	int aliveParticleCount;
 	int particleCount;
 	
+	string textureFileLoadDeferred;
+	int textureFileLoadDeferredSystemId;
+	Texture::Format textureFileLoadDeferredFormat;
+	int textureFileLoadDeferredComponents;
 
 	Texture *texture;
 	Vec3f pos;
@@ -134,6 +153,7 @@ protected:
 	int alternations;
 	int particleSystemStartDelay;
 	ParticleObserver *particleObserver;
+	ParticleOwner *particleOwner;
 
 public:
 	//conmstructor and destructor
@@ -155,6 +175,11 @@ public:
 	int getAliveParticleCount() const			{return aliveParticleCount;}
 	bool getActive() const						{return active;}
 	virtual bool getVisible() const				{return visible;}
+
+	virtual string getTextureFileLoadDeferred();
+	virtual int getTextureFileLoadDeferredSystemId();
+	virtual Texture::Format getTextureFileLoadDeferredFormat();
+	virtual int getTextureFileLoadDeferredComponents();
 
 	//set
 	virtual void setState(State state);
@@ -182,9 +207,20 @@ public:
 	virtual void fade();
 	int isEmpty() const;
 	
+	virtual void setParticleOwner(ParticleOwner *particleOwner) { this->particleOwner = particleOwner;}
+	virtual ParticleOwner * getParticleOwner() { return this->particleOwner;}
+	virtual void callParticleOwnerEnd(ParticleSystem *particleSystem);
+
 	//children
 	virtual int getChildCount() { return 0; }
 	virtual ParticleSystem* getChild(int i);
+
+	virtual string toString() const;
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual Checksum getCRC();
 
 protected:
 	//protected
@@ -218,6 +254,13 @@ public:
 	//set params
 	void setRadius(float radius);
 	void setWind(float windAngle, float windSpeed);
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -246,13 +289,25 @@ public:
 	virtual void render(ParticleRenderer *pr, ModelRenderer *mr);
 	float getTween() { return tween; }  // 0.0 -> 1.0 for animation of model
 	Model *getModel() const {return model;}
+	virtual string getModelFileLoadDeferred();
+
 	void setPrimitive(Primitive primitive) {this->primitive= primitive;}
 	Vec3f getDirection() const {return direction;}
 	void setModelCycle(float modelCycle) {this->modelCycle= modelCycle;}
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
+
 protected:
 	typedef std::vector<UnitParticleSystem*> Children;
 	Children children;
 	Primitive primitive;
+
+	string modelFileLoadDeferred;
 	Model *model;
 	float modelCycle;
 	Vec3f offset;
@@ -280,8 +335,8 @@ private:
 	Vec3f fixedAddition;
     Vec3f oldPosition;
     bool energyUp;
-	float startTime;
-	float endTime;
+    float startTime;
+    float endTime;
     
 public:
 	enum Shape{
@@ -297,6 +352,8 @@ public:
 	float sizeNoEnergy;
 	float gravity;
 	float rotation;
+	const Model *unitModel;
+	string meshName;
 	bool isVisibleAtNight;
 	bool isVisibleAtDay;
 	bool isDaylightAffected;
@@ -337,6 +394,8 @@ public:
 	void setSizeNoEnergy(float sizeNoEnergy)			{this->sizeNoEnergy= sizeNoEnergy;}
 	void setGravity(float gravity)						{this->gravity= gravity;}
 	void setRotation(float rotation);
+	const void setUnitModel(const Model* unitModel)					{this->unitModel= unitModel;}
+	void setMeshName(string meshName)						{this->meshName= meshName;}
 	void setRelative(bool relative)						{this->relative= relative;}
 	void setRelativeDirection(bool relativeDirection)	{this->relativeDirection= relativeDirection;}
 	void setFixed(bool fixed)							{this->fixed= fixed;}
@@ -355,6 +414,13 @@ public:
 	void setParentDirection(Vec3f parentDirection);
 	
 	static Shape strToShape(const string& str);
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -377,7 +443,11 @@ public:
 	virtual bool deathTest(Particle *p);
 
 	void setRadius(float radius);
-	void setWind(float windAngle, float windSpeed);	
+	void setWind(float windAngle, float windSpeed);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -398,7 +468,11 @@ public:
 	virtual bool deathTest(Particle *p);
 
 	void setRadius(float radius);
-	void setWind(float windAngle, float windSpeed);	
+	void setWind(float windAngle, float windSpeed);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // ===========================================================================
@@ -407,7 +481,7 @@ public:
 /// Base class for Projectiles and Splashes
 // ===========================================================================
 
-class AttackParticleSystem: public GameParticleSystem{
+class AttackParticleSystem: public GameParticleSystem {
 
 protected:
 	float sizeNoEnergy;
@@ -421,6 +495,13 @@ public:
 	void setGravity(float gravity)				{this->gravity= gravity;}
 	
 	virtual void initParticleSystem() {} // opportunity to do any initialization when the system has been created and all settings set
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -455,7 +536,8 @@ private:
 	//parabolic
 	float trajectoryScale;
 	float trajectoryFrequency;
-	
+
+	float arriveDestinationDistance;
 	void rotateChildren();
 
 public:
@@ -478,6 +560,13 @@ public:
 	void setPath(Vec3f startPos, Vec3f endPos);
 
 	static Trajectory strToTrajectory(const string &str);
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
+
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -514,7 +603,13 @@ public:
 	void setVerticalSpreadB(float verticalSpreadB)		{this->verticalSpreadB= verticalSpreadB;}
 	void setHorizontalSpreadA(float horizontalSpreadA)	{this->horizontalSpreadA= horizontalSpreadA;}
 	void setHorizontalSpreadB(float horizontalSpreadB)	{this->horizontalSpreadB= horizontalSpreadB;}
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode);
+
+	virtual string toString() const;
 	
+	virtual Checksum getCRC();
 };
 
 // =====================================================
@@ -537,6 +632,7 @@ public:
 	void cleanupUnitParticleSystems(vector<UnitParticleSystem *> &particleSystems);
 	int findParticleSystems(ParticleSystem *psFind, const vector<ParticleSystem *> &particleSystems) const;
 	bool validateParticleSystemStillExists(ParticleSystem * particleSystem) const;
+	void removeParticleSystemsForParticleOwner(ParticleOwner * particleOwner);
 	bool hasActiveParticleSystem(ParticleSystem::ParticleSystemType type) const;
 }; 
 

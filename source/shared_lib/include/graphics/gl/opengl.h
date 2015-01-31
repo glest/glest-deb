@@ -18,6 +18,7 @@
 #include <string>
 #include "conversion.h"
 #include "gl_wrap.h"
+#include "platform_util.h"
 #include "leak_dumper.h"
 
 using std::runtime_error;
@@ -52,12 +53,18 @@ void checkGlExtension(const char *extensionName);
 void inline _assertGl(const char *file, int line, GLenum *forceErrorNumber = NULL) {
 	GLenum error = (forceErrorNumber != NULL ? *forceErrorNumber : glGetError());
 	if(error != GL_NO_ERROR) {
+#ifdef _DEBUG
+		if(error == GL_INVALID_ENUM) {
+			return;
+		}
+#endif
+
 		//if(error != GL_INVALID_ENUM) {
 			const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-			char szBuf[4096]="";
-			sprintf(szBuf,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",error,error,errorString,file,line);
-			//throw runtime_error("OpenGL error #" + intToStr(error) + " : " + string(errorString) + " at file: " + string(file) + ", line " + intToStr(line));
-			throw runtime_error(szBuf);
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",error,error,errorString,file,line);
+			//throw megaglest_runtime_error("OpenGL error #" + intToStr(error) + " : " + string(errorString) + " at file: " + string(file) + ", line " + intToStr(line));
+			throw megaglest_runtime_error(szBuf);
 		//}
 	}
 

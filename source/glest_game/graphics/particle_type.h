@@ -12,9 +12,13 @@
 #ifndef _GLEST_GAME_PARTICLETYPE_H_
 #define _GLEST_GAME_PARTICLETYPE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include <list>
-
 #include "particle.h"
 #include "factory.h"
 #include "texture.h"
@@ -106,6 +110,9 @@ public:
 
     string getType() const { return type; };
 
+    virtual void saveGame(XmlNode *rootNode);
+    virtual void loadGame(const XmlNode *rootNode);
+
 protected:
 
 };
@@ -126,8 +133,9 @@ public:
 	void load(const XmlNode *particleFileNode, const string &dir, const string &path,
 			RendererInterface *renderer, std::map<string,vector<pair<string, string> > > &loadedFileList,
 			string parentLoader, string techtreePath);
-	ProjectileParticleSystem *create();
+	ProjectileParticleSystem *create(ParticleOwner *owner);
 
+	virtual void saveGame(XmlNode *rootNode);
 };
 
 // ===========================================================
@@ -141,7 +149,9 @@ public:
 	void load(const XmlNode *particleFileNode, const string &dir, const string &path,
 			RendererInterface *renderer, std::map<string,vector<pair<string, string> > > &loadedFileList,
 			string parentLoader, string techtreePath);
-	SplashParticleSystem *create();
+	SplashParticleSystem *create(ParticleOwner *owner);
+
+	virtual void saveGame(XmlNode *rootNode);
 
 private:
 	float emissionRateFade;

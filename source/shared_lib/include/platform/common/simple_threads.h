@@ -30,6 +30,7 @@ namespace Shared { namespace PlatformCommon {
 class FileCRCPreCacheThreadCallbackInterface {
 public:
 	virtual vector<Texture2D *> processTech(string techName) = 0;
+	virtual ~FileCRCPreCacheThreadCallbackInterface() {}
 };
 
 // =====================================================
@@ -43,59 +44,84 @@ protected:
 	vector<string> workerThreadTechPaths;
 	FileCRCPreCacheThreadCallbackInterface *processTechCB;
 
-	Mutex mutexPendingTextureList;
-	vector<Texture2D *> pendingTextureList;
-
-	void addPendingTexture(Texture2D *texture);
-	void addPendingTextureList(vector<Texture2D *> textureList);
+	static string preCacheThreadCacheLookupKey;
+	Mutex *mutexPauseForGame;
+	bool pauseForGame;
+	std::vector<FileCRCPreCacheThread *> preCacheWorkerThreadList;
 
 public:
 	FileCRCPreCacheThread();
 	FileCRCPreCacheThread(vector<string> techDataPaths,vector<string> workerThreadTechPaths,FileCRCPreCacheThreadCallbackInterface *processTechCB);
+	virtual ~FileCRCPreCacheThread();
+
+	static void setPreCacheThreadCacheLookupKey(string value) { preCacheThreadCacheLookupKey = value; }
+
     virtual void execute();
     void setTechDataPaths(vector<string> value) { this->techDataPaths = value; }
     void setWorkerThreadTechPaths(vector<string> value) { this->workerThreadTechPaths = value; }
     void setFileCRCPreCacheThreadCallbackInterface(FileCRCPreCacheThreadCallbackInterface *value) { processTechCB = value; }
-    vector<Texture2D *> getPendingTextureList(int maxTexturesToGet);
+
+	virtual bool canShutdown(bool deleteSelfIfShutdownDelayed);
+
+	void setPauseForGame(bool pauseForGame);
+	bool getPauseForGame();
 };
 
 // =====================================================
 //	class SimpleTaskThread
 // =====================================================
-
+typedef void taskFunctionCallback(BaseThread *callingThread);
 //
 // This interface describes the methods a callback object must implement
 //
 class SimpleTaskCallbackInterface {
 public:
-	virtual void simpleTask(BaseThread *callingThread) = 0;
+	virtual void simpleTask(BaseThread *callingThread,void *userdata) = 0;
 
-	virtual void setupTask(BaseThread *callingThread) {}
-	virtual void shutdownTask(BaseThread *callingThread) {}
+	virtual void setupTask(BaseThread *callingThread,void *userdata) { }
+	virtual void shutdownTask(BaseThread *callingThread,void *userdata) { }
+
+	virtual ~SimpleTaskCallbackInterface() {}
 };
 
 class SimpleTaskThread : public BaseThread
 {
 protected:
 
+	Mutex *mutexSimpleTaskInterfaceValid;
+	bool simpleTaskInterfaceValid;
 	SimpleTaskCallbackInterface *simpleTaskInterface;
 	unsigned int executionCount;
 	unsigned int millisecsBetweenExecutions;
 
-	Mutex mutexTaskSignaller;
+	Mutex *mutexTaskSignaller;
 	bool taskSignalled;
 	bool needTaskSignal;
 
-	Mutex mutexLastExecuteTimestamp;
+	Mutex *mutexLastExecuteTimestamp;
 	time_t lastExecuteTimestamp;
+
+	taskFunctionCallback *overrideShutdownTask;
+	void *userdata;
+	bool wantSetupAndShutdown;
 
 public:
 	SimpleTaskThread(SimpleTaskCallbackInterface *simpleTaskInterface,
 					 unsigned int executionCount=0,
 					 unsigned int millisecsBetweenExecutions=0,
-					 bool needTaskSignal = false);
+					 bool needTaskSignal = false,
+					 void *userdata=NULL,
+					 bool wantSetupAndShutdown=true);
 	virtual ~SimpleTaskThread();
 
+	virtual void * getUserdata() { return userdata; }
+	virtual int getUserdataAsInt() {
+		int value = 0;
+		if(userdata) {
+			value = *((int*)&userdata);
+		}
+		return value;
+	}
     virtual void execute();
     virtual bool canShutdown(bool deleteSelfIfShutdownDelayed=false);
 
@@ -103,6 +129,13 @@ public:
     bool getTaskSignalled();
 
     bool isThreadExecutionLagging();
+
+    void cleanup();
+
+    void setOverrideShutdownTask(taskFunctionCallback *ptr);
+
+    bool getSimpleTaskInterfaceValid();
+    void setSimpleTaskInterfaceValid(bool value);
 };
 
 // =====================================================
@@ -120,7 +153,7 @@ class LogFileThread : public BaseThread
 {
 protected:
 
-    Mutex mutexLogList;
+    Mutex *mutexLogList;
 	vector<LogFileEntry> logList;
 	time_t lastSaveToDisk;
 

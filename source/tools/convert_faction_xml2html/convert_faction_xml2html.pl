@@ -2,6 +2,7 @@
 
 # script to create HTML-pages and diagrams from the glest-factions techtree
 # 20110120, bugs & feedback to olaus@rupp.de
+# Copyright 2011 olaus
 # license: GPLv3 or newer
 
 our $version = "0.8 beta";
@@ -97,11 +98,11 @@ if ( $cfg_file = shift @ARGV ) {
 	}
 }
 else {
-	$cfg_file ="glest.ini";
+	$cfg_file ="megapack.ini";
 }
 
 if ( ! -e $cfg_file ) {
-	die "\nusage: $0 [glest.ini]\n\n";
+	die "\nusage: $0 [megapack.ini]\n\n";
 }
 
 $cfg = new Config::IniFiles( -file => "./$cfg_file", -allowcontinue => 1 );

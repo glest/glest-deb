@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_MAINMENU_H_
 #define _GLEST_GAME_MAINMENU_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "lang.h"
 #include "console.h"
 #include "vec.h" 
@@ -21,6 +26,10 @@
 #include "menu_background.h"
 #include "game_settings.h"
 #include "leak_dumper.h"
+
+namespace Shared { namespace Graphics {
+	class VideoPlayer;
+}}
 
 namespace Glest{ namespace Game{
 
@@ -42,12 +51,15 @@ private:
 	//shared
 	GameSettings gameSettings;
 	MenuBackground menuBackground;
+	::Shared::Graphics::VideoPlayer *menuBackgroundVideo;
 
 	MenuState *state;
 
 	//shared
     int mouseX, mouseY;
     int mouse2dAnim;
+
+    void initBackgroundVideo();
 
 public:
 	MainMenu(Program *program);
@@ -62,6 +74,7 @@ public:
     virtual void mouseMove(int x, int y, const MouseState *mouseState);
     virtual void mouseDownLeft(int x, int y);
     virtual void mouseDownRight(int x, int y);
+	virtual void mouseUpLeft(int x, int y);
 	virtual void keyDown(SDL_KeyboardEvent key);
 	virtual void keyUp(SDL_KeyboardEvent key);
 	virtual void keyPress(SDL_KeyboardEvent key);
@@ -91,10 +104,19 @@ protected:
 	const char *containerName;
 	Console console;
 
+	//vector<int> textCharLength;
+
+protected:
+
+	void setActiveInputLabel(GraphicLabel *newLabel, GraphicLabel **activeInputLabelPtr);
+	bool keyPressEditLabel(SDL_KeyboardEvent c, GraphicLabel **activeInputLabelPtr);
+	bool keyDownEditLabel(SDL_KeyboardEvent c, GraphicLabel **activeInputLabelPtr);
+
 public:
 	MenuState(Program *program, MainMenu *mainMenu, const string &stateName);
 	virtual ~MenuState();
 	virtual void mouseClick(int x, int y, MouseButton mouseButton)=0;
+	virtual void mouseUp(int x, int y, const MouseButton mouseButton){};
 	virtual void mouseMove(int x, int y, const MouseState *mouseState)=0;
 	virtual void render()=0;
 	virtual void update(){};
@@ -108,6 +130,8 @@ public:
 	virtual bool isInSpecialKeyCaptureEvent() { return false; }
 	virtual void consoleAddLine(string line);
 	virtual void reloadUI();
+
+	virtual bool isVideoPlaying() { return false; };
 };
 
 }}//end namespace

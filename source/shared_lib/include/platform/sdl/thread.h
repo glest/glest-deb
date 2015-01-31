@@ -18,14 +18,15 @@
 #include <SDL_thread.h>
 #include <SDL_mutex.h>
 #include <string>
+#include <memory>
+
+#include "data_types.h"
 #ifdef DEBUG_PERFORMANCE_MUTEXES
 #include "platform_common.h"
 #endif
 
-//#include "util.h"
 #include <vector>
-#include "types.h"
-#include "leak_dumper.h"
+//#include "leak_dumper.h"
 
 // =====================================================
 //	class Thread
@@ -36,9 +37,25 @@ using namespace std;
 using namespace Shared::PlatformCommon;
 #endif
 
+namespace Shared { namespace PlatformCommon {
+class Chrono;
+}};
+
 namespace Shared { namespace Platform {
 
 class Mutex;
+//class uint32;
+
+enum ThreadState {
+	thrsNew,
+	thrsStarting,
+	thrsExecuteStart,
+	thrsExecuting,
+	thrsExecuted,
+	thrsExecuteAutoClean,
+	thrsExecuteComplete
+
+};
 
 class Thread {
 public:
@@ -52,21 +69,41 @@ public:
 
 private:
 	SDL_Thread* thread;
+	//std::auto_ptr<Mutex> mutexthreadAccessor;
+	Mutex *mutexthreadAccessor;
+	ThreadState currentState;
+	bool threadObjectValid();
 
+	bool deleteAfterExecute;
 	static Mutex mutexthreadList;
-	static std::vector<Thread *> threadList;
+	static vector<Thread *> threadList;
+	static bool enableVerboseMode;
+
+protected:
+	void addThreadToList();
+	void removeThreadFromList();
+	void queueAutoCleanThread();
+	bool isThreadExecuteCompleteStatus();
 
 public:
 	Thread();
 	virtual ~Thread();
 
+	static void setEnableVerboseMode(bool value) { enableVerboseMode = value; }
+	static bool getEnableVerboseMode() { return enableVerboseMode; }
+
 	static std::vector<Thread *> getThreadList();
+	static void shutdownThreads();
+
+	void setDeleteAfterExecute(bool value) { deleteAfterExecute = value; }
+	bool getDeleteAfterExecute() const { return deleteAfterExecute; }
 
 	void start();
 	virtual void execute()=0;
 	void setPriority(Thread::Priority threadPriority);
 	void suspend();
 	void resume();
+	void kill();
 
 private:
 	static int beginExecution(void *param);
@@ -85,14 +122,28 @@ private:
 	string deleteownerId;
 
 	SDL_mutex* mutexAccessor;
+	string lastownerId;
+
+	int maxRefCount;
+	Shared::PlatformCommon::Chrono *chronoPerf;
+
+	bool isStaticMutexListMutex;
+	static auto_ptr<Mutex> mutexMutexList;
+	static vector<Mutex *> mutexList;
 
 public:
 	Mutex(string ownerId="");
 	~Mutex();
-	void setOwnerId(string ownerId) { this->ownerId = ownerId; }
+	void setOwnerId(string ownerId) {
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
+	}
 	void p();
 	void v();
 	int getRefCount() const { return refCount; }
+
+	SDL_mutex* getMutex() { return mutex; }
 };
 
 class MutexSafeWrapper {
@@ -107,7 +158,9 @@ public:
 
 	MutexSafeWrapper(Mutex *mutex,string ownerId="") {
 		this->mutex = mutex;
-		this->ownerId = ownerId;
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
 		Lock();
 	}
 	~MutexSafeWrapper() {
@@ -116,7 +169,9 @@ public:
 
     void setMutex(Mutex *mutex,string ownerId="") {
 		this->mutex = mutex;
-		this->ownerId = ownerId;
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
 		Lock();
     }
     bool isValidMutex() const {
@@ -126,8 +181,8 @@ public:
 	void Lock() {
 		if(this->mutex != NULL) {
 		    #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("Locking Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("Locking Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 
@@ -136,6 +191,9 @@ public:
 #endif
 
 			this->mutex->p();
+			if(this->mutex != NULL) {
+				this->mutex->setOwnerId(ownerId);
+			}
 
 #ifdef DEBUG_PERFORMANCE_MUTEXES
 			if(chrono.getMillis() > 5) printf("In [%s::%s Line: %d] MUTEX LOCK took msecs: %lld, this->mutex->getRefCount() = %d ownerId [%s]\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis(),this->mutex->getRefCount(),ownerId.c_str());
@@ -143,17 +201,17 @@ public:
 #endif
 
             #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("Locked Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("Locked Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 		}
 	}
-	void ReleaseLock(bool keepMutex=false) {
+	void ReleaseLock(bool keepMutex=false,bool deleteMutexOnRelease=false) {
 		if(this->mutex != NULL) {
 		    #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("UnLocking Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("UnLocking Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 
@@ -164,10 +222,15 @@ public:
 #endif
 
             #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("UnLocked Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("UnLocked Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
+
+			if(deleteMutexOnRelease == true) {
+				delete this->mutex;
+				this->mutex = NULL;
+			}
 
 			if(keepMutex == false) {
 				this->mutex = NULL;
@@ -189,8 +252,10 @@ public:
 	~Semaphore();
 	void signal();
 	int waitTillSignalled(int waitMilliseconds=-1);
+	bool tryDecrement();
 
 	uint32 getSemValue();
+	void resetSemValue(Uint32 initialValue);
 };
 
 
@@ -206,7 +271,11 @@ public:
 	void UnLockWrite();
 
 	int maxReaders();
-	void setOwnerId(string ownerId) { this->ownerId = ownerId; }
+	void setOwnerId(string ownerId) {
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
+	}
 
 private:
 	Semaphore semaphore;
@@ -231,8 +300,12 @@ public:
 
 	ReadWriteMutexSafeWrapper(ReadWriteMutex *mutex,bool isReadLock=true, string ownerId="") {
 		this->mutex = mutex;
-		this->isReadLock = isReadLock;
-		this->ownerId = ownerId;
+		if(this->isReadLock != isReadLock) {
+			this->isReadLock = isReadLock;
+		}
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
 		Lock();
 	}
 	~ReadWriteMutexSafeWrapper() {
@@ -241,8 +314,12 @@ public:
 
     void setReadWriteMutex(ReadWriteMutex *mutex,bool isReadLock=true,string ownerId="") {
 		this->mutex = mutex;
-		this->isReadLock = isReadLock;
-		this->ownerId = ownerId;
+		if(this->isReadLock != isReadLock) {
+			this->isReadLock = isReadLock;
+		}
+		if(this->ownerId != ownerId) {
+			this->ownerId = ownerId;
+		}
 		Lock();
     }
     bool isValidReadWriteMutex() const {
@@ -252,8 +329,8 @@ public:
 	void Lock() {
 		if(this->mutex != NULL) {
 		    #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("Locking Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("Locking Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 
@@ -274,8 +351,8 @@ public:
 #endif
 
             #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("Locked Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("Locked Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 		}
@@ -283,8 +360,8 @@ public:
 	void ReleaseLock(bool keepMutex=false) {
 		if(this->mutex != NULL) {
 		    #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("UnLocking Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("UnLocking Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 
@@ -300,8 +377,8 @@ public:
 #endif
 
             #ifdef DEBUG_MUTEXES
-            if(ownerId != "") {
-                printf("UnLocked Mutex [%s] refCount: %d\n",ownerId.c_str(),this->mutex->getRefCount());
+            if(this->ownerId != "") {
+                printf("UnLocked Mutex [%s] refCount: %d\n",this->ownerId.c_str(),this->mutex->getRefCount());
             }
             #endif
 
@@ -312,6 +389,87 @@ public:
 	}
 };
 
+const bool debugMasterSlaveThreadController = false;
+// =====================================================
+//	class Trigger
+// =====================================================
+
+class Trigger {
+private:
+	SDL_cond* trigger;
+	Mutex *mutex;
+
+public:
+	Trigger(Mutex *mutex);
+	~Trigger();
+	void signal(bool allThreads=false);
+	int waitTillSignalled(Mutex *mutex, int waitMilliseconds=-1);
+};
+
+class MasterSlaveThreadController;
+
+class SlaveThreadControllerInterface {
+public:
+	virtual void setMasterController(MasterSlaveThreadController *master) = 0;
+	virtual void signalSlave(void *userdata) = 0;
+	virtual ~SlaveThreadControllerInterface() {}
+};
+
+class MasterSlaveThreadController {
+private:
+	static const int triggerBaseCount = 1;
+
+	Mutex *mutex;
+	Semaphore *slaveTriggerSem;
+	int slaveTriggerCounter;
+
+	std::vector<SlaveThreadControllerInterface *> slaveThreadList;
+
+	void init(std::vector<SlaveThreadControllerInterface *> &newSlaveThreadList);
+public:
+
+	MasterSlaveThreadController();
+	MasterSlaveThreadController(std::vector<SlaveThreadControllerInterface *> &slaveThreadList);
+	~MasterSlaveThreadController();
+
+	void setSlaves(std::vector<SlaveThreadControllerInterface *> &slaveThreadList);
+	void clearSlaves(bool clearListOnly=false);
+
+	void signalSlaves(void *userdata);
+	void triggerMaster(int waitMilliseconds=-1);
+	bool waitTillSlavesTrigger(int waitMilliseconds=-1);
+
+};
+
+class MasterSlaveThreadControllerSafeWrapper {
+protected:
+	MasterSlaveThreadController *master;
+	string ownerId;
+	int waitMilliseconds;
+
+public:
+
+	MasterSlaveThreadControllerSafeWrapper(MasterSlaveThreadController *master, int waitMilliseconds=-1, string ownerId="") {
+		if(debugMasterSlaveThreadController) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		this->master = master;
+		this->waitMilliseconds = waitMilliseconds;
+		this->ownerId = ownerId;
+
+		if(debugMasterSlaveThreadController) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	}
+	~MasterSlaveThreadControllerSafeWrapper() {
+		if(debugMasterSlaveThreadController) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		if(master != NULL) {
+			if(debugMasterSlaveThreadController) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+			master->triggerMaster(this->waitMilliseconds);
+		}
+
+		if(debugMasterSlaveThreadController) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	}
+};
 
 }}//end namespace
 

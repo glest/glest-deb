@@ -20,6 +20,7 @@
 #include "util.h"
 #include <stdexcept>
 #include "string_utils.h"
+#include "sound_renderer.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -46,6 +47,8 @@ ChatManager::ChatManager() {
 	font=CoreData::getInstance().getConsoleFont();
 	font3D=CoreData::getInstance().getConsoleFont3D();
 	inMenu=false;
+	customCB = NULL;
+	this->maxCustomTextLength = maxTextLenght;
 }
 
 void ChatManager::init(Console* console, int thisTeamIndex, const bool inMenu, string manualPlayerNameOverride) {
@@ -68,22 +71,26 @@ void ChatManager::keyUp(SDL_KeyboardEvent key) {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	try {
-		if(editEnabled) {
+		if(editEnabled == true) {
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key.keysym.sym,key.keysym.sym);
 
-			//if(key == vkEscape || key == SDLK_ESCAPE) {
 			if(isKeyPressed(SDLK_ESCAPE,key,false) == true) {
 				text.clear();
 				textCharLength.clear();
 				editEnabled= false;
+
+				if(customCB != NULL) {
+					customCB->processInputText(text,true);
+					customCB = NULL;
+				}
 			}
 		}
 	}
 	catch(const exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s Line: %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -97,17 +104,16 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 
 		//toggle team mode
 		if(editEnabled == false && disableTeamMode == false &&
-			//key == configKeys.getCharKey("ChatTeamMode")) {
 			isKeyPressed(configKeys.getSDLKey("ChatTeamMode"),key) == true) {
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key.keysym.sym,key.keysym.sym);
 
 			if (!inMenu) {
 				if (teamMode == true) {
 					teamMode = false;
-					console->addLine(lang.get("ChatMode") + ": " + lang.get("All"));
+					console->addLine(lang.getString("ChatMode") + ": " + lang.getString("All"));
 				} else {
 					teamMode = true;
-					console->addLine(lang.get("ChatMode") + ": " + lang.get("Team"));
+					console->addLine(lang.getString("ChatMode") + ": " + lang.getString("Team"));
 				}
 			}
 		}
@@ -115,7 +121,6 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 		if(isKeyPressed(SDLK_RETURN,key, false) == true) {
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key.keysym.sym,key.keysym.sym);
 
-			//SDL_keysym keystate = Window::getKeystate();
 			SDL_keysym keystate = key.keysym;
 			if(keystate.mod & (KMOD_LALT | KMOD_RALT)){
 				// alt+enter is ignored
@@ -129,24 +134,34 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 
 					GameNetworkInterface *gameNetworkInterface= NetworkManager::getInstance().getGameNetworkInterface();
 					if(text.empty() == false) {
-						string playerName 	= gameNetworkInterface->getHumanPlayerName();
-						int playerIndex 	= gameNetworkInterface->getHumanPlayerIndex();
 
-						if(this->manualPlayerNameOverride != "") {
-						    console->addLine(text,false,this->manualPlayerNameOverride,Vec3f(1.f, 1.f, 1.f),teamMode);
-						}
-						else {
-                            console->addLine(text,false,playerIndex,Vec3f(1.f, 1.f, 1.f),teamMode);
-						}
+						if(customCB == NULL) {
+							//string playerName 	= gameNetworkInterface->getHumanPlayerName();
+							int playerIndex 	= gameNetworkInterface->getHumanPlayerIndex();
 
-						gameNetworkInterface->sendTextMessage(text, teamMode? thisTeamIndex: -1, false, "");
-						if(inMenu == false) {
-							editEnabled= false;
+							if(this->manualPlayerNameOverride != "") {
+								console->addLine(text,false,this->manualPlayerNameOverride,Vec3f(1.f, 1.f, 1.f),teamMode);
+							}
+							else {
+								console->addLine(text,false,playerIndex,Vec3f(1.f, 1.f, 1.f),teamMode);
+							}
+
+							gameNetworkInterface->sendTextMessage("*"+text, teamMode? thisTeamIndex: -1, false, "");
+							if(inMenu == false && Config::getInstance().getBool("ChatStaysActive","false")==false ) {
+								editEnabled= false;
+							}
 						}
 					}
 					else {
 						editEnabled= false;
 					}
+
+					if(customCB != NULL) {
+						customCB->processInputText(text,false);
+						editEnabled= false;
+						customCB = NULL;
+					}
+
 					text.clear();
 					textCharLength.clear();
 				}
@@ -163,7 +178,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 				string currentAutoCompleteName = "";
 
 				int startPos = -1;
-				for(int i = text.size()-1; i >= 0; --i) {
+				for(int i = (int)text.size()-1; i >= 0; --i) {
 					if(text[i] != ' ') {
 						startPos = i;
 					}
@@ -187,7 +202,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 
 				GameNetworkInterface *gameNetworkInterface= NetworkManager::getInstance().getGameNetworkInterface();
 				const GameSettings *settings = gameNetworkInterface->getGameSettings();
-				for(unsigned int factionIndex = 0; factionIndex < settings->getFactionCount(); ++factionIndex) {
+				for(unsigned int factionIndex = 0; factionIndex < (unsigned int)settings->getFactionCount(); ++factionIndex) {
 					string playerName = settings->getNetworkPlayerName(factionIndex);
 					if(playerName.length() > autoCompleteName.length() &&
 						StartsWith(toLower(playerName), toLower(autoCompleteName)) == true) {
@@ -202,7 +217,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 				}
 				if(matchedIndexes.empty() == false) {
 					int newMatchedIndex = -1;
-					for(unsigned int index = 0; index < matchedIndexes.size(); ++index) {
+					for(unsigned int index = 0; index < (unsigned int)matchedIndexes.size(); ++index) {
 						int possibleMatchIndex = matchedIndexes[index];
 						if(replaceCurrentAutoCompleteName < 0 ||
 							(replaceCurrentAutoCompleteName >= 0 && possibleMatchIndex > replaceCurrentAutoCompleteName)) {
@@ -211,7 +226,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 						}
 					}
 					if(newMatchedIndex < 0) {
-						for(unsigned int index = 0; index < matchedIndexes.size(); ++index) {
+						for(unsigned int index = 0; index < (unsigned int)matchedIndexes.size(); ++index) {
 							int possibleMatchIndex = matchedIndexes[index];
 							if(replaceCurrentAutoCompleteName < 0 ||
 								(replaceCurrentAutoCompleteName >= 0 && possibleMatchIndex < replaceCurrentAutoCompleteName)) {
@@ -229,7 +244,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 				if(autoCompleteResult == "") {
 					replaceCurrentAutoCompleteName = -1;
 					matchedIndexes.clear();
-					for(unsigned int index = 0; index < autoCompleteTextList.size(); ++index) {
+					for(unsigned int index = 0; index < (unsigned int)autoCompleteTextList.size(); ++index) {
 						string autoText = autoCompleteTextList[index];
 
 						//printf("CHECKING #2 autoText.length() = %d [%s] autoCompleteName.length() = %d [%s]\n",autoText.length(),autoText.c_str(),autoCompleteName.length(),currentAutoCompleteName.c_str());
@@ -250,7 +265,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 					}
 					if(matchedIndexes.empty() == false) {
 						int newMatchedIndex = -1;
-						for(unsigned int index = 0; index < matchedIndexes.size(); ++index) {
+						for(unsigned int index = 0; index < (unsigned int)matchedIndexes.size(); ++index) {
 							int possibleMatchIndex = matchedIndexes[index];
 							if(replaceCurrentAutoCompleteName < 0 ||
 								(replaceCurrentAutoCompleteName >= 0 && possibleMatchIndex > replaceCurrentAutoCompleteName)) {
@@ -259,7 +274,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 							}
 						}
 						if(newMatchedIndex < 0) {
-							for(unsigned int index = 0; index < matchedIndexes.size(); ++index) {
+							for(unsigned int index = 0; index < (unsigned int)matchedIndexes.size(); ++index) {
 								int possibleMatchIndex = matchedIndexes[index];
 								if(replaceCurrentAutoCompleteName < 0 ||
 									(replaceCurrentAutoCompleteName >= 0 && possibleMatchIndex < replaceCurrentAutoCompleteName)) {
@@ -277,7 +292,7 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 
 				if(autoCompleteResult != "") {
 					if(replaceCurrentAutoCompleteName >= 0) {
-						deleteText(currentAutoCompleteName.length(), false);
+						deleteText((int)currentAutoCompleteName.length(), false);
 
 						autoCompleteResult = autoCompleteName + autoCompleteResult;
 
@@ -294,52 +309,56 @@ void ChatManager::keyDown(SDL_KeyboardEvent key) {
 		else if(isKeyPressed(SDLK_BACKSPACE,key,false) == true) {
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key.keysym.sym,key.keysym.sym);
 
-//			if(text.empty() == false) {
-//				if(textCharLength.size() > 0) {
-//					//printf("BEFORE DEL textCharLength.size() = %d textCharLength[textCharLength.size()-1] = %d text.length() = %d\n",textCharLength.size(),textCharLength[textCharLength.size()-1],text.length());
-//
-//					if(textCharLength[textCharLength.size()-1] > text.length()) {
-//						textCharLength[textCharLength.size()-1] = text.length();
-//					}
-//					for(unsigned int i = 0; i < textCharLength[textCharLength.size()-1]; ++i) {
-//						text.erase(text.end() -1);
-//					}
-//					//printf("AFTER DEL textCharLength.size() = %d textCharLength[textCharLength.size()-1] = %d text.length() = %d\n",textCharLength.size(),textCharLength[textCharLength.size()-1],text.length());
-//					textCharLength.pop_back();
-//
-//					updateAutoCompleteBuffer();
-//				}
-//			}
 			deleteText(1);
 		}
 
 	}
 	catch(const exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-void ChatManager::switchOnEdit() {
+void ChatManager::keyPress(SDL_KeyboardEvent c) {
+	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,c.keysym.sym,c.keysym.sym);
+
+	int maxTextLenAllowed = (customCB != NULL ? this->maxCustomTextLength : maxTextLenght);
+	if(editEnabled && (int)text.size() < maxTextLenAllowed) {
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,c.keysym.sym,c.keysym.sym);
+		//space is the first meaningful code
+		wchar_t key = extractKeyPressedUnicode(c);
+		wchar_t textAppend[] = { key, 0 };
+		appendText(textAppend);
+	}
+}
+
+void ChatManager::switchOnEdit(CustomInputCallbackInterface *customCB,int maxCustomTextLength) {
 	editEnabled= true;
 	text.clear();
 	textCharLength.clear();
+	this->customCB = customCB;
+	if(maxCustomTextLength > 0) {
+		this->maxCustomTextLength = maxCustomTextLength;
+	}
+	else {
+		this->maxCustomTextLength = maxTextLenght;
+	}
 }
 
 void ChatManager::deleteText(int deleteCount,bool addToAutoCompleteBuffer) {
-	if(text.empty() == false) {
-		for(unsigned int i = 0; i < deleteCount; ++i) {
+	if(text.empty() == false && deleteCount >= 0) {
+		for(unsigned int i = 0; i < (unsigned int)deleteCount; ++i) {
 			if(textCharLength.empty() == false) {
 				//printf("BEFORE DEL textCharLength.size() = %d textCharLength[textCharLength.size()-1] = %d text.length() = %d\n",textCharLength.size(),textCharLength[textCharLength.size()-1],text.length());
 
-				if(textCharLength[textCharLength.size()-1] > text.length()) {
-					textCharLength[textCharLength.size()-1] = text.length();
+				if(textCharLength[textCharLength.size()-1] > (int)text.length()) {
+					textCharLength[(int)textCharLength.size()-1] = (int)text.length();
 				}
-				for(unsigned int i = 0; i < textCharLength[textCharLength.size()-1]; ++i) {
+				for(unsigned int i = 0; i < (unsigned int)textCharLength[textCharLength.size()-1]; ++i) {
 					text.erase(text.end() -1);
 				}
 				//printf("AFTER DEL textCharLength.size() = %d textCharLength[textCharLength.size()-1] = %d text.length() = %d\n",textCharLength.size(),textCharLength[textCharLength.size()-1],text.length());
@@ -357,7 +376,10 @@ void ChatManager::deleteText(int deleteCount,bool addToAutoCompleteBuffer) {
 void ChatManager::appendText(const wchar_t *addText, bool validateChars, bool addToAutoCompleteBuffer) {
 	for(unsigned int i = 0; i < wcslen(addText); ++i) {
 		wchar_t key = addText[i];
-		if(validateChars == false || isAllowedInputTextKey(key)) {
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("appendText key [%d]\n\n",(int)key);
+
+		if(validateChars == false ||
+			(isAllowedInputTextKey(key) == true && key != 10)) {
 			char buf[4] = {0};
 			if (key < 0x80) {
 				buf[0] = key;
@@ -366,14 +388,14 @@ void ChatManager::appendText(const wchar_t *addText, bool validateChars, bool ad
 			}
 			else if (key < 0x800) {
 				buf[0] = (0xC0 | key >> 6);
-				buf[1] = (0x80 | key & 0x3F);
+				buf[1] = (0x80 | (key & 0x3F));
 				textCharLength.push_back(2);
 				//printf("2 char, textCharLength = %d\n",textCharLength.size());
 			}
 			else {
 				buf[0] = (0xE0 | key >> 12);
-				buf[1] = (0x80 | key >> 6 & 0x3F);
-				buf[2] = (0x80 | key & 0x3F);
+				buf[1] = (0x80 | (key >> 6 & 0x3F));
+				buf[2] = (0x80 | (key & 0x3F));
 				textCharLength.push_back(3);
 				//printf("3 char, textCharLength = %d\n",textCharLength.size());
 			}
@@ -389,7 +411,7 @@ void ChatManager::appendText(const wchar_t *addText, bool validateChars, bool ad
 void ChatManager::updateAutoCompleteBuffer() {
 	if(text.empty() == false) {
 		int startPos = -1;
-		for(int i = text.size()-1; i >= 0; --i) {
+		for(int i = (int)text.size()-1; i >= 0; --i) {
 			if(text[i] != ' ') {
 				startPos = i;
 			}
@@ -404,61 +426,13 @@ void ChatManager::updateAutoCompleteBuffer() {
 	}
 }
 
-void ChatManager::keyPress(SDL_KeyboardEvent c) {
-	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,c.keysym.sym,c.keysym.sym);
-
-	if(editEnabled && text.size() < maxTextLenght) {
-		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c] [%d]\n",__FILE__,__FUNCTION__,__LINE__,c.keysym.sym,c.keysym.sym);
-		//space is the first meaningful code
-//		SDLKey key = extractKeyPressed(c);
-//		if(isAllowedInputTextKey(key)) {
-
-		wchar_t key = extractKeyPressedUnicode(c);
-		wchar_t textAppend[] = { key, 0 };
-		appendText(textAppend);
-/*
-		wchar_t key = extractKeyPressedUnicode(c);
-		if(isAllowedInputTextKey(key)) {
-			//char szCharText[20]="";
-			//sprintf(szCharText,"%lc",key);
-			//char *utfStr = String::ConvertToUTF8(&szCharText[0]);
-			//text += utfStr;
-
-			//wchar_t wc = 0x1234;
-			char buf[4] = {0};
-			if (key < 0x80) {
-				buf[0] = key;
-				textCharLength.push_back(1);
-				//printf("1 char, textCharLength = %d\n",textCharLength.size());
-			}
-			else if (key < 0x800) {
-				buf[0] = (0xC0 | key >> 6);
-				buf[1] = (0x80 | key & 0x3F);
-				textCharLength.push_back(2);
-				//printf("2 char, textCharLength = %d\n",textCharLength.size());
-			}
-			else {
-				buf[0] = (0xE0 | key >> 12);
-				buf[1] = (0x80 | key >> 6 & 0x3F);
-				buf[2] = (0x80 | key & 0x3F);
-				textCharLength.push_back(3);
-				//printf("3 char, textCharLength = %d\n",textCharLength.size());
-			}
-			text += buf;
-
-			//printf("text length = %d\n",text.length());
-
-			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%d] szCharText [%s]\n",__FILE__,__FUNCTION__,__LINE__, key,text.c_str());
-
-			//delete [] utfStr;
-		}
-*/
-	}
-}
-
 void ChatManager::addText(string text) {
-	if(editEnabled && text.size() + this->text.size() < maxTextLenght) {
+	int maxTextLenAllowed = (customCB != NULL ? this->maxCustomTextLength : maxTextLenght);
+	if(editEnabled && (int)text.size() + (int)this->text.size() <= maxTextLenAllowed) {
 		this->text += text;
+		for(int i= 0; i<(int)text.size() ; i++){
+			textCharLength.push_back(1);
+		}
 	}
 }
 
@@ -476,7 +450,7 @@ void ChatManager::updateNetwork() {
 			Lang &lang= Lang::getInstance();
 
 			std::vector<ChatMsgInfo> chatList = gameNetworkInterface->getChatTextList(true);
-			for(int idx = 0; idx < chatList.size(); idx++) {
+			for(int idx = 0; idx < (int)chatList.size(); idx++) {
 				const ChatMsgInfo msg = chatList[idx];
 				int teamIndex= msg.chatTeamIndex;
 
@@ -485,7 +459,25 @@ void ChatManager::updateNetwork() {
 				if(teamIndex == -1 || teamIndex == thisTeamIndex) {
 					if(msg.targetLanguage == "" || lang.isLanguageLocal(msg.targetLanguage) == true) {
 						bool teamMode = (teamIndex != -1 && teamIndex == thisTeamIndex);
-						console->addLine(msg.chatText, true, msg.chatPlayerIndex,Vec3f(1.f, 1.f, 1.f),teamMode);
+						string playerName = gameNetworkInterface->getHumanPlayerName();
+						if(this->manualPlayerNameOverride != "") {
+							playerName = this->manualPlayerNameOverride;
+						}
+
+						//printf("Network chat msg from: [%d - %s] [%s]\n",msg.chatPlayerIndex,gameNetworkInterface->getHumanPlayerName().c_str(),this->manualPlayerNameOverride.c_str());
+
+			        	if(StartsWith(msg.chatText,"*")){
+			        		if(msg.chatText.find(playerName) != string::npos){
+			        			CoreData &coreData= CoreData::getInstance();
+			        			SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+			        			soundRenderer.playFx(coreData.getHighlightSound());
+			        		}
+			        		console->addLine(msg.chatText.substr(1,msg.chatText.size()), true, msg.chatPlayerIndex,Vec3f(1.f, 1.f, 1.f),teamMode);
+			        	}
+			        	else {
+			        		console->addLine(msg.chatText, true, msg.chatPlayerIndex,Vec3f(1.f, 1.f, 1.f),teamMode);
+			        	}
+
 					}
 
 					SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Added text to console\n",__FILE__,__FUNCTION__);
@@ -498,10 +490,10 @@ void ChatManager::updateNetwork() {
 		}
 	}
 	catch(const std::exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 

@@ -244,24 +244,14 @@ void ParticleRendererGl::renderModel(GameParticleSystem *ps, ModelRenderer *mr){
 		Vec3f flatDirection= Vec3f(direction.x, 0.f, direction.z);
 		Vec3f rotVector= Vec3f(0.f, 1.f, 0.f).cross(flatDirection);
 
-#ifdef USE_STREFLOP
-		float angleV= radToDeg(streflop::atan2(flatDirection.length(), direction.y)) - 90.f;
-#else
-		float angleV= radToDeg(atan2(flatDirection.length(), direction.y)) - 90.f;
-#endif
-
+		float angleV= radToDeg(std::atan2(flatDirection.length(), (float)direction.y)) - 90.f;
 		glRotatef(angleV, rotVector.x, rotVector.y, rotVector.z);
 
-#ifdef USE_STREFLOP
-		float angleH= radToDeg(streflop::atan2(direction.x, direction.z));
-#else
-		float angleH= radToDeg(atan2(direction.x, direction.z));
-#endif
-
+		float angleH= radToDeg(std::atan2(direction.x, direction.z));
 		glRotatef(angleH, 0.f, 1.f, 0.f);
 
 		//render
-		mr->begin(true, true, false);
+		mr->begin(true, true, false, false);
 		float t = ps->getTween();
 
 		if(t < 0.0f || t > 1.0f) {
@@ -307,6 +297,7 @@ void ParticleRendererGl::setBlendMode(ParticleSystem::BlendMode blendMode){
 		break;
 	default:
 		assert(false);
+		break;
 	}
 }
 

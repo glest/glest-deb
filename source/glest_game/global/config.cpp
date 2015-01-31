@@ -50,16 +50,35 @@ const char *GameConstants::folder_path_screenshots	= "screens/";
 const char *GameConstants::OBSERVER_SLOTNAME		= "*Observer*";
 const char *GameConstants::RANDOMFACTION_SLOTNAME	= "*Random*";
 
+const char *GameConstants::preCacheThreadCacheLookupKey  		= "preCacheThreadCache";
+const char *GameConstants::ircClientCacheLookupKey  			= "ircClientCache";
 const char *GameConstants::playerTextureCacheLookupKey  		= "playerTextureCache";
 const char *GameConstants::factionPreviewTextureCacheLookupKey  = "factionPreviewTextureCache";
 const char *GameConstants::characterMenuScreenPositionListCacheLookupKey  = "characterMenuScreenPositionListCache";
 const char *GameConstants::application_name				= "MegaGlest";
+
+const char * GameConstants::LOADING_SCREEN_FILE 	   = "loading_screen";
+const char * GameConstants::LOADING_SCREEN_FILE_FILTER = "loading_screen*.*";
+const char * GameConstants::PREVIEW_SCREEN_FILE 	   = "preview_screen";
+const char * GameConstants::PREVIEW_SCREEN_FILE_FILTER = "preview_screen*.*";
+const char * GameConstants::HUD_SCREEN_FILE 	   	   = "hud";
+const char * GameConstants::HUD_SCREEN_FILE_FILTER     = "hud*.*";
 
 
 const char *GameConstants::pathCacheLookupKey           = "pathCache_";
 const char *GameConstants::path_data_CacheLookupKey     = "data";
 const char *GameConstants::path_ini_CacheLookupKey      = "ini";
 const char *GameConstants::path_logs_CacheLookupKey     = "logs";
+
+const char *GameConstants::saveNetworkGameFileServer			= "megaglest-saved-server.xml";
+const char *GameConstants::saveNetworkGameFileServerCompressed 	= "megaglest-saved-server.zip";
+
+const char *GameConstants::saveNetworkGameFileClient			= "megaglest-saved-client.xml";
+const char *GameConstants::saveNetworkGameFileClientCompressed 	= "megaglest-saved-client.zip";
+
+const char *GameConstants::saveGameFileDefault 			= "megaglest-saved.xml";
+const char *GameConstants::saveGameFileAutoTestDefault 	= "megaglest-auto-saved_%s.xml";
+const char *GameConstants::saveGameFilePattern 			= "megaglest-saved_%s.xml";
 
 const char *Config::glest_ini_filename                  = "glest.ini";
 const char *Config::glestuser_ini_filename              = "glestuser.ini";
@@ -68,6 +87,11 @@ const char *Config::glestkeys_ini_filename              = "glestkeys.ini";
 const char *Config::glestuserkeys_ini_filename          = "glestuserkeys.ini";
 
 const char *Config::ACTIVE_MOD_PROPERTY_NAME			= "current_mod_name";
+
+ const char *Config::colorPicking = "color";
+ const char *Config::selectBufPicking = "selectbuf";
+ const char *Config::frustumPicking = "frustum";
+
 map<string,string> Config::customRuntimeProperties;
 
 // =====================================================
@@ -87,8 +111,6 @@ Config::Config() {
 	fileName.second 			= "";
 	fileNameParameter.first 	= "";
 	fileNameParameter.second 	= "";
-	fileLoaded.first 			= false;
-	fileLoaded.second 			= false;
 }
 
 bool Config::tryCustomPath(std::pair<ConfigType,ConfigType> &type, std::pair<string,string> &file, string custom_path) {
@@ -167,10 +189,20 @@ Config::Config(std::pair<ConfigType,ConfigType> type, std::pair<string,string> f
     }
 #endif
 
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("foundPath = [%d]\n",foundPath);
+
     if(fileMustExist.first == true && fileExists(fileName.first) == false) {
     	//string currentpath = extractDirectoryPathFromFile(Properties::getApplicationPath());
     	fileName.first = currentpath + fileName.first;
     }
+
+#if defined(WIN32)
+	//string test = "C:\\Code\\megaglest\\mk\\windoze\\.\\..\\..\\data\\glest_game\\glest.ini";
+	//updatePathClimbingParts(test);
+
+	updatePathClimbingParts(fileName.first);
+#endif
+
     if(SystemFlags::VERBOSE_MODE_ENABLED) printf("-=-=-=-=-=-=-= About to load fileName.first = [%s]\n",fileName.first.c_str());
 
     if(fileMustExist.first == true ||
@@ -194,6 +226,11 @@ Config::Config(std::pair<ConfigType,ConfigType> type, std::pair<string,string> f
         	}
         	fileName.second = userData + fileNameParameter.second;
         }
+
+#if defined(WIN32)
+		updatePathClimbingParts(fileName.second);
+#endif
+
     }
     else if(cfgType.first == cfgMainKeys) {
         Config &mainCfg = Config::getInstance();
@@ -211,6 +248,11 @@ Config::Config(std::pair<ConfigType,ConfigType> type, std::pair<string,string> f
         	}
         	fileName.second = userData + fileNameParameter.second;
         }
+
+#if defined(WIN32)
+	updatePathClimbingParts(fileName.second);
+#endif
+
     }
 
     if(SystemFlags::VERBOSE_MODE_ENABLED) printf("-=-=-=-=-=-=-= About to load fileName.second = [%s]\n",fileName.second.c_str());
@@ -306,6 +348,9 @@ void Config::save(const string &path){
 }
 
 int Config::getInt(const char *key,const char *defaultValueIfNotFound) const {
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getInt(key,defaultValueIfNotFound);
+	}
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getInt(key,defaultValueIfNotFound);
@@ -314,6 +359,10 @@ int Config::getInt(const char *key,const char *defaultValueIfNotFound) const {
 }
 
 bool Config::getBool(const char *key,const char *defaultValueIfNotFound) const {
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getBool(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getBool(key,defaultValueIfNotFound);
@@ -323,6 +372,10 @@ bool Config::getBool(const char *key,const char *defaultValueIfNotFound) const {
 }
 
 float Config::getFloat(const char *key,const char *defaultValueIfNotFound) const {
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getFloat(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getFloat(key,defaultValueIfNotFound);
@@ -332,6 +385,10 @@ float Config::getFloat(const char *key,const char *defaultValueIfNotFound) const
 }
 
 const string Config::getString(const char *key,const char *defaultValueIfNotFound) const {
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getString(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getString(key,defaultValueIfNotFound);
@@ -341,6 +398,10 @@ const string Config::getString(const char *key,const char *defaultValueIfNotFoun
 }
 
 int Config::getInt(const string &key,const char *defaultValueIfNotFound) const{
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getInt(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getInt(key,defaultValueIfNotFound);
@@ -350,6 +411,10 @@ int Config::getInt(const string &key,const char *defaultValueIfNotFound) const{
 }
 
 bool Config::getBool(const string &key,const char *defaultValueIfNotFound) const{
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getBool(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getBool(key,defaultValueIfNotFound);
@@ -359,6 +424,10 @@ bool Config::getBool(const string &key,const char *defaultValueIfNotFound) const
 }
 
 float Config::getFloat(const string &key,const char *defaultValueIfNotFound) const{
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getFloat(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getFloat(key,defaultValueIfNotFound);
@@ -368,6 +437,10 @@ float Config::getFloat(const string &key,const char *defaultValueIfNotFound) con
 }
 
 const string Config::getString(const string &key,const char *defaultValueIfNotFound) const{
+	if(tempProperties.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
+		return tempProperties.getString(key,defaultValueIfNotFound);
+	}
+
 	if(fileLoaded.second == true &&
 		properties.second.getString(key, defaultNotFoundValue.c_str()) != defaultNotFoundValue) {
 		return properties.second.getString(key,defaultValueIfNotFound);
@@ -375,309 +448,6 @@ const string Config::getString(const string &key,const char *defaultValueIfNotFo
 
 	return properties.first.getString(key,defaultValueIfNotFound);
 }
-
-/*
-SDLKey Config::translateSpecialStringToSDLKey(char c) const {
-	SDLKey result = SDLK_UNKNOWN;
-	if(c < 0) {
-		switch(c) {
-			case vkAdd:
-				result = SDLK_PLUS;
-				break;
-			case vkSubtract:
-				result = SDLK_MINUS;
-				break;
-
-			case vkAlt:
-				result = SDLK_RALT;
-				break;
-
-			case vkControl:
-				result = SDLK_RCTRL;
-				break;
-
-			case vkShift:
-				result = SDLK_RSHIFT;
-				break;
-
-			case vkEscape:
-				result = SDLK_ESCAPE;
-				break;
-
-			case vkUp:
-				result = SDLK_UP;
-				break;
-
-			case vkLeft:
-				result = SDLK_LEFT;
-				break;
-
-			case vkRight:
-				result = SDLK_RIGHT;
-				break;
-
-			case vkDown:
-				result = SDLK_DOWN;
-				break;
-
-			case vkReturn:
-				result = SDLK_RETURN;
-				break;
-
-			case vkBack:
-				result = SDLK_BACKSPACE;
-				break;
-
-			case vkTab:
-				result = SDLK_TAB;
-				break;
-
-			case vkF1:
-				result = SDLK_F1;
-				break;
-
-			case vkF2:
-				result = SDLK_F2;
-				break;
-
-			case vkF3:
-				result = SDLK_F3;
-				break;
-
-			case vkF4:
-				result = SDLK_F4;
-				break;
-
-			case vkF5:
-				result = SDLK_F5;
-				break;
-
-			case vkF6:
-				result = SDLK_F6;
-				break;
-
-			case vkF7:
-				result = SDLK_F7;
-				break;
-
-			case vkF8:
-				result = SDLK_F8;
-				break;
-
-			case vkF9:
-				result = SDLK_F9;
-				break;
-
-			case vkF10:
-				result = SDLK_F10;
-				break;
-
-			case vkF11:
-				result = SDLK_F11;
-				break;
-
-			case vkF12:
-				result = SDLK_F12;
-				break;
-
-			case vkDelete:
-				result = SDLK_DELETE;
-				break;
-
-			case vkPrint:
-				result = SDLK_PRINT;
-				break;
-
-			case vkPause:
-				result = SDLK_PAUSE;
-				break;
-		}
-	}
-	else {
-		result = static_cast<SDLKey>(c);
-	}
-
-	return result;
-}
-
-char Config::translateStringToCharKey(const string &value) const {
-	char result = 0;
-
-	if(IsNumeric(value.c_str()) == true) {
-		result = strToInt(value);
-	}
-	else if(value.substr(0,2) == "vk") {
-		if(value == "vkLeft") {
-			result = vkLeft;
-		}
-		else if(value == "vkRight") {
-			result = vkRight;
-		}
-		else if(value == "vkUp") {
-			result = vkUp;
-		}
-		else if(value == "vkDown") {
-			result = vkDown;
-		}
-		else if(value == "vkAdd") {
-			result = vkAdd;
-		}
-		else if(value == "vkSubtract") {
-			result = vkSubtract;
-		}
-		else if(value == "vkEscape") {
-			result = vkEscape;
-		}
-		else if(value == "vkF1") {
-			result = vkF1;
-		}
-		else if(value == "vkF2") {
-			result = vkF2;
-		}
-		else if(value == "vkF3") {
-			result = vkF3;
-		}
-		else if(value == "vkF4") {
-			result = vkF4;
-		}
-		else if(value == "vkF5") {
-			result = vkF5;
-		}
-		else if(value == "vkF6") {
-			result = vkF6;
-		}
-		else if(value == "vkF7") {
-			result = vkF7;
-		}
-		else if(value == "vkF8") {
-			result = vkF8;
-		}
-		else if(value == "vkF9") {
-			result = vkF9;
-		}
-		else if(value == "vkF10") {
-			result = vkF10;
-		}
-		else if(value == "vkF11") {
-			result = vkF11;
-		}
-		else if(value == "vkF12") {
-			result = vkF12;
-		}
-		else if(value == "vkPrint") {
-			result = vkPrint;
-		}
-		else if(value == "vkPause") {
-			result = vkPause;
-		}
-		else {
-			string sError = "Unsupported key translation [" + value + "]";
-			throw runtime_error(sError.c_str());
-		}
-	}
-	else if(value.length() >= 1) {
-		if(value.length() == 3 && value[0] == '\'' && value[2] == '\'') {
-			result = value[1];
-		}
-		else {
-			bool foundKey = false;
-			if(value.length() > 1) {
-				for(int i = SDLK_UNKNOWN; i < SDLK_LAST; ++i) {
-					SDLKey key = static_cast<SDLKey>(i);
-					string keyName = SDL_GetKeyName(key);
-					if(value == keyName) {
-						if(key > 255) {
-							if(value == "left") {
-								result = vkLeft;
-							}
-							else if(value == "right") {
-								result = vkRight;
-							}
-							else if(value == "up") {
-								result = vkUp;
-							}
-							else if(value == "down") {
-								result = vkDown;
-							}
-							else if(value == "add") {
-								result = vkAdd;
-							}
-							else if(value == "subtract") {
-								result = vkSubtract;
-							}
-							else if(value == "escape") {
-								result = vkEscape;
-							}
-							else if(value == "f1") {
-								result = vkF1;
-							}
-							else if(value == "f2") {
-								result = vkF2;
-							}
-							else if(value == "f3") {
-								result = vkF3;
-							}
-							else if(value == "f4") {
-								result = vkF4;
-							}
-							else if(value == "f5") {
-								result = vkF5;
-							}
-							else if(value == "f6") {
-								result = vkF6;
-							}
-							else if(value == "f7") {
-								result = vkF7;
-							}
-							else if(value == "f8") {
-								result = vkF8;
-							}
-							else if(value == "f9") {
-								result = vkF9;
-							}
-							else if(value == "f10") {
-								result = vkF10;
-							}
-							else if(value == "f11") {
-								result = vkF11;
-							}
-							else if(value == "f12") {
-								result = vkF12;
-							}
-							else if(value == "print-screen") {
-								result = vkPrint;
-							}
-							else if(value == "pause") {
-								result = vkPause;
-							}
-							else {
-								result = -key;
-							}
-						}
-						else {
-							result = key;
-						}
-						foundKey = true;
-						break;
-					}
-				}
-			}
-
-			if(foundKey == false) {
-				result = value[0];
-			}
-		}
-	}
-	else {
-		string sError = "Unsupported key translation" + value;
-		throw runtime_error(sError.c_str());
-	}
-
-	// Because SDL is based on lower Ascii
-	result = tolower(result);
-	return result;
-}
-*/
 
 SDLKey Config::translateStringToSDLKey(const string &value) const {
 	SDLKey result = SDLK_UNKNOWN;
@@ -751,7 +521,7 @@ SDLKey Config::translateStringToSDLKey(const string &value) const {
 		}
 		else {
 			string sError = "Unsupported key translation [" + value + "]";
-			throw runtime_error(sError.c_str());
+			throw megaglest_runtime_error(sError.c_str());
 		}
 	}
 	else if(value.length() >= 1) {
@@ -779,7 +549,7 @@ SDLKey Config::translateStringToSDLKey(const string &value) const {
 	}
 	else {
 		string sError = "Unsupported key translation" + value;
-		throw runtime_error(sError.c_str());
+		throw megaglest_runtime_error(sError.c_str());
 	}
 
 	// Because SDL is based on lower Ascii
@@ -809,7 +579,11 @@ SDLKey Config::getSDLKey(const char *key) const {
 //	return translateStringToCharKey(value);
 //}
 
-void Config::setInt(const string &key, int value){
+void Config::setInt(const string &key, int value, bool tempBuffer) {
+	if(tempBuffer == true) {
+		tempProperties.setInt(key, value);
+		return;
+	}
 	if(fileLoaded.second == true) {
 		properties.second.setInt(key, value);
 		return;
@@ -817,7 +591,12 @@ void Config::setInt(const string &key, int value){
 	properties.first.setInt(key, value);
 }
 
-void Config::setBool(const string &key, bool value){
+void Config::setBool(const string &key, bool value, bool tempBuffer) {
+	if(tempBuffer == true) {
+		tempProperties.setBool(key, value);
+		return;
+	}
+
 	if(fileLoaded.second == true) {
 		properties.second.setBool(key, value);
 		return;
@@ -826,7 +605,12 @@ void Config::setBool(const string &key, bool value){
 	properties.first.setBool(key, value);
 }
 
-void Config::setFloat(const string &key, float value){
+void Config::setFloat(const string &key, float value, bool tempBuffer) {
+	if(tempBuffer == true) {
+		tempProperties.setFloat(key, value);
+		return;
+	}
+
 	if(fileLoaded.second == true) {
 		properties.second.setFloat(key, value);
 		return;
@@ -835,7 +619,12 @@ void Config::setFloat(const string &key, float value){
 	properties.first.setFloat(key, value);
 }
 
-void Config::setString(const string &key, const string &value){
+void Config::setString(const string &key, const string &value, bool tempBuffer) {
+	if(tempBuffer == true) {
+		tempProperties.setString(key, value);
+		return;
+	}
+
 	if(fileLoaded.second == true) {
 		properties.second.setString(key, value);
 		return;
@@ -959,6 +748,10 @@ vector<string> Config::getPathListForType(PathType type, string scenarioDir) {
         }
     }
     if(scenarioDir != "") {
+		if(EndsWith(scenarioDir, ".xml") == true) {
+			scenarioDir = extractDirectoryPathFromFile(scenarioDir);
+		}
+
     	//string scenarioLocation = data_path + scenarioDir;
     	string scenarioLocation = scenarioDir;
     	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Scenario path [%s]\n",scenarioLocation.c_str());
@@ -999,6 +792,104 @@ vector<string> Config::getPathListForType(PathType type, string scenarioDir) {
     }
 
     return pathList;
+}
+
+bool Config::replaceFileWithLocalFile(const vector<string> &dirList, string fileNamePart, string &resultToReplace) {
+	bool found = false;
+	for(unsigned int i = 0; i < dirList.size(); ++i) {
+		string path = dirList[i];
+		endPathWithSlash(path);
+		string newFileName = path + fileNamePart;
+		if(fileExists(newFileName) == true) {
+			resultToReplace = newFileName;
+			found = true;
+			break;
+		}
+	}
+	return found;
+}
+
+
+
+string Config::findValidLocalFileFromPath(string fileName) {
+	string result = fileName;
+
+	if(fileName.find("maps/") != fileName.npos ) {
+		size_t pos = fileName.find("maps/");
+		string fileNamePart = fileName.substr(pos+5);
+		Config &config = Config::getInstance();
+		vector<string> dirList = config.getPathListForType(ptMaps);
+		replaceFileWithLocalFile(dirList, fileNamePart, result);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Found file [%s] @ " MG_SIZE_T_SPECIFIER " [%s]\nNew File [%s]\n",fileName.c_str(),pos,fileNamePart.c_str(),result.c_str());
+	}
+	else if(fileName.find("tilesets/") != fileName.npos ) {
+		size_t pos = fileName.find("tilesets/");
+		string fileNamePart = fileName.substr(pos+9);
+		Config &config = Config::getInstance();
+		vector<string> dirList = config.getPathListForType(ptTilesets);
+		replaceFileWithLocalFile(dirList, fileNamePart, result);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Found file [%s] @ " MG_SIZE_T_SPECIFIER " [%s]\nNew File [%s]\n",fileName.c_str(),pos,fileNamePart.c_str(),result.c_str());
+	}
+	else if(fileName.find("techs/") != fileName.npos ) {
+		size_t pos = fileName.find("techs/");
+		string fileNamePart = fileName.substr(pos+6);
+		Config &config = Config::getInstance();
+		vector<string> dirList = config.getPathListForType(ptTechs);
+		replaceFileWithLocalFile(dirList, fileNamePart, result);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Found file [%s] @ " MG_SIZE_T_SPECIFIER " [%s]\nNew File [%s]\n",fileName.c_str(),pos,fileNamePart.c_str(),result.c_str());
+	}
+	else if(fileName.find("scenarios/") != fileName.npos) {
+		size_t pos = fileName.find("scenarios/");
+		string fileNamePart = fileName.substr(pos+10);
+		Config &config = Config::getInstance();
+		vector<string> dirList = config.getPathListForType(ptScenarios);
+		replaceFileWithLocalFile(dirList, fileNamePart, result);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Found file [%s] @ " MG_SIZE_T_SPECIFIER " [%s]\nNew File [%s]\n",fileName.c_str(),pos,fileNamePart.c_str(),result.c_str());
+	}
+	else if(fileName.find("tutorials/") != fileName.npos) {
+		size_t pos = fileName.find("tutorials/");
+		string fileNamePart = fileName.substr(pos+10);
+		Config &config = Config::getInstance();
+		vector<string> dirList = config.getPathListForType(ptTutorials);
+		replaceFileWithLocalFile(dirList, fileNamePart, result);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Found file [%s] @ " MG_SIZE_T_SPECIFIER " [%s]\nNew File [%s]\n",fileName.c_str(),pos,fileNamePart.c_str(),result.c_str());
+	}
+
+	return result;
+}
+
+
+// static
+string Config::getMapPath(const string &mapName, string scenarioDir, bool errorOnNotFound) {
+
+    Config &config = Config::getInstance();
+    vector<string> pathList = config.getPathListForType(ptMaps,scenarioDir);
+
+    for(int idx = 0; idx < (int)pathList.size(); idx++) {
+        string map_path = pathList[idx];
+    	endPathWithSlash(map_path);
+
+        const string mega = map_path + mapName + ".mgm";
+        const string glest = map_path + mapName + ".gbm";
+        if (fileExists(mega)) {
+            return mega;
+        }
+        else if (fileExists(glest)) {
+            return glest;
+        }
+    }
+
+	if(errorOnNotFound == true) {
+		//abort();
+		throw megaglest_runtime_error("Map not found [" + mapName + "]\nScenario [" + scenarioDir + "]");
+	}
+
+	return "";
 }
 
 }}// end namespace

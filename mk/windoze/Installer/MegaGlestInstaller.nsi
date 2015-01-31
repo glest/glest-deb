@@ -3,8 +3,8 @@
 
 !define APNAME MegaGlest
 !define APNAME_OLD Mega-Glest
-!define APVER_OLD 3.6.0.2
-!define APVER 3.6.0.3
+!define APVER_OLD 3.9.0
+!define APVER 3.9.1
 
 Name "${APNAME} ${APVER}"
 SetCompressor /FINAL /SOLID lzma
@@ -58,6 +58,10 @@ Page instfiles
 UninstPage uninstConfirm
 UninstPage instfiles
 
+Function .onInit
+    InitPluginsDir
+FunctionEnd
+
 Function myGUIInit
   SetOutPath '$PLUGINSDIR'
   File megaglestinstallscreen.jpg
@@ -83,12 +87,6 @@ FunctionEnd
 Function MUIGUIInit
 
   Call myGUIInit
-  
-#  SetOutPath '$PLUGINSDIR'
-#  File megaglestinstallscreen.jpg
-
-#  FindWindow $0 '_Nb'
-#  EBanner::show /NOUNLOAD /FIT=BOTH /HWND=$0 "$PLUGINSDIR\megaglestinstallscreen.jpg"
 
 # look for known older versions
 
@@ -199,6 +197,8 @@ noViewReadme:
 
 noLaunch:
 
+  Delete "$PLUGINSDIR'\megaglestinstallscreen.jpg"
+
 FunctionEnd
 
 ; The stuff to install
@@ -213,28 +213,26 @@ Section "${APNAME} (required)"
   ; Put file there
   File "..\..\..\data\glest_game\megaglest.exe"
   File "..\..\..\data\glest_game\megaglest_editor.exe"
-  File "..\..\..\data\glest_game\megaglest_configurator.exe"
   File "..\..\..\data\glest_game\megaglest_g3dviewer.exe"
   File "..\..\..\data\glest_game\7z.exe"
   File "..\..\..\data\glest_game\7z.dll"
-  File "..\..\..\data\glest_game\configuration.xml"
   File "..\..\..\data\glest_game\megaglest.ico"
   File "..\..\..\data\glest_game\glest.ini"
   File "..\..\..\data\glest_game\glestkeys.ini"
   File "..\..\..\data\glest_game\servers.ini"
   File "..\..\..\data\glest_game\openal32.dll"
-  File "..\..\..\data\glest_game\xerces-c_3_0.dll"
+  
+  File "..\..\..\mk\windoze\NetworkThrottleFix.reg"
+  
+  File "..\..\..\data\glest_game\libvlccore.dll"
+  File "..\..\..\data\glest_game\libvlc.dll"
+  File /r /x .svn /x mydata "..\..\..\data\glest_game\plugins"
+  File /r /x .svn /x mydata "..\..\..\data\glest_game\lua"
   
   SetOutPath "$INSTDIR\blender\"
   File "..\..\..\data\glest_game\xml2g.exe"
   File "..\..\..\data\glest_game\g2xml.exe"
   File /r /x .svn /x mydata "..\..\..\source\tools\glexemel\*.*"
-#  File "..\..\..\data\glest_game\xml2g.exe"
-#  File "..\..\..\data\glest_game\g2xml.exe"
-#  File "..\..\..\source\tools\glexemel\g3d_support.py"
-#  File "..\..\..\source\tools\glexemel\g3d_xml_exporter.py"
-#  File "..\..\..\source\tools\glexemel\g3d.dtd"
-#  File "..\..\..\source\tools\glexemel\g3d_logo.png"
   SetOutPath $INSTDIR
 
   File /r /x .svn /x mydata "..\..\..\data\glest_game\data"
@@ -244,7 +242,6 @@ Section "${APNAME} (required)"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\techs"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\tilesets"
   File /r /x .svn /x mydata "..\..\..\data\glest_game\tutorials"
-#  File /r /x .svn "..\..\..\data\glest_game\screens"
 
   SetOutPath "$INSTDIR\docs\"
   File /r /x .svn /x mydata "..\..\..\docs\*.*"
@@ -271,7 +268,6 @@ Section "${APNAME} (required)"
   CreateDirectory $INSTDIR\techs
   CreateDirectory $INSTDIR\tilesets
   CreateDirectory $INSTDIR\tutorials
-#  CreateDirectory $INSTDIR\screens
   CreateDirectory $INSTDIR\blender
 
   AccessControl::GrantOnFile "$INSTDIR" "(BU)" "FullAccess"
@@ -282,18 +278,26 @@ SectionEnd
 Section "Start Menu Shortcuts"
 
   CreateDirectory "$SMPROGRAMS\${APNAME}"
+  CreateDirectory "$APPDATA\megaglest"
   CreateShortCut "$SMPROGRAMS\${APNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME}.lnk" "$INSTDIR\megaglest.exe" "" "$INSTDIR\megaglest.exe" 0 "" "" "${APNAME}"
 
-;  CreateShortCut "$SMPROGRAMS\${APNAME} ${APVER}\${APNAME} Configurator.lnk" "$INSTDIR\glest_configurator.exe" "" "$INSTDIR\glest_configurator.exe" 0 "" "" "${APNAME} Config Editor"
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} Map Editor.lnk" "$INSTDIR\megaglest_editor.exe" "" "$INSTDIR\megaglest_editor.exe" 0 "" "" "${APNAME} MegaGlest Map Editor"
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} G3D Viewer.lnk" "$INSTDIR\megaglest_g3dviewer.exe" "" "$INSTDIR\megaglest_g3dviewer.exe" 0 "" "" "${APNAME} MegaGlest G3D Viewer"
 
+  CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} Main.lnk" "$INSTDIR" "" "" 0 "" "" "This folder is the ${APNAME} installation folder"
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} User Data.lnk" "$APPDATA\megaglest" "" "" 0 "" "" "This folder contains downloaded data (such as mods) and your personal ${APNAME} configuration"
 
 SectionEnd
 
 ;--------------------------------
+RequestExecutionLevel admin
+section "Tweaks"
+  AccessControl::GrantOnRegKey \
+    HKLM "Software" "(BU)" "FullAccess"
+    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" "NetworkThrottlingIndex" 0xffffffff
+sectionEnd
+RequestExecutionLevel none
 
 ; Uninstaller
 
@@ -310,15 +314,12 @@ Section "Uninstall"
 
   Delete "$INSTDIR\megaglest.exe"
   Delete "$INSTDIR\megaglest_editor.exe"
-  Delete "$INSTDIR\megaglest_configurator.exe"
   Delete "$INSTDIR\megaglest_g3dviewer.exe"
-  Delete "$INSTDIR\configuration.xml"
   Delete "$INSTDIR\megaglest.ico"
   Delete "$INSTDIR\glest.ini"
   Delete "$INSTDIR\glestkeys.ini"
   Delete "$INSTDIR\servers.ini"
   Delete "$INSTDIR\openal32.dll"
-  Delete "$INSTDIR\xerces-c_3_0.dll"
   Delete "$INSTDIR\*.log"
 
   Delete "$INSTDIR\data\*.*"
@@ -345,6 +346,8 @@ Section "Uninstall"
   ; Remove directories used
   RMDir "$SMPROGRAMS\${APNAME}"
   RMDir /r "$INSTDIR"
+
+  Delete "$PLUGINSDIR'\megaglestinstallscreen.jpg"
 
 SectionEnd
 

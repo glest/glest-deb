@@ -21,6 +21,8 @@
 #include "game_util.h"
 #include "lang.h"
 #include "game_settings.h"
+#include "video_player.h"
+#include "byte_order.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Sound;
@@ -33,7 +35,19 @@ namespace Glest{ namespace Game{
 // 	class CoreData
 // =====================================================
 
+static string tempDataLocation 			= getUserHome();
 // ===================== PUBLIC ========================
+
+static const string CORE_PATH 							=       "data/core/";
+static const string CORE_MISC_TEXTURES_PATH = CORE_PATH +       "misc_textures/";
+
+static const string CORE_MENU_PATH = CORE_PATH +                "menu/";
+static const string CORE_MENU_TEXTURES_PATH = CORE_MENU_PATH +  "textures/";
+static const string CORE_MENU_SOUND_PATH = CORE_MENU_PATH +     "sound/";
+static const string CORE_MENU_MUSIC_PATH = CORE_MENU_PATH +     "music/";
+static const string CORE_MENU_VIDEOS_PATH = CORE_MENU_PATH +    "videos/";
+
+static const string CORE_WATER_SOUNDS_PATH = CORE_PATH +        "/water_sounds/";
 
 CoreData &CoreData::getInstance() {
 	static CoreData coreData;
@@ -60,6 +74,9 @@ CoreData::CoreData() {
     onServerDifferentTexture=NULL;
     onServerTexture=NULL;
     onServerInstalledTexture=NULL;
+    statusReadyTexture=NULL;
+    statusNotReadyTexture=NULL;
+    statusBRBTexture=NULL;
 
     miscTextureList.clear();
 
@@ -76,6 +93,16 @@ CoreData::CoreData() {
 	menuFontBig3D=NULL;
 	menuFontVeryBig3D=NULL;
 	consoleFont3D=NULL;
+
+	introVideoFilename="";
+	mainMenuVideoFilename="";
+
+	battleEndWinVideoFilename="";
+	battleEndWinVideoFilenameFallback="";
+	battleEndWinMusicFilename="";
+	battleEndLoseVideoFilename="";
+	battleEndLoseVideoFilenameFallback="";
+	battleEndLoseMusicFilename="";
 }
 
 CoreData::~CoreData() {
@@ -87,233 +114,1014 @@ void CoreData::cleanup() {
 	waterSounds.getSoundsPtr()->clear();
 }
 
-void CoreData::load() {
-	string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
-	if(data_path != "") {
-		endPathWithSlash(data_path);
+Texture2D *CoreData::getTextureBySystemId(TextureSystemType type) const {
+	Texture2D *result = NULL;
+	switch(type) {
+	case tsyst_logoTexture:
+		result = logoTexture;
+		break;
+	//std::vector<Texture2D *> logoTextureList;
+	case tsyst_backgroundTexture:
+		result = backgroundTexture;
+		break;
+	case tsyst_fireTexture:
+		result = fireTexture;
+		break;
+	case tsyst_teamColorTexture:
+		result = teamColorTexture;
+		break;
+	case tsyst_snowTexture:
+		result = snowTexture;
+		break;
+	case tsyst_waterSplashTexture:
+		result = waterSplashTexture;
+		break;
+	case tsyst_customTexture:
+		result = customTexture;
+		break;
+	case tsyst_buttonSmallTexture:
+		result = buttonSmallTexture;
+		break;
+	case tsyst_buttonBigTexture:
+		result = buttonBigTexture;
+		break;
+	case tsyst_horizontalLineTexture:
+		result = horizontalLineTexture;
+		break;
+	case tsyst_verticalLineTexture:
+		result = verticalLineTexture;
+		break;
+	case tsyst_checkBoxTexture:
+		result = checkBoxTexture;
+		break;
+	case tsyst_checkedCheckBoxTexture:
+		result = checkedCheckBoxTexture;
+		break;
+	case tsyst_gameWinnerTexture:
+		result = gameWinnerTexture;
+		break;
+	case tsyst_notOnServerTexture:
+		result = notOnServerTexture;
+		break;
+	case tsyst_onServerDifferentTexture:
+		result = onServerDifferentTexture;
+		break;
+	case tsyst_onServerTexture:
+		result = onServerTexture;
+		break;
+	case tsyst_onServerInstalledTexture:
+		result = onServerInstalledTexture;
+		break;
+	case tsyst_statusReadyTexture:
+		result = statusReadyTexture;
+		break;
+	case tsyst_statusNotReadyTexture:
+		result = statusNotReadyTexture;
+		break;
+	case tsyst_statusBRBTexture:
+		result = statusBRBTexture;
+		break;
+
+    //std::vector<Texture2D *> miscTextureList;
 	}
+	return result;
+}
 
-	//const string dir = data_path + "data/core";
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenCoreDataLoading","",true));
-
+void CoreData::cleanupTexture(Texture2D **texture) {
 	Renderer &renderer= Renderer::getInstance();
+	renderer.endTexture(rsGlobal, *texture);
+	*texture=NULL;
+}
 
-	//textures
-	backgroundTexture= renderer.newTexture2D(rsGlobal);
-	if(backgroundTexture) {
-		backgroundTexture->setMipmap(false);
-		backgroundTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/back.tga"));
-	}
+void CoreData::loadTextureIfRequired(Texture2D **tex,string data_path,
+									string uniqueFilePath, int texSystemId,
+									bool setMipMap, bool setAlpha,
+									bool loadUniqueFilePath, bool compressionDisabled) {
+	if(*tex == NULL) {
+		bool attemptToLoadTexture = (texSystemId == tsyst_NONE);
+		if(attemptToLoadTexture == false &&
+				itemLoadAttempted.find(texSystemId) == itemLoadAttempted.end()) {
 
-	fireTexture= renderer.newTexture2D(rsGlobal);
-	if(fireTexture) {
-		fireTexture->setFormat(Texture::fAlpha);
-		fireTexture->getPixmap()->init(1);
-		fireTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/misc_textures/fire_particle.tga"));
-	}
+			attemptToLoadTexture 			= true;
+			itemLoadAttempted[texSystemId] 	= true;
+		}
 
-	teamColorTexture= renderer.newTexture2D(rsGlobal);
-	if(teamColorTexture) {
-		teamColorTexture->setFormat(Texture::fAlpha);
-		teamColorTexture->getPixmap()->init(1);
-		teamColorTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/misc_textures/team_color_texture.tga"));
-	}
+		if(attemptToLoadTexture == true) {
+			Renderer &renderer = Renderer::getInstance();
+			*tex = renderer.newTexture2D(rsGlobal);
+			if (*tex) {
 
-	snowTexture= renderer.newTexture2D(rsGlobal);
-	if(snowTexture) {
-		snowTexture->setMipmap(false);
-		snowTexture->setFormat(Texture::fAlpha);
-		snowTexture->getPixmap()->init(1);
-		snowTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/misc_textures/snow_particle.tga"));
-	}
+				(*tex)->setForceCompressionDisabled(compressionDisabled);
+				(*tex)->setMipmap(setMipMap);
+				if(setAlpha == true) {
 
-	customTexture= renderer.newTexture2D(rsGlobal);
-	if(customTexture) {
-		customTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/custom_texture.tga"));
-	}
+					(*tex)->setFormat(Texture::fAlpha);
+					(*tex)->getPixmap()->init(1);
+				}
 
-	notOnServerTexture= renderer.newTexture2D(rsGlobal);
-	if(notOnServerTexture) {
-		notOnServerTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/not_on_server.tga"));
-	}
+				try {
+					string fileToLoad = uniqueFilePath;
+					if(loadUniqueFilePath == false) {
 
-	onServerDifferentTexture= renderer.newTexture2D(rsGlobal);
-	if(onServerDifferentTexture) {
-		onServerDifferentTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/on_server_different.tga"));
+						fileToLoad = getGameCustomCoreDataPath(data_path,uniqueFilePath);
+					}
+					(*tex)->getPixmap()->load(fileToLoad);
+					(*tex)->setTextureSystemId(texSystemId);
 
-		onServerTexture= renderer.newTexture2D(rsGlobal);
-		onServerTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/on_server.tga"));
-
-		onServerInstalledTexture= renderer.newTexture2D(rsGlobal);
-		onServerInstalledTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/on_server_installed.tga"));
-	}
-
-	logoTexture= renderer.newTexture2D(rsGlobal);
-	if(logoTexture) {
-		logoTexture->setMipmap(false);
-		logoTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/logo.tga"));
-	}
-
-	logoTextureList.clear();
-
-
-	string logosPath = getGameCustomCoreDataPath(data_path, "") + "data/core/menu/textures/logo*.*";
-	vector<string> logoFilenames;
-    findAll(logosPath, logoFilenames, false, false);
-    for(int i = 0; i < logoFilenames.size(); ++i) {
-    	string logo = logoFilenames[i];
-    	if(strcmp("logo.tga",logo.c_str()) != 0) {
-    		Texture2D *logoTextureExtra= renderer.newTexture2D(rsGlobal);
-    		if(logoTextureExtra) {
-				logoTextureExtra->setMipmap(true);
-				logoTextureExtra->getPixmap()->load(getGameCustomCoreDataPath(data_path, "") + "data/core/menu/textures/" + logo);
-				logoTextureList.push_back(logoTextureExtra);
-    		}
-    	}
-    }
-
-	if(logoTextureList.empty() == true) {
-		logosPath= data_path + "data/core/menu/textures/logo*.*";
-		vector<string> logoFilenames;
-		findAll(logosPath, logoFilenames, false, false);
-		for(int i = 0; i < logoFilenames.size(); ++i) {
-			string logo = logoFilenames[i];
-			if(strcmp("logo.tga",logo.c_str()) != 0) {
-				Texture2D *logoTextureExtra= renderer.newTexture2D(rsGlobal);
-				if(logoTextureExtra) {
-					logoTextureExtra->setMipmap(true);
-					logoTextureExtra->getPixmap()->load(data_path + "data/core/menu/textures/" + logo);
-					logoTextureList.push_back(logoTextureExtra);
+					renderer.initTexture(rsGlobal,*tex);
+				}
+				catch (const megaglest_runtime_error& ex) {
+					message(ex.what(),GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+							tempDataLocation);
+					cleanupTexture (tex);
 				}
 			}
 		}
 	}
+}
 
-    miscTextureList.clear();
+string CoreData::getDataPath() {
+	string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
+	if(data_path != "") {
+		endPathWithSlash(data_path);
+	}
+	return data_path;
+}
 
-	string introPath = getGameCustomCoreDataPath(data_path, "") + "data/core/menu/textures/intro*.*";
-	vector<string> introFilenames;
-    findAll(introPath, introFilenames, false, false);
-    for(int i = 0; i < introFilenames.size(); ++i) {
-    	string logo = introFilenames[i];
-    	//if(strcmp("logo.tga",logo.c_str()) != 0) {
-    		Texture2D *logoTextureExtra= renderer.newTexture2D(rsGlobal);
-    		if(logoTextureExtra) {
-				logoTextureExtra->setMipmap(true);
-				logoTextureExtra->getPixmap()->load(getGameCustomCoreDataPath(data_path, "") + "data/core/menu/textures/" + logo);
-				miscTextureList.push_back(logoTextureExtra);
-    		}
-    	//}
-    }
-    if(miscTextureList.empty() == true) {
-		introPath= data_path + "data/core/menu/textures/intro*.*";
+Texture2D * CoreData::getBackgroundTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&backgroundTexture, getDataPath(),
+	     CORE_MENU_TEXTURES_PATH + "back.tga", tsyst_backgroundTexture,
+	     false, false, false);
+
+	return backgroundTexture;
+}
+Texture2D *CoreData::getFireTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&fireTexture,data_path,
+		CORE_MISC_TEXTURES_PATH + "fire_particle.tga", tsyst_fireTexture,
+		true, true, false);
+
+	return fireTexture;
+}
+Texture2D *CoreData::getTeamColorTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&teamColorTexture,data_path,
+		CORE_MISC_TEXTURES_PATH + "team_color_texture.tga", tsyst_teamColorTexture,
+		true, true, false);
+
+	return teamColorTexture;
+}
+Texture2D *CoreData::getSnowTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&snowTexture,data_path,
+			CORE_MISC_TEXTURES_PATH + "snow_particle.tga", tsyst_snowTexture,
+		false, true, false);
+
+	return snowTexture;
+}
+Texture2D *CoreData::getLogoTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&logoTexture,data_path,
+			CORE_MENU_TEXTURES_PATH + "logo.tga", tsyst_logoTexture,
+		false, false, false);
+
+	return logoTexture;
+}
+Texture2D *CoreData::getWaterSplashTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&waterSplashTexture,data_path,
+		CORE_MISC_TEXTURES_PATH + "water_splash.tga", tsyst_waterSplashTexture,
+		true, true, false);
+
+	return waterSplashTexture;
+}
+Texture2D *CoreData::getCustomTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&customTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "custom_texture.tga", tsyst_customTexture,
+		true, false, false);
+
+	return customTexture;
+}
+Texture2D *CoreData::getButtonSmallTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&buttonSmallTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "button_small.tga", tsyst_buttonSmallTexture,
+		true, false, false, true);
+
+	return buttonSmallTexture;
+}
+Texture2D *CoreData::getButtonBigTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&buttonBigTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "button_big.tga", tsyst_buttonBigTexture,
+		true, false, false, true);
+
+	return buttonBigTexture;
+}
+Texture2D *CoreData::getHorizontalLineTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&horizontalLineTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "line_horizontal.tga", tsyst_horizontalLineTexture,
+		true, false, false, true);
+
+	return horizontalLineTexture;
+}
+Texture2D *CoreData::getVerticalLineTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&verticalLineTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "line_vertical.tga", tsyst_verticalLineTexture,
+		true, false, false, true);
+
+	return verticalLineTexture;
+}
+Texture2D *CoreData::getCheckBoxTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&checkBoxTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "checkbox.tga", tsyst_checkBoxTexture,
+		true, false, false, true);
+
+	return checkBoxTexture;
+}
+Texture2D *CoreData::getCheckedCheckBoxTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&checkedCheckBoxTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "checkbox_checked.tga", tsyst_checkedCheckBoxTexture,
+		true, false, false, true);
+
+	return checkedCheckBoxTexture;
+}
+Texture2D *CoreData::getNotOnServerTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&notOnServerTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "not_on_server.tga", tsyst_notOnServerTexture,
+		true, false, false);
+
+	return notOnServerTexture;
+}
+Texture2D *CoreData::getOnServerDifferentTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&onServerDifferentTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "on_server_different.tga", tsyst_onServerDifferentTexture,
+		true, false, false);
+
+	return onServerDifferentTexture;
+}
+Texture2D *CoreData::getOnServerTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&onServerTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "on_server.tga", tsyst_onServerTexture,
+		true, false, false);
+
+	return onServerTexture;
+}
+Texture2D *CoreData::getOnServerInstalledTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&onServerInstalledTexture,data_path,
+		CORE_MENU_TEXTURES_PATH + "on_server_installed.tga", tsyst_onServerInstalledTexture,
+		true, false, false);
+
+	return onServerInstalledTexture;
+}
+Texture2D *CoreData::getStatusReadyTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&statusReadyTexture,data_path,
+			CORE_MENU_TEXTURES_PATH + "status_ready.png", tsyst_statusReadyTexture,
+		true, false, false);
+
+	return statusReadyTexture;
+}
+Texture2D *CoreData::getStatusNotReadyTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&statusNotReadyTexture,data_path,
+			CORE_MENU_TEXTURES_PATH + "status_notready.png", tsyst_statusNotReadyTexture,
+		true, false, false);
+
+	return statusNotReadyTexture;
+}
+Texture2D *CoreData::getStatusBRBTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&statusBRBTexture,data_path,
+			CORE_MENU_TEXTURES_PATH + "status_brb.png", tsyst_statusBRBTexture,
+		true, false, false);
+
+	return statusBRBTexture;
+}
+Texture2D *CoreData::getGameWinnerTexture() {
+	string data_path = getDataPath();
+	loadTextureIfRequired(&gameWinnerTexture,data_path,
+			CORE_MISC_TEXTURES_PATH + "game_winner.png", tsyst_gameWinnerTexture,
+		true, false, false, true);
+
+	return gameWinnerTexture;
+}
+
+void CoreData::loadLogoTextureExtraIfRequired() {
+	int loadAttemptLookupKey = tsyst_COUNT + 1;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		string data_path = getDataPath();
+		logoTextureList.clear();
+		string logosPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_TEXTURES_PATH + "logo*.*";
+		vector<string> logoFilenames;
+		findAll(logosPath, logoFilenames, false, false);
+		for (int index = 0; index < (int)logoFilenames.size(); ++index) {
+
+			string logo = logoFilenames[index];
+			if (strcmp("logo.tga", logo.c_str()) != 0) {
+
+				Texture2D* logoTextureExtra = NULL;
+				loadTextureIfRequired(&logoTextureExtra,data_path,
+						getGameCustomCoreDataPath(data_path, "") +
+						CORE_MENU_TEXTURES_PATH + logo, tsyst_NONE,
+					true, false, true);
+			}
+		}
+		if (logoTextureList.empty() == true) {
+
+			logosPath = data_path + CORE_MENU_TEXTURES_PATH + "logo*.*";
+			vector<string> logoFilenames;
+			findAll(logosPath, logoFilenames, false, false);
+			for (int index = 0; index < (int)logoFilenames.size(); ++index) {
+
+				string logo = logoFilenames[index];
+				if (strcmp("logo.tga", logo.c_str()) != 0) {
+
+					Texture2D* logoTextureExtra = NULL;
+					loadTextureIfRequired(&logoTextureExtra,data_path,
+							data_path + CORE_MENU_TEXTURES_PATH + logo, tsyst_NONE,
+						true, false, true);
+				}
+			}
+		}
+	}
+}
+size_t CoreData::getLogoTextureExtraCount() {
+	loadLogoTextureExtraIfRequired();
+	return logoTextureList.size();
+}
+Texture2D *CoreData::getLogoTextureExtra(int idx) {
+	loadLogoTextureExtraIfRequired();
+	return logoTextureList[idx];
+}
+
+void CoreData::loadMiscTextureListIfRequired() {
+	int loadAttemptLookupKey = tsyst_COUNT + 2;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		string data_path = getDataPath();
+
+		miscTextureList.clear();
+		string introPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_TEXTURES_PATH + "intro*.*";
 		vector<string> introFilenames;
 		findAll(introPath, introFilenames, false, false);
-		for(int i = 0; i < introFilenames.size(); ++i) {
+		for (int i = 0; i < (int)introFilenames.size(); ++i) {
 			string logo = introFilenames[i];
-			//if(strcmp("logo.tga",logo.c_str()) != 0) {
-				Texture2D *logoTextureExtra= renderer.newTexture2D(rsGlobal);
-				if(logoTextureExtra) {
-					logoTextureExtra->setMipmap(true);
-					logoTextureExtra->getPixmap()->load(data_path + "data/core/menu/textures/" + logo);
-					miscTextureList.push_back(logoTextureExtra);
-				}
-			//}
+
+			Texture2D* logoTextureExtra = NULL;
+			loadTextureIfRequired(&logoTextureExtra,data_path,
+				getGameCustomCoreDataPath(data_path, "") + CORE_MENU_TEXTURES_PATH +
+				logo, tsyst_NONE,
+				true, false, true);
+
 		}
-    }
+		if (miscTextureList.empty() == true) {
+			introPath = data_path + CORE_MENU_TEXTURES_PATH + "intro*.*";
+			vector<string> introFilenames;
+			findAll(introPath, introFilenames, false, false);
+			for (int i = 0; i < (int)introFilenames.size(); ++i) {
+				string logo = introFilenames[i];
 
-	waterSplashTexture= renderer.newTexture2D(rsGlobal);
-	if(waterSplashTexture) {
-		waterSplashTexture->setFormat(Texture::fAlpha);
-		waterSplashTexture->getPixmap()->init(1);
-		waterSplashTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/misc_textures/water_splash.tga"));
+				Texture2D* logoTextureExtra = NULL;
+				loadTextureIfRequired(&logoTextureExtra,data_path,
+						data_path + CORE_MENU_TEXTURES_PATH + logo, tsyst_NONE,
+					true, false, true);
+			}
+		}
+
+	}
+}
+
+std::vector<Texture2D *> & CoreData::getMiscTextureList() {
+	loadMiscTextureListIfRequired();
+	return miscTextureList;
+}
+
+void CoreData::loadTextures(string data_path) {
+	// Required to be loaded at program startup as they may be accessed in
+	// threads or some other dangerous way so lazy loading is not an option
+	getCustomTexture();
+}
+
+StaticSound *CoreData::getClickSoundA() {
+	int loadAttemptLookupKey = tsyst_COUNT + 3;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			clickSoundA.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "click_a.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
+	}
+	return &clickSoundA;
+}
+
+StaticSound *CoreData::getClickSoundB()	{
+	int loadAttemptLookupKey = tsyst_COUNT + 4;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			clickSoundB.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "click_b.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
 	}
 
-	buttonSmallTexture= renderer.newTexture2D(rsGlobal);
-	if(buttonSmallTexture) {
-		buttonSmallTexture->setForceCompressionDisabled(true);
-		buttonSmallTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/button_small.tga"));
+	return &clickSoundB;
+}
+StaticSound *CoreData::getClickSoundC()	{
+	int loadAttemptLookupKey = tsyst_COUNT + 5;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			clickSoundC.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "click_c.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
 	}
 
-	buttonBigTexture= renderer.newTexture2D(rsGlobal);
-	if(buttonBigTexture) {
-		buttonBigTexture->setForceCompressionDisabled(true);
-		buttonBigTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/button_big.tga"));
+	return &clickSoundC;
+}
+StaticSound *CoreData::getAttentionSound() {
+	int loadAttemptLookupKey = tsyst_COUNT + 6;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			attentionSound.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "attention.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
 	}
 
-	horizontalLineTexture= renderer.newTexture2D(rsGlobal);
-	if(horizontalLineTexture) {
-		horizontalLineTexture->setForceCompressionDisabled(true);
-		horizontalLineTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/line_horizontal.tga"));
+	return &attentionSound;
+}
+StaticSound *CoreData::getHighlightSound()	{
+	int loadAttemptLookupKey = tsyst_COUNT + 7;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			highlightSound.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "highlight.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
 	}
 
-	verticalLineTexture= renderer.newTexture2D(rsGlobal);
-	if(verticalLineTexture) {
-		verticalLineTexture->setForceCompressionDisabled(true);
-		verticalLineTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/line_vertical.tga"));
+	return &highlightSound;
+}
+StaticSound *CoreData::getMarkerSound() {
+	int loadAttemptLookupKey = tsyst_COUNT + 8;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		try {
+			string data_path = getDataPath();
+			markerSound.load(getGameCustomCoreDataPath(data_path,
+				CORE_MENU_SOUND_PATH + "sonar.wav"));
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
 	}
 
-	checkBoxTexture= renderer.newTexture2D(rsGlobal);
-	if(checkBoxTexture) {
-		checkBoxTexture->setForceCompressionDisabled(true);
-		checkBoxTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/checkbox.tga"));
-	}
+	return &markerSound;
+}
 
-	checkedCheckBoxTexture= renderer.newTexture2D(rsGlobal);
-	if(checkedCheckBoxTexture) {
-		checkedCheckBoxTexture->setForceCompressionDisabled(true);
-		checkedCheckBoxTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/menu/textures/checkbox_checked.tga"));
-	}
+void CoreData::loadWaterSoundsIfRequired() {
+	int loadAttemptLookupKey = tsyst_COUNT + 9;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
 
-	gameWinnerTexture= renderer.newTexture2D(rsGlobal);
-	if(gameWinnerTexture) {
-		gameWinnerTexture->setForceCompressionDisabled(true);
-		gameWinnerTexture->getPixmap()->load(getGameCustomCoreDataPath(data_path, "data/core/misc_textures/game_winner.png"));
-	}
+		itemLoadAttempted[loadAttemptLookupKey] = true;
 
+		string data_path = getDataPath();
+		cleanup();
+		waterSounds.resize(6);
+
+		for (int index = 0; index < 6; ++index) {
+			waterSounds[index] = new StaticSound();
+			if (waterSounds[index] != NULL) {
+				try {
+				  waterSounds[index]->load(getGameCustomCoreDataPath(data_path,
+					CORE_WATER_SOUNDS_PATH +
+					"water" + intToStr(index) + ".wav"));
+				}
+				catch (const megaglest_runtime_error& ex) {
+					message(ex.what(),
+							GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+							tempDataLocation);
+				}
+			}
+		}
+	}
+}
+
+StaticSound *CoreData::getWaterSound() {
+	loadWaterSoundsIfRequired();
+	return waterSounds.getRandSound();
+}
+
+void CoreData::loadSounds(string data_path) {
+	// sounds
+//	try {
+//		clickSoundA.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "click_a.wav"));
+//		clickSoundB.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "click_b.wav"));
+//		clickSoundC.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "click_c.wav"));
+//		attentionSound.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "attention.wav"));
+//		highlightSound.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "highlight.wav"));
+//		markerSound.load(
+//				getGameCustomCoreDataPath(data_path,
+//						CORE_MENU_SOUND_PATH + "sonar.wav"));
+//	}
+//	catch (const megaglest_runtime_error& ex) {
+//		message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+//				tempDataLocation);
+//	}
+
+//	cleanup();
+//	waterSounds.resize(6);
+//
+//	for (int i = 0; i < 6; ++i) {
+//		waterSounds[i] = new StaticSound();
+//		if (waterSounds[i]) {
+//			try {
+//				waterSounds[i]->load(
+//						getGameCustomCoreDataPath(data_path,
+//								CORE_WATER_SOUNDS_PATH + "water" + intToStr(i)
+//										+ ".wav"));
+//			} catch (const megaglest_runtime_error& ex) {
+//				message(ex.what(),
+//						GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+//						tempDataLocation);
+//			}
+//		}
+//	}
+}
+
+
+void CoreData::loadMusicIfRequired() {
+	int loadAttemptLookupKey = tsyst_COUNT + 10;
+	if(itemLoadAttempted.find(loadAttemptLookupKey) == itemLoadAttempted.end()) {
+
+		itemLoadAttempted[loadAttemptLookupKey] = true;
+
+		string data_path = getDataPath();
+
+		XmlTree xmlTree;
+		xmlTree.load(
+				getGameCustomCoreDataPath(data_path, CORE_MENU_PATH + "menu.xml"),
+				Properties::getTagReplacementValues());
+		const XmlNode* menuNode = xmlTree.getRootNode();
+		string menuMusicPath = "/menu/music/";
+		string menuIntroMusicFile = "intro_music.ogg";
+		string menuMusicFile = "menu_music.ogg";
+		if (menuNode->hasChild("intro") == true) {
+			const XmlNode* introNode = menuNode->getChild("intro");
+			// intro info
+			const XmlNode* menuPathNode = introNode->getChild("menu-music-path");
+			menuMusicPath =
+					menuPathNode->getAttribute("value")->getRestrictedValue();
+			const XmlNode* menuIntroMusicNode = introNode->getChild(
+					"menu-intro-music");
+			menuIntroMusicFile =
+					menuIntroMusicNode->getAttribute("value")->getRestrictedValue();
+			const XmlNode* menuMusicNode = introNode->getChild("menu-music");
+			menuMusicFile =
+					menuMusicNode->getAttribute("value")->getRestrictedValue();
+		}
+		try {
+			introMusic.open(
+					getGameCustomCoreDataPath(data_path,
+							CORE_PATH + menuMusicPath + menuIntroMusicFile));
+			introMusic.setNext(&menuMusic);
+			menuMusic.open(
+					getGameCustomCoreDataPath(data_path,
+							CORE_PATH + menuMusicPath + menuMusicFile));
+			menuMusic.setNext(&menuMusic);
+		}
+		catch (const megaglest_runtime_error& ex) {
+			message(ex.what(), GlobalStaticFlags::getIsNonGraphicalModeEnabled(),
+					tempDataLocation);
+		}
+	}
+}
+
+StrSound *CoreData::getIntroMusic() {
+	loadMusicIfRequired();
+	return &introMusic;
+}
+
+StrSound *CoreData::getMenuMusic() {
+	loadMusicIfRequired();
+	return &menuMusic;
+}
+
+void CoreData::loadMusic(string data_path) {
+}
+
+void CoreData::loadIntroMedia(string data_path) {
+	Config &config= Config::getInstance();
+
+	introVideoFilename = config.getString("IntroVideoURL", "");
+	introVideoFilenameFallback = config.getString("IntroVideoURLFallback", "");
+	if (introVideoFilename == "") {
+		string introVideoPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_VIDEOS_PATH + "intro.*";
+		vector<string> introVideos;
+		findAll(introVideoPath, introVideos, false, false);
+		for (int i = 0; i < (int)introVideos.size(); ++i) {
+			string video = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_VIDEOS_PATH + introVideos[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if intro video [%s] exists\n", video.c_str());
+
+			if (fileExists(video)) {
+				introVideoFilename = video;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("FOUND intro video [%s] will use this file\n",
+							video.c_str());
+
+				break;
+			}
+		}
+		if (introVideoFilename == "") {
+			introVideoPath = data_path + CORE_MENU_VIDEOS_PATH + "intro.*";
+			introVideos.clear();
+			findAll(introVideoPath, introVideos, false, false);
+			for (int i = 0; i < (int)introVideos.size(); ++i) {
+				string video = data_path + CORE_MENU_VIDEOS_PATH
+						+ introVideos[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if intro video [%s] exists\n",
+							video.c_str());
+
+				if (fileExists(video)) {
+					introVideoFilename = video;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf("FOUND intro video [%s] will use this file\n",
+								video.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+}
+
+void CoreData::loadMainMenuMedia(string data_path) {
+	Config &config= Config::getInstance();
+
+	mainMenuVideoFilename = config.getString("MainMenuVideoURL", "");
+	mainMenuVideoFilenameFallback = config.getString("MainMenuVideoURLFallback",
+			"");
+	if (mainMenuVideoFilename == "") {
+		string mainVideoPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_VIDEOS_PATH + "main.*";
+		vector<string> mainVideos;
+		findAll(mainVideoPath, mainVideos, false, false);
+		for (int i = 0; i < (int)mainVideos.size(); ++i) {
+			string video = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_VIDEOS_PATH + mainVideos[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if mainmenu video [%s] exists\n",
+						video.c_str());
+
+			if (fileExists(video)) {
+				mainMenuVideoFilename = video;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("FOUND mainmenu video [%s] will use this file\n",
+							video.c_str());
+
+				break;
+			}
+		}
+		if (mainMenuVideoFilename == "") {
+			mainVideoPath = data_path + CORE_MENU_VIDEOS_PATH + "main.*";
+			mainVideos.clear();
+			findAll(mainVideoPath, mainVideos, false, false);
+			for (int i = 0; i < (int)mainVideos.size(); ++i) {
+				string video = data_path + CORE_MENU_VIDEOS_PATH
+						+ mainVideos[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if mainmenu video [%s] exists\n",
+							video.c_str());
+
+				if (fileExists(video)) {
+					mainMenuVideoFilename = video;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf("FOUND mainmenu video [%s] will use this file\n",
+								video.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+}
+
+void CoreData::loadBattleEndMedia(string data_path) {
+	Config &config= Config::getInstance();
+
+	battleEndWinVideoFilename = config.getString("BattleEndWinVideoURL", "");
+	battleEndWinVideoFilenameFallback = config.getString(
+			"BattleEndWinVideoURLFallback", "");
+	if (battleEndWinVideoFilename == "") {
+		string battleEndWinVideoPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_VIDEOS_PATH + "battle_end_win.*";
+		vector<string> battleEndWinVideos;
+		findAll(battleEndWinVideoPath, battleEndWinVideos, false, false);
+		for (int i = 0; i < (int)battleEndWinVideos.size(); ++i) {
+			string video = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_VIDEOS_PATH + battleEndWinVideos[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if battle end win video [%s] exists\n",
+						video.c_str());
+
+			if (fileExists(video)) {
+				battleEndWinVideoFilename = video;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf(
+							"FOUND battle end win video [%s] will use this file\n",
+							video.c_str());
+
+				break;
+			}
+		}
+		if (battleEndWinVideoFilename == "") {
+			battleEndWinVideoPath = data_path + CORE_MENU_VIDEOS_PATH
+					+ "battle_end_win.*";
+			battleEndWinVideos.clear();
+			findAll(battleEndWinVideoPath, battleEndWinVideos, false, false);
+			for (int i = 0; i < (int)battleEndWinVideos.size(); ++i) {
+				string video = data_path + CORE_MENU_VIDEOS_PATH
+						+ battleEndWinVideos[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if battle end win video [%s] exists\n",
+							video.c_str());
+
+				if (fileExists(video)) {
+					battleEndWinVideoFilename = video;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf(
+								"FOUND battle end video win [%s] will use this file\n",
+								video.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+	battleEndWinMusicFilename = config.getString("BattleEndWinMusicFilename",
+			"");
+	if (battleEndWinMusicFilename == "") {
+		string battleEndWinPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_MUSIC_PATH + "battle_end_win.*";
+		vector<string> battleEndWinMusic;
+		findAll(battleEndWinPath, battleEndWinMusic, false, false);
+		for (int i = 0; i < (int)battleEndWinMusic.size(); ++i) {
+			string music = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_MUSIC_PATH + battleEndWinMusic[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if battle end win music [%s] exists\n",
+						music.c_str());
+
+			if (fileExists(music)) {
+				battleEndWinMusicFilename = music;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf(
+							"FOUND battle end win music [%s] will use this file\n",
+							music.c_str());
+
+				break;
+			}
+		}
+		if (battleEndWinMusicFilename == "") {
+			battleEndWinPath = data_path + CORE_MENU_MUSIC_PATH
+					+ "battle_end_win.*";
+			battleEndWinMusic.clear();
+			findAll(battleEndWinPath, battleEndWinMusic, false, false);
+			for (int i = 0; i < (int)battleEndWinMusic.size(); ++i) {
+				string music = data_path + CORE_MENU_MUSIC_PATH
+						+ battleEndWinMusic[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if battle end win music [%s] exists\n",
+							music.c_str());
+
+				if (fileExists(music)) {
+					battleEndWinMusicFilename = music;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf(
+								"FOUND battle end music win [%s] will use this file\n",
+								music.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+	battleEndLoseVideoFilename = config.getString("BattleEndLoseVideoURL", "");
+	battleEndLoseVideoFilenameFallback = config.getString(
+			"BattleEndLoseVideoURLFallback", "");
+	if (battleEndLoseVideoFilename == "") {
+		string battleEndLoseVideoPath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_VIDEOS_PATH + "battle_end_lose.*";
+		vector<string> battleEndLoseVideos;
+		findAll(battleEndLoseVideoPath, battleEndLoseVideos, false, false);
+		for (int i = 0; i < (int)battleEndLoseVideos.size(); ++i) {
+			string video = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_VIDEOS_PATH + battleEndLoseVideos[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if battle end lose video [%s] exists\n",
+						video.c_str());
+
+			if (fileExists(video)) {
+				battleEndLoseVideoFilename = video;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf(
+							"FOUND battle end lose video [%s] will use this file\n",
+							video.c_str());
+
+				break;
+			}
+		}
+		if (battleEndLoseVideoFilename == "") {
+			battleEndLoseVideoPath = data_path + CORE_MENU_VIDEOS_PATH
+					+ "battle_end_lose.*";
+			battleEndLoseVideos.clear();
+			findAll(battleEndLoseVideoPath, battleEndLoseVideos, false, false);
+			for (int i = 0; i < (int)battleEndLoseVideos.size(); ++i) {
+				string video = data_path + CORE_MENU_VIDEOS_PATH
+						+ battleEndLoseVideos[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if battle end lose video [%s] exists\n",
+							video.c_str());
+
+				if (fileExists(video)) {
+					battleEndLoseVideoFilename = video;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf(
+								"FOUND battle end video lose [%s] will use this file\n",
+								video.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+	battleEndLoseMusicFilename = config.getString("BattleEndLoseMusicFilename",
+			"");
+	if (battleEndLoseMusicFilename == "") {
+		string battleEndLosePath = getGameCustomCoreDataPath(data_path, "")
+				+ CORE_MENU_MUSIC_PATH + "battle_end_lose.*";
+		vector<string> battleEndLoseMusic;
+		findAll(battleEndLosePath, battleEndLoseMusic, false, false);
+		for (int i = 0; i < (int)battleEndLoseMusic.size(); ++i) {
+			string music = getGameCustomCoreDataPath(data_path, "")
+					+ CORE_MENU_MUSIC_PATH + battleEndLoseMusic[i];
+			if (SystemFlags::VERBOSE_MODE_ENABLED)
+				printf("Checking if battle end lose music [%s] exists\n",
+						music.c_str());
+
+			if (fileExists(music)) {
+				battleEndLoseMusicFilename = music;
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf(
+							"FOUND battle end lose music [%s] will use this file\n",
+							music.c_str());
+
+				break;
+			}
+		}
+		if (battleEndLoseMusicFilename == "") {
+			battleEndLosePath = data_path + CORE_MENU_MUSIC_PATH
+					+ "battle_end_lose.*";
+			battleEndLoseMusic.clear();
+			findAll(battleEndLosePath, battleEndLoseMusic, false, false);
+			for (int i = 0; i < (int)battleEndLoseMusic.size(); ++i) {
+				string music = data_path + CORE_MENU_MUSIC_PATH
+						+ battleEndLoseMusic[i];
+				if (SystemFlags::VERBOSE_MODE_ENABLED)
+					printf("Checking if battle end lose music [%s] exists\n",
+							music.c_str());
+
+				if (fileExists(music)) {
+					battleEndLoseMusicFilename = music;
+					if (SystemFlags::VERBOSE_MODE_ENABLED)
+						printf(
+								"FOUND battle end music lose [%s] will use this file\n",
+								music.c_str());
+
+					break;
+				}
+			}
+		}
+	}
+}
+
+void CoreData::load() {
+	string data_path = CoreData::getDataPath();
+
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenCoreDataLoading","",true));
+
+	// textures
+	loadTextures(data_path);
+
+	// fonts
 	loadFonts();
 
-	//sounds
-	clickSoundA.load(getGameCustomCoreDataPath(data_path, "data/core/menu/sound/click_a.wav"));
-	clickSoundB.load(getGameCustomCoreDataPath(data_path, "data/core/menu/sound/click_b.wav"));
-	clickSoundC.load(getGameCustomCoreDataPath(data_path, "data/core/menu/sound/click_c.wav"));
-	attentionSound.load(getGameCustomCoreDataPath(data_path, "data/core/menu/sound/attention.wav"));
-	highlightSound.load(getGameCustomCoreDataPath(data_path, "data/core/menu/sound/highlight.wav"));
+	// sounds
+	loadSounds(data_path);
 
-	XmlTree xmlTree;
-	//string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
-	xmlTree.load(getGameCustomCoreDataPath(data_path, "data/core/menu/menu.xml"),Properties::getTagReplacementValues());
-	const XmlNode *menuNode= xmlTree.getRootNode();
+	// music
+	loadMusic(data_path);
 
-	string menuMusicPath 		= "/menu/music/";
-	string menuIntroMusicFile 	= "intro_music.ogg";
-	string menuMusicFile 		= "menu_music.ogg";
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false &&
+		Shared::Graphics::VideoPlayer::hasBackEndVideoPlayer() == true) {
 
-	if(menuNode->hasChild("intro") == true) {
-		const XmlNode *introNode= menuNode->getChild("intro");
+		loadIntroMedia(data_path);
 
-		// intro info
-		const XmlNode *menuPathNode= introNode->getChild("menu-music-path");
-		menuMusicPath = menuPathNode->getAttribute("value")->getRestrictedValue();
-		const XmlNode *menuIntroMusicNode= introNode->getChild("menu-intro-music");
-		menuIntroMusicFile = menuIntroMusicNode->getAttribute("value")->getRestrictedValue();
-		const XmlNode *menuMusicNode= introNode->getChild("menu-music");
-		menuMusicFile = menuMusicNode->getAttribute("value")->getRestrictedValue();
+		loadMainMenuMedia(data_path);
+
+		loadBattleEndMedia(data_path);
 	}
-	introMusic.open(getGameCustomCoreDataPath(data_path, "data/core/" + menuMusicPath + menuIntroMusicFile));
-	introMusic.setNext(&menuMusic);
-	menuMusic.open(getGameCustomCoreDataPath(data_path, "data/core/" + menuMusicPath + menuMusicFile));
-	menuMusic.setNext(&menuMusic);
+}
 
-	waterSounds.resize(6);
+bool CoreData::hasIntroVideoFilename() const {
+	bool result = (introVideoFilename != "");
+	return result;
+}
 
-	for(int i=0; i<6; ++i){
-		waterSounds[i]= new StaticSound();
-		if(waterSounds[i]) {
-			waterSounds[i]->load(getGameCustomCoreDataPath(data_path, "data/core/water_sounds/water"+intToStr(i)+".wav"));
-		}
+bool CoreData::hasMainMenuVideoFilename() const {
+	bool result = (mainMenuVideoFilename != "");
+	return result;
+}
+
+bool CoreData::hasBattleEndVideoFilename(bool won) const {
+	bool result = false;
+	if(won == true) {
+		result =(battleEndWinVideoFilename != "");
 	}
-
+	else {
+		result =(battleEndLoseVideoFilename != "");
+	}
+	return result;
 }
 
 void CoreData::loadFonts() {
@@ -327,19 +1135,15 @@ void CoreData::loadFonts() {
 	string displayFontNamePostfix	= config.getString("FontDisplayPostfix");
 	int displayFontSize				= computeFontSize(config.getInt("FontDisplayBaseSize"));
 
-	//printf("Checking if langfile has custom FontDisplayPostfix\n");
-
 	if(lang.hasString("FontDisplayPrefix") == true) {
-		displayFontNamePrefix = lang.get("FontDisplayPrefix");
+		displayFontNamePrefix = lang.getString("FontDisplayPrefix");
 	}
 	if(lang.hasString("FontDisplayPostfix") == true) {
-		displayFontNamePostfix = lang.get("FontDisplayPostfix");
+		displayFontNamePostfix = lang.getString("FontDisplayPostfix");
 	}
 	if(lang.hasString("FontDisplayBaseSize") == true) {
-		displayFontSize = strToInt(lang.get("FontDisplayBaseSize"));
+		displayFontSize = computeFontSize(strToInt(lang.getString("FontDisplayBaseSize")));
 	}
-
-	//printf("displayFontNamePostfix [%s]\n",displayFontNamePostfix.c_str());
 
 	string displayFontName = displayFontNamePrefix + intToStr(displayFontSize) + displayFontNamePostfix;
 
@@ -352,7 +1156,6 @@ void CoreData::loadFonts() {
 		if(displayFont) {
 			displayFont->setType(displayFontName,config.getString("FontDisplay",""),config.getString("FontDisplayFamily",""));
 			displayFont->setSize(displayFontSize);
-			//displayFont->setYOffsetFactor(config.getFloat("FontDisplayYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -365,7 +1168,6 @@ void CoreData::loadFonts() {
 		if(displayFont3D) {
 			displayFont3D->setType(displayFontName,config.getString("FontDisplay",""),config.getString("FontDisplayFamily",""));
 			displayFont3D->setSize(displayFontSize);
-			//displayFont3D->setYOffsetFactor(config.getFloat("FontDisplayYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -377,13 +1179,13 @@ void CoreData::loadFonts() {
 	int displayFontNameSmallSize		= computeFontSize(config.getInt("FontDisplaySmallBaseSize"));
 
 	if(lang.hasString("FontDisplayPrefix") == true) {
-		displayFontNameSmallPrefix = lang.get("FontDisplayPrefix");
+		displayFontNameSmallPrefix = lang.getString("FontDisplayPrefix");
 	}
 	if(lang.hasString("FontDisplayPostfix") == true) {
-		displayFontNameSmallPostfix = lang.get("FontDisplayPostfix");
+		displayFontNameSmallPostfix = lang.getString("FontDisplayPostfix");
 	}
 	if(lang.hasString("FontDisplaySmallBaseSize") == true) {
-		displayFontNameSmallSize = strToInt(lang.get("FontDisplaySmallBaseSize"));
+		displayFontNameSmallSize = computeFontSize(strToInt(lang.getString("FontDisplaySmallBaseSize")));
 	}
 
 	string displayFontNameSmall = displayFontNameSmallPrefix + intToStr(displayFontNameSmallSize) + displayFontNameSmallPostfix;
@@ -397,7 +1199,6 @@ void CoreData::loadFonts() {
 		if(displayFontSmall) {
 			displayFontSmall->setType(displayFontNameSmall,config.getString("FontSmallDisplay",""),config.getString("FontSmallDisplayFamily",""));
 			displayFontSmall->setSize(displayFontNameSmallSize);
-			//displayFontSmall->setYOffsetFactor(config.getFloat("FontSmallDisplayYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -410,7 +1211,6 @@ void CoreData::loadFonts() {
 		if(displayFontSmall3D) {
 			displayFontSmall3D->setType(displayFontNameSmall,config.getString("FontSmallDisplay",""),config.getString("FontSmallDisplayFamily",""));
 			displayFontSmall3D->setSize(displayFontNameSmallSize);
-			//displayFontSmall3D->setYOffsetFactor(config.getFloat("FontSmallDisplayYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -419,15 +1219,17 @@ void CoreData::loadFonts() {
 	string menuFontNameNormalPrefix		= config.getString("FontMenuNormalPrefix");
 	string menuFontNameNormalPostfix	= config.getString("FontMenuNormalPostfix");
 	int menuFontNameNormalSize			= computeFontSize(config.getInt("FontMenuNormalBaseSize"));
+	//printf("#1 menuFontNameNormalSize = %d\n",menuFontNameNormalSize);
 
 	if(lang.hasString("FontMenuNormalPrefix") == true) {
-		menuFontNameNormalPrefix = lang.get("FontMenuNormalPrefix");
+		menuFontNameNormalPrefix = lang.getString("FontMenuNormalPrefix");
 	}
 	if(lang.hasString("FontMenuNormalPostfix") == true) {
-		menuFontNameNormalPostfix = lang.get("FontMenuNormalPostfix");
+		menuFontNameNormalPostfix = lang.getString("FontMenuNormalPostfix");
 	}
 	if(lang.hasString("FontMenuNormalBaseSize") == true) {
-		menuFontNameNormalSize = strToInt(lang.get("FontMenuNormalBaseSize"));
+		menuFontNameNormalSize = computeFontSize(strToInt(lang.getString("FontMenuNormalBaseSize")));
+		//printf("#2 menuFontNameNormalSize = %d\n",menuFontNameNormalSize);
 	}
 
 	string menuFontNameNormal= menuFontNameNormalPrefix + intToStr(menuFontNameNormalSize) + menuFontNameNormalPostfix;
@@ -442,7 +1244,6 @@ void CoreData::loadFonts() {
 			menuFontNormal->setType(menuFontNameNormal,config.getString("FontMenuNormal",""),config.getString("FontMenuNormalFamily",""));
 			menuFontNormal->setSize(menuFontNameNormalSize);
 			menuFontNormal->setWidth(Font::wBold);
-			//menuFontNormal->setYOffsetFactor(config.getFloat("FontMenuNormalYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -456,7 +1257,6 @@ void CoreData::loadFonts() {
 			menuFontNormal3D->setType(menuFontNameNormal,config.getString("FontMenuNormal",""),config.getString("FontMenuNormalFamily",""));
 			menuFontNormal3D->setSize(menuFontNameNormalSize);
 			menuFontNormal3D->setWidth(Font::wBold);
-			//menuFontNormal3D->setYOffsetFactor(config.getFloat("FontMenuNormalYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -467,13 +1267,13 @@ void CoreData::loadFonts() {
 	int menuFontNameBigSize			= computeFontSize(config.getInt("FontMenuBigBaseSize"));
 
 	if(lang.hasString("FontMenuBigPrefix") == true) {
-		menuFontNameBigPrefix = lang.get("FontMenuBigPrefix");
+		menuFontNameBigPrefix = lang.getString("FontMenuBigPrefix");
 	}
 	if(lang.hasString("FontMenuBigPostfix") == true) {
-		menuFontNameBigPostfix = lang.get("FontMenuBigPostfix");
+		menuFontNameBigPostfix = lang.getString("FontMenuBigPostfix");
 	}
 	if(lang.hasString("FontMenuBigBaseSize") == true) {
-		menuFontNameBigSize = strToInt(lang.get("FontMenuBigBaseSize"));
+		menuFontNameBigSize = computeFontSize(strToInt(lang.getString("FontMenuBigBaseSize")));
 	}
 
 	string menuFontNameBig= menuFontNameBigPrefix+intToStr(menuFontNameBigSize)+menuFontNameBigPostfix;
@@ -487,7 +1287,6 @@ void CoreData::loadFonts() {
 		if(menuFontBig) {
 			menuFontBig->setType(menuFontNameBig,config.getString("FontMenuBig",""),config.getString("FontMenuBigFamily",""));
 			menuFontBig->setSize(menuFontNameBigSize);
-			//menuFontBig->setYOffsetFactor(config.getFloat("FontMenuBigYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -500,7 +1299,6 @@ void CoreData::loadFonts() {
 		if(menuFontBig3D) {
 			menuFontBig3D->setType(menuFontNameBig,config.getString("FontMenuBig",""),config.getString("FontMenuBigFamily",""));
 			menuFontBig3D->setSize(menuFontNameBigSize);
-			//menuFontBig3D->setYOffsetFactor(config.getFloat("FontMenuBigYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -511,13 +1309,13 @@ void CoreData::loadFonts() {
 	int menuFontNameVeryBigSize			= computeFontSize(config.getInt("FontMenuVeryBigBaseSize"));
 
 	if(lang.hasString("FontMenuBigPrefix") == true) {
-		menuFontNameVeryBigPrefix = lang.get("FontMenuBigPrefix");
+		menuFontNameVeryBigPrefix = lang.getString("FontMenuBigPrefix");
 	}
 	if(lang.hasString("FontMenuBigPostfix") == true) {
-		menuFontNameVeryBigPostfix = lang.get("FontMenuBigPostfix");
+		menuFontNameVeryBigPostfix = lang.getString("FontMenuBigPostfix");
 	}
 	if(lang.hasString("FontMenuVeryBigBaseSize") == true) {
-		menuFontNameVeryBigSize = strToInt(lang.get("FontMenuVeryBigBaseSize"));
+		menuFontNameVeryBigSize = computeFontSize(strToInt(lang.getString("FontMenuVeryBigBaseSize")));
 	}
 
 	string menuFontNameVeryBig= menuFontNameVeryBigPrefix + intToStr(menuFontNameVeryBigSize) + menuFontNameVeryBigPostfix;
@@ -531,7 +1329,6 @@ void CoreData::loadFonts() {
 		if(menuFontVeryBig) {
 			menuFontVeryBig->setType(menuFontNameVeryBig,config.getString("FontMenuVeryBig",""),config.getString("FontMenuVeryBigFamily",""));
 			menuFontVeryBig->setSize(menuFontNameVeryBigSize);
-			//menuFontVeryBig->setYOffsetFactor(config.getFloat("FontMenuVeryBigYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -544,11 +1341,8 @@ void CoreData::loadFonts() {
 		if(menuFontVeryBig3D) {
 			menuFontVeryBig3D->setType(menuFontNameVeryBig,config.getString("FontMenuVeryBig",""),config.getString("FontMenuVeryBigFamily",""));
 			menuFontVeryBig3D->setSize(menuFontNameVeryBigSize);
-			//menuFontVeryBig3D->setYOffsetFactor(config.getFloat("FontMenuVeryBigYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
-
-	//printf("CoreData menuFontVeryBig3D [%d] menuFontVeryBig3D [%p]\n",menuFontVeryBig3D->getSize(),menuFontVeryBig3D);
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] menuFontNameVeryBig = [%s] menuFontNameVeryBigSize = %d\n",__FILE__,__FUNCTION__,__LINE__,menuFontNameVeryBig.c_str(),menuFontNameVeryBigSize);
 
@@ -558,13 +1352,13 @@ void CoreData::loadFonts() {
 	int consoleFontNameSize			= computeFontSize(config.getInt("FontConsoleBaseSize"));
 
 	if(lang.hasString("FontConsolePrefix") == true) {
-		consoleFontNamePrefix = lang.get("FontConsolePrefix");
+		consoleFontNamePrefix = lang.getString("FontConsolePrefix");
 	}
 	if(lang.hasString("FontConsolePostfix") == true) {
-		consoleFontNamePostfix = lang.get("FontConsolePostfix");
+		consoleFontNamePostfix = lang.getString("FontConsolePostfix");
 	}
 	if(lang.hasString("FontConsoleBaseSize") == true) {
-		consoleFontNameSize = strToInt(lang.get("FontConsoleBaseSize"));
+		consoleFontNameSize = computeFontSize(strToInt(lang.getString("FontConsoleBaseSize")));
 	}
 
 	string consoleFontName= consoleFontNamePrefix + intToStr(consoleFontNameSize) + consoleFontNamePostfix;
@@ -578,7 +1372,6 @@ void CoreData::loadFonts() {
 		if(consoleFont) {
 			consoleFont->setType(consoleFontName,config.getString("FontConsole",""),config.getString("FontConsoleFamily",""));
 			consoleFont->setSize(consoleFontNameSize);
-			//consoleFont->setYOffsetFactor(config.getFloat("FontConsoleYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -591,7 +1384,6 @@ void CoreData::loadFonts() {
 		if(consoleFont3D) {
 			consoleFont3D->setType(consoleFontName,config.getString("FontConsole",""),config.getString("FontConsoleFamily",""));
 			consoleFont3D->setSize(consoleFontNameSize);
-			//consoleFont3D->setYOffsetFactor(config.getFloat("FontConsoleYOffsetFactor",floatToStr(FontMetrics::DEFAULT_Y_OFFSET_FACTOR).c_str()));
 		}
 	}
 
@@ -604,15 +1396,6 @@ int CoreData::computeFontSize(int size) {
 	if(Font::forceLegacyFonts == true) {
 		int screenH = config.getInt("ScreenHeight");
 		rs = size * screenH / 1024;
-	}
-	else {
-		if(Renderer::renderText3DEnabled) {
-			//rs = ((float)size * 0.85);
-			//rs = 24;
-		}
-		//int screenH = config.getInt("ScreenHeight");
-		//rs = size * screenH / 1024;
-
 	}
 	//FontSizeAdjustment
 	rs += config.getInt("FontSizeAdjustment");
@@ -649,60 +1432,70 @@ void CoreData::saveGameSettingsToFile(std::string fileName, GameSettings *gameSe
 #endif
 
 	saveGameFile << "Description=" << gameSettings->getDescription() << std::endl;
-	saveGameFile << "MapFilterIndex=" << gameSettings->getMapFilterIndex() << std::endl;
+	saveGameFile << "MapFilterIndex=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getMapFilterIndex()) << std::endl;
 	saveGameFile << "Map=" << gameSettings->getMap() << std::endl;
 	saveGameFile << "Tileset=" << gameSettings->getTileset() << std::endl;
 	saveGameFile << "TechTree=" << gameSettings->getTech() << std::endl;
-	saveGameFile << "DefaultUnits=" << gameSettings->getDefaultUnits() << std::endl;
-	saveGameFile << "DefaultResources=" << gameSettings->getDefaultResources() << std::endl;
-	saveGameFile << "DefaultVictoryConditions=" << gameSettings->getDefaultVictoryConditions() << std::endl;
-	saveGameFile << "FogOfWar=" << gameSettings->getFogOfWar() << std::endl;
-	saveGameFile << "AdvancedIndex=" << advancedIndex << std::endl;
-	saveGameFile << "AllowObservers=" << gameSettings->getAllowObservers() << std::endl;
-	saveGameFile << "FlagTypes1=" << gameSettings->getFlagTypes1() << std::endl;
-	saveGameFile << "EnableObserverModeAtEndGame=" << gameSettings->getEnableObserverModeAtEndGame() << std::endl;
-	saveGameFile << "AiAcceptSwitchTeamPercentChance=" << gameSettings->getAiAcceptSwitchTeamPercentChance() << std::endl;
-	saveGameFile << "PathFinderType=" << gameSettings->getPathFinderType() << std::endl;
-	saveGameFile << "EnableServerControlledAI=" << gameSettings->getEnableServerControlledAI() << std::endl;
-	saveGameFile << "NetworkFramePeriod=" << gameSettings->getNetworkFramePeriod() << std::endl;
-	saveGameFile << "NetworkPauseGameForLaggedClients=" << gameSettings->getNetworkPauseGameForLaggedClients() << std::endl;
+	saveGameFile << "DefaultUnits=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getDefaultUnits()) << std::endl;
+	saveGameFile << "DefaultResources=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getDefaultResources()) << std::endl;
+	saveGameFile << "DefaultVictoryConditions=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getDefaultVictoryConditions()) << std::endl;
+	saveGameFile << "FogOfWar=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getFogOfWar()) << std::endl;
+	saveGameFile << "AdvancedIndex=" << Shared::PlatformByteOrder::toCommonEndian(advancedIndex) << std::endl;
+	saveGameFile << "AllowObservers=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getAllowObservers()) << std::endl;
+	saveGameFile << "FlagTypes1=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getFlagTypes1()) << std::endl;
+	saveGameFile << "EnableObserverModeAtEndGame=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getEnableObserverModeAtEndGame()) << std::endl;
+	saveGameFile << "AiAcceptSwitchTeamPercentChance=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getAiAcceptSwitchTeamPercentChance()) << std::endl;
+	saveGameFile << "FallbackCpuMultiplier=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getFallbackCpuMultiplier()) << std::endl;
+	saveGameFile << "PathFinderType=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getPathFinderType()) << std::endl;
+	saveGameFile << "EnableServerControlledAI=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getEnableServerControlledAI()) << std::endl;
+	saveGameFile << "NetworkFramePeriod=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getNetworkFramePeriod()) << std::endl;
+	saveGameFile << "NetworkPauseGameForLaggedClients=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getNetworkPauseGameForLaggedClients()) << std::endl;
 
-	saveGameFile << "FactionThisFactionIndex=" << gameSettings->getThisFactionIndex() << std::endl;
-	saveGameFile << "FactionCount=" << gameSettings->getFactionCount() << std::endl;
+	saveGameFile << "FactionThisFactionIndex=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getThisFactionIndex()) << std::endl;
+	saveGameFile << "FactionCount=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getFactionCount()) << std::endl;
+
+	saveGameFile << "NetworkAllowNativeLanguageTechtree=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getNetworkAllowNativeLanguageTechtree()) << std::endl;
 
 	for(int i = 0; i < GameConstants::maxPlayers; ++i) {
 		int slotIndex = gameSettings->getStartLocationIndex(i);
 
-		saveGameFile << "FactionControlForIndex" 		<< slotIndex << "=" << gameSettings->getFactionControl(i) << std::endl;
-		saveGameFile << "ResourceMultiplierIndex" 		<< slotIndex << "=" << gameSettings->getResourceMultiplierIndex(i) << std::endl;
-		saveGameFile << "FactionTeamForIndex" 			<< slotIndex << "=" << gameSettings->getTeam(i) << std::endl;
-		saveGameFile << "FactionStartLocationForIndex" 	<< slotIndex << "=" << gameSettings->getStartLocationIndex(i) << std::endl;
-		saveGameFile << "FactionTypeNameForIndex" 		<< slotIndex << "=" << gameSettings->getFactionTypeName(i) << std::endl;
-		saveGameFile << "FactionPlayerNameForIndex" 	<< slotIndex << "=" << gameSettings->getNetworkPlayerName(i) << std::endl;
+		saveGameFile << "FactionControlForIndex" 		<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getFactionControl(i)) << std::endl;
+		saveGameFile << "ResourceMultiplierIndex" 		<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getResourceMultiplierIndex(i)) << std::endl;
+		saveGameFile << "FactionTeamForIndex" 			<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getTeam(i)) << std::endl;
+		saveGameFile << "FactionStartLocationForIndex" 	<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << Shared::PlatformByteOrder::toCommonEndian(gameSettings->getStartLocationIndex(i)) << std::endl;
+		saveGameFile << "FactionTypeNameForIndex" 		<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << gameSettings->getFactionTypeName(i) << std::endl;
+		saveGameFile << "FactionPlayerNameForIndex" 	<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << gameSettings->getNetworkPlayerName(i) << std::endl;
+
+		saveGameFile << "FactionPlayerUUIDForIndex" 	<< Shared::PlatformByteOrder::toCommonEndian(slotIndex) << "=" << gameSettings->getNetworkPlayerUUID(i) << std::endl;
     }
 
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-void CoreData::loadGameSettingsFromFile(std::string fileName, GameSettings *gameSettings) {
+bool CoreData::loadGameSettingsFromFile(std::string fileName, GameSettings *gameSettings) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
 
+	bool fileWasFound = false;
     Config &config = Config::getInstance();
     string userData = config.getString("UserData_Root","");
     if(userData != "") {
     	endPathWithSlash(userData);
     }
-    fileName = userData + fileName;
+    if(fileExists(userData + fileName) == true) {
+    	fileName = userData + fileName;
+    	fileWasFound = true;
+    }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] fileName = [%s]\n",__FILE__,__FUNCTION__,__LINE__,fileName.c_str());
 
     if(fileExists(fileName) == false) {
-    	return;
+    	return false;
     }
 
+    fileWasFound = true;
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] fileName = [%s]\n",__FILE__,__FUNCTION__,__LINE__,fileName.c_str());
 
 	Properties properties;
@@ -723,8 +1516,37 @@ void CoreData::loadGameSettingsFromFile(std::string fileName, GameSettings *game
 
 	gameSettings->setAllowObservers(properties.getBool("AllowObservers","false"));
 	gameSettings->setFlagTypes1(properties.getInt("FlagTypes1","0"));
+
+	uint32 valueFlags1 = gameSettings->getFlagTypes1();
+	if(Config::getInstance().getBool("EnableNetworkGameSynchChecks","false") == true) {
+		//printf("*WARNING* - EnableNetworkGameSynchChecks is enabled\n");
+
+        valueFlags1 |= ft1_network_synch_checks_verbose;
+        gameSettings->setFlagTypes1(valueFlags1);
+
+	}
+	else {
+        valueFlags1 &= ~ft1_network_synch_checks_verbose;
+        gameSettings->setFlagTypes1(valueFlags1);
+
+	}
+	if(Config::getInstance().getBool("EnableNetworkGameSynchMonitor","false") == true) {
+		//printf("*WARNING* - EnableNetworkGameSynchChecks is enabled\n");
+
+        valueFlags1 |= ft1_network_synch_checks;
+        gameSettings->setFlagTypes1(valueFlags1);
+
+	}
+	else {
+        valueFlags1 &= ~ft1_network_synch_checks;
+        gameSettings->setFlagTypes1(valueFlags1);
+
+	}
+
+
 	gameSettings->setEnableObserverModeAtEndGame(properties.getBool("EnableObserverModeAtEndGame"));
 	gameSettings->setAiAcceptSwitchTeamPercentChance(properties.getInt("AiAcceptSwitchTeamPercentChance","30"));
+	gameSettings->setFallbackCpuMultiplier(properties.getInt("FallbackCpuMultiplier","5"));
 
 	gameSettings->setPathFinderType(static_cast<PathFinderType>(properties.getInt("PathFinderType",intToStr(pfBasic).c_str())));
 	gameSettings->setEnableServerControlledAI(properties.getBool("EnableServerControlledAI","true"));
@@ -733,6 +1555,13 @@ void CoreData::loadGameSettingsFromFile(std::string fileName, GameSettings *game
 
 	gameSettings->setThisFactionIndex(properties.getInt("FactionThisFactionIndex"));
 	gameSettings->setFactionCount(properties.getInt("FactionCount"));
+
+	if(properties.hasString("NetworkAllowNativeLanguageTechtree") == true) {
+		gameSettings->setNetworkAllowNativeLanguageTechtree(properties.getBool("NetworkAllowNativeLanguageTechtree"));
+	}
+	else {
+		gameSettings->setNetworkAllowNativeLanguageTechtree(false);
+	}
 
 	for(int i = 0; i < GameConstants::maxPlayers; ++i) {
 		gameSettings->setFactionControl(i,(ControlType)properties.getInt(string("FactionControlForIndex") + intToStr(i),intToStr(ctClosed).c_str()) );
@@ -754,9 +1583,13 @@ void CoreData::loadGameSettingsFromFile(std::string fileName, GameSettings *game
 		else {
 			gameSettings->setNetworkPlayerName(i,"");
 		}
+
+		gameSettings->setNetworkPlayerUUID(i,properties.getString(string("FactionPlayerUUIDForIndex") + intToStr(i),"") );
 	}
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+
+    return fileWasFound;
 }
 
 // ================== PRIVATE ========================

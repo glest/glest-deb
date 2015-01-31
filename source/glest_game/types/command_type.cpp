@@ -64,7 +64,7 @@ void CommandType::load(int id, const XmlNode *n, const string &dir,
 
 	//unit requirements
 	const XmlNode *unitRequirementsNode= n->getChild("unit-requirements");
-	for(int i = 0; i < unitRequirementsNode->getChildCount(); ++i) {
+	for(int i = 0; i < (int)unitRequirementsNode->getChildCount(); ++i) {
 		const XmlNode *unitNode= 	unitRequirementsNode->getChild("unit", i);
 		string name= unitNode->getAttribute("name")->getRestrictedValue();
 		unitReqs.push_back(ft->getUnitType(name));
@@ -72,13 +72,34 @@ void CommandType::load(int id, const XmlNode *n, const string &dir,
 
 	//upgrade requirements
 	const XmlNode *upgradeRequirementsNode= n->getChild("upgrade-requirements");
-	for(int i = 0; i < upgradeRequirementsNode->getChildCount(); ++i) {
+	for(int i = 0; i < (int)upgradeRequirementsNode->getChildCount(); ++i) {
 		const XmlNode *upgradeReqNode= upgradeRequirementsNode->getChild("upgrade", i);
 		string name= upgradeReqNode->getAttribute("name")->getRestrictedValue();
 		upgradeReqs.push_back(ft->getUpgradeType(name));
 	}
 
+	//fog of war
+	if(n->hasChild("fog-of-war-skill") == true) {
+		string skillName= n->getChild("fog-of-war-skill")->getAttribute("value")->getRestrictedValue();
+		fogOfWarSkillType = static_cast<const FogOfWarSkillType*>(ut.getSkillType(skillName, scFogOfWar));
+
+		string skillAttachmentNames = n->getChild("fog-of-war-skill")->getAttribute("skill-attachments")->getValue();
+
+		std::vector<std::string> skillList;
+		Tokenize(skillAttachmentNames,skillList,",");
+		for(unsigned int i = 0; i < skillList.size(); ++i) {
+			string skillAttachName = skillList[i];
+			fogOfWarSkillAttachments[skillAttachName] = true;
+		}
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+bool CommandType::hasFogOfWarSkillType(string name) const {
+	std::map<string,bool>::const_iterator iterFind = fogOfWarSkillAttachments.find(name);
+	bool result = (iterFind != fogOfWarSkillAttachments.end());
+	return result;
 }
 
 // =====================================================
@@ -96,22 +117,26 @@ void StopCommandType::update(UnitUpdater *unitUpdater, Unit *unit, int frameInde
 	unitUpdater->updateStop(unit, frameIndex);
 }
 
-string StopCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string StopCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     string str;
 	Lang &lang= Lang::getInstance();
 
-    str= name+"\n";
-	str+= lang.get("ReactionSpeed")+": "+ intToStr(stopSkillType->getSpeed())+"\n";
-    if(stopSkillType->getEpCost()!=0)
-        str+= lang.get("EpCost")+": "+intToStr(stopSkillType->getEpCost())+"\n";
- if(stopSkillType->getHpCost()!=0)
-        str+= lang.get("HpCost")+": "+intToStr(stopSkillType->getHpCost())+"\n";
+    str= getName(translatedValue)+"\n";
+	str+= lang.getString("ReactionSpeed",(translatedValue == true ? "" : "english")) + ": " + intToStr(stopSkillType->getSpeed())+"\n";
+    if(stopSkillType->getEpCost() != 0)
+        str += lang.getString("EpCost",(translatedValue == true ? "" : "english")) + ": " + intToStr(stopSkillType->getEpCost())+"\n";
+    if(stopSkillType->getHpCost() != 0)
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english")) + ": " + intToStr(stopSkillType->getHpCost())+"\n";
+	str+=stopSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string StopCommandType::toString() const{
+string StopCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Stop";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Stop");
+	return lang.getString("Stop");
 }
 
 void StopCommandType::load(int id, const XmlNode *n, const string &dir,
@@ -151,29 +176,32 @@ void MoveCommandType::load(int id, const XmlNode *n, const string &dir,
 	moveSkillType= static_cast<const MoveSkillType*>(ut.getSkillType(skillName, scMove));
 }
 
-string MoveCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string MoveCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     string str;
 	Lang &lang= Lang::getInstance();
 
-    str= name+"\n";
-    str+= lang.get("WalkSpeed")+": "+ intToStr(moveSkillType->getSpeed());
+    str=getName(translatedValue)+"\n";
+    str+= lang.getString("WalkSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(moveSkillType->getSpeed());
 	if(totalUpgrade->getMoveSpeed(moveSkillType) != 0) {
         str+= "+" + intToStr(totalUpgrade->getMoveSpeed(moveSkillType));
 	}
     str+="\n";
 	if(moveSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(moveSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(moveSkillType->getEpCost())+"\n";
 	}
-		if(moveSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(moveSkillType->getHpCost())+"\n";
+	if(moveSkillType->getHpCost()!=0) {
+		str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(moveSkillType->getHpCost())+"\n";
 	}
-
+	str+=moveSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string MoveCommandType::toString() const{
+string MoveCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Move";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Move");
+	return lang.getString("Move");
 }
 
 // =====================================================
@@ -207,43 +235,43 @@ void AttackCommandType::load(int id, const XmlNode *n, const string &dir,
 	attackSkillType= static_cast<const AttackSkillType*>(ut.getSkillType(skillName, scAttack));
 }
 
-string AttackCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string AttackCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     string str;
 	Lang &lang= Lang::getInstance();
 
-    str= name+"\n";
+    str=getName(translatedValue)+"\n";
 	if(attackSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost") + ": " + intToStr(attackSkillType->getEpCost()) + "\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english")) + ": " + intToStr(attackSkillType->getEpCost()) + "\n";
 	}
-		if(attackSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost") + ": " + intToStr(attackSkillType->getHpCost()) + "\n";
+	if(attackSkillType->getHpCost()!=0){
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english")) + ": " + intToStr(attackSkillType->getHpCost()) + "\n";
 	}
 
     //attack strength
-    str+= lang.get("AttackStrenght")+": ";
+    str+= lang.getString("AttackStrenght",(translatedValue == true ? "" : "english"))+": ";
     str+= intToStr(attackSkillType->getAttackStrength()-attackSkillType->getAttackVar());
     str+= "...";
     str+= intToStr(attackSkillType->getAttackStrength()+attackSkillType->getAttackVar());
 	if(totalUpgrade->getAttackStrength(attackSkillType) != 0) {
         str+= "+"+intToStr(totalUpgrade->getAttackStrength(attackSkillType));
 	}
-	str+= " ("+ attackSkillType->getAttackType()->getName() +")";
+	str+= " ("+ attackSkillType->getAttackType()->getName(translatedValue) +")";
     str+= "\n";
 
     //splash radius
 	if(attackSkillType->getSplashRadius()!=0){
-        str+= lang.get("SplashRadius")+": "+intToStr(attackSkillType->getSplashRadius())+"\n";
+        str+= lang.getString("SplashRadius",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getSplashRadius())+"\n";
 	}
 
     //attack distance
-    str+= lang.get("AttackDistance")+": "+intToStr(attackSkillType->getAttackRange());
+    str+= lang.getString("AttackDistance",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getAttackRange());
 	if(totalUpgrade->getAttackRange(attackSkillType) != 0) {
         str+= "+"+intToStr(totalUpgrade->getAttackRange(attackSkillType) != 0);
 	}
     str+="\n";
 
 	//attack fields
-	str+= lang.get("Fields") + ": ";
+	str+= lang.getString("Fields") + ": ";
 	for(int i= 0; i < fieldCount; i++){
 		Field field = static_cast<Field>(i);
 		if( attackSkillType->getAttackField(field) )
@@ -254,20 +282,23 @@ string AttackCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
 	str+="\n";
 
     //movement speed
-    str+= lang.get("WalkSpeed")+": "+ intToStr(moveSkillType->getSpeed()) ;
+    str+= lang.getString("WalkSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(moveSkillType->getSpeed()) ;
 	if(totalUpgrade->getMoveSpeed(moveSkillType) != 0) {
         str+= "+"+intToStr(totalUpgrade->getMoveSpeed(moveSkillType));
 	}
     str+="\n";
 
-    str+= lang.get("AttackSpeed")+": "+ intToStr(attackSkillType->getSpeed()) +"\n";
-
+    str+= lang.getString("AttackSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(attackSkillType->getSpeed()) +"\n";
+	str+=attackSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string AttackCommandType::toString() const{
+string AttackCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Attack";
+	}
 	Lang &lang= Lang::getInstance();
-		return lang.get("Attack");
+		return lang.getString("Attack");
 }
 
 
@@ -301,42 +332,42 @@ void AttackStoppedCommandType::load(int id, const XmlNode *n, const string &dir,
 	attackSkillType= static_cast<const AttackSkillType*>(ut.getSkillType(skillName, scAttack));
 }
 
-string AttackStoppedCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string AttackStoppedCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     Lang &lang= Lang::getInstance();
 	string str;
 
-    str= name+"\n";
+    str=getName(translatedValue)+"\n";
 	if(attackSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(attackSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getEpCost())+"\n";
 	}
-		if(attackSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(attackSkillType->getHpCost())+"\n";
+	if(attackSkillType->getHpCost()!=0){
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getHpCost())+"\n";
 	}
 
     //attack strength
-    str+= lang.get("AttackStrenght")+": ";
+    str+= lang.getString("AttackStrenght",(translatedValue == true ? "" : "english"))+": ";
     str+= intToStr(attackSkillType->getAttackStrength()-attackSkillType->getAttackVar());
     str+="...";
     str+= intToStr(attackSkillType->getAttackStrength()+attackSkillType->getAttackVar());
     if(totalUpgrade->getAttackStrength(attackSkillType) != 0)
         str+= "+"+intToStr(totalUpgrade->getAttackStrength(attackSkillType));
-    str+= " ("+ attackSkillType->getAttackType()->getName() +")";
+    str+= " ("+ attackSkillType->getAttackType()->getName(translatedValue) +")";
     str+="\n";
 
     //splash radius
 	if(attackSkillType->getSplashRadius()!=0){
-        str+= lang.get("SplashRadius")+": "+intToStr(attackSkillType->getSplashRadius())+"\n";
+        str+= lang.getString("SplashRadius",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getSplashRadius())+"\n";
 	}
 
     //attack distance
-    str+= lang.get("AttackDistance")+": "+intToStr(attackSkillType->getAttackRange());
+    str+= lang.getString("AttackDistance",(translatedValue == true ? "" : "english"))+": "+intToStr(attackSkillType->getAttackRange());
 	if(totalUpgrade->getAttackRange(attackSkillType) != 0) {
         str+= "+"+intToStr(totalUpgrade->getAttackRange(attackSkillType) != 0);
 	}
     str+="\n";
 
 	//attack fields
-	str+= lang.get("Fields") + ": ";
+	str+= lang.getString("Fields",(translatedValue == true ? "" : "english")) + ": ";
 	for(int i= 0; i < fieldCount; i++){
 		Field field = static_cast<Field>(i);
 		if( attackSkillType->getAttackField(field) )
@@ -345,13 +376,16 @@ string AttackStoppedCommandType::getDesc(const TotalUpgrade *totalUpgrade) const
 		}
 	}
 	str+="\n";
-
+	str+=attackSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string AttackStoppedCommandType::toString() const {
+string AttackStoppedCommandType::toString(bool translatedValue) const {
+	if(translatedValue == false) {
+		return "AttackStopped";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("AttackStopped");
+	return lang.getString("AttackStopped");
 }
 
 
@@ -391,7 +425,7 @@ void BuildCommandType::load(int id, const XmlNode *n, const string &dir,
 
 	//buildings built
 	const XmlNode *buildingsNode= n->getChild("buildings");
-	for(int i=0; i<buildingsNode->getChildCount(); ++i){
+	for(int i=0; i < (int)buildingsNode->getChildCount(); ++i){
 		const XmlNode *buildingNode= buildingsNode->getChild("building", i);
 		string name= buildingNode->getAttribute("name")->getRestrictedValue();
 		buildings.push_back(ft->getUnitType(name));
@@ -400,8 +434,8 @@ void BuildCommandType::load(int id, const XmlNode *n, const string &dir,
 	//start sound
 	const XmlNode *startSoundNode= n->getChild("start-sound");
 	if(startSoundNode->getAttribute("enabled")->getBoolValue()){
-		startSounds.resize(startSoundNode->getChildCount());
-		for(int i=0; i<startSoundNode->getChildCount(); ++i){
+		startSounds.resize((int)startSoundNode->getChildCount());
+		for(int i=0; i < (int)startSoundNode->getChildCount(); ++i){
 			const XmlNode *soundFileNode= startSoundNode->getChild("sound-file", i);
 			string currentPath = dir;
 			endPathWithSlash(currentPath);
@@ -418,8 +452,8 @@ void BuildCommandType::load(int id, const XmlNode *n, const string &dir,
 	//built sound
 	const XmlNode *builtSoundNode= n->getChild("built-sound");
 	if(builtSoundNode->getAttribute("enabled")->getBoolValue()){
-		builtSounds.resize(builtSoundNode->getChildCount());
-		for(int i=0; i<builtSoundNode->getChildCount(); ++i){
+		builtSounds.resize((int)builtSoundNode->getChildCount());
+		for(int i=0; i < (int)builtSoundNode->getChildCount(); ++i){
 			const XmlNode *soundFileNode= builtSoundNode->getChild("sound-file", i);
 			string currentPath = dir;
 			endPathWithSlash(currentPath);
@@ -436,25 +470,28 @@ void BuildCommandType::load(int id, const XmlNode *n, const string &dir,
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string BuildCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string BuildCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     string str;
 	Lang &lang= Lang::getInstance();
 
-    str= name+"\n";
-    str+= lang.get("BuildSpeed")+": "+ intToStr(buildSkillType->getSpeed())+"\n";
+    str=getName(translatedValue)+"\n";
+    str+= lang.getString("BuildSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(buildSkillType->getSpeed())+"\n";
 	if(buildSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(buildSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(buildSkillType->getEpCost())+"\n";
 	}
-		if(buildSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(buildSkillType->getHpCost())+"\n";
+	if(buildSkillType->getHpCost()!=0){
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(buildSkillType->getHpCost())+"\n";
 	}
-
+	str+=buildSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string BuildCommandType::toString() const{
+string BuildCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Build";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Build");
+	return lang.getString("Build");
 }
 
 // =====================================================
@@ -500,7 +537,7 @@ void HarvestCommandType::load(int id, const XmlNode *n, const string &dir,
 
 	//resources can harvest
 	const XmlNode *resourcesNode= n->getChild("harvested-resources");
-	for(int i=0; i<resourcesNode->getChildCount(); ++i){
+	for(int i=0; i < (int)resourcesNode->getChildCount(); ++i){
 		const XmlNode *resourceNode= resourcesNode->getChild("resource", i);
 		harvestedResources.push_back(tt->getResourceType(resourceNode->getAttribute("name")->getRestrictedValue()));
 	}
@@ -509,36 +546,75 @@ void HarvestCommandType::load(int id, const XmlNode *n, const string &dir,
 	hitsPerUnit= n->getChild("hits-per-unit")->getAttribute("value")->getIntValue();
 }
 
-string HarvestCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string HarvestCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
 
 	Lang &lang= Lang::getInstance();
 	string str;
 
-    str= name+"\n";
-    str+= lang.get("HarvestSpeed")+": "+ intToStr(harvestSkillType->getSpeed()/hitsPerUnit)+"\n";
-    str+= lang.get("MaxLoad")+": "+ intToStr(maxLoad)+"\n";
-    str+= lang.get("LoadedSpeed")+": "+ intToStr(moveLoadedSkillType->getSpeed())+"\n";
+    str=getName(translatedValue)+"\n";
+    str+= lang.getString("HarvestSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(harvestSkillType->getSpeed()/hitsPerUnit)+"\n";
+    str+= lang.getString("MaxLoad",(translatedValue == true ? "" : "english"))+": "+ intToStr(maxLoad)+"\n";
+    str+= lang.getString("LoadedSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(moveLoadedSkillType->getSpeed())+"\n";
 	if(harvestSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(harvestSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(harvestSkillType->getEpCost())+"\n";
 	}
 	if(harvestSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(harvestSkillType->getHpCost())+"\n";
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(harvestSkillType->getHpCost())+"\n";
 	}
-	str+=lang.get("Resources")+":\n";
+	str+=lang.getString("Resources",(translatedValue == true ? "" : "english"))+":\n";
 	for(int i=0; i<getHarvestedResourceCount(); ++i){
-		str+= getHarvestedResource(i)->getName()+"\n";
+		str+= getHarvestedResource(i)->getName(translatedValue)+"\n";
 	}
-
+	str+=harvestSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string HarvestCommandType::toString() const{
+string HarvestCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Harvest";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Harvest");
+	return lang.getString("Harvest");
 }
 
 bool HarvestCommandType::canHarvest(const ResourceType *resourceType) const{
 	return find(harvestedResources.begin(), harvestedResources.end(), resourceType) != harvestedResources.end();
+}
+
+
+// =====================================================
+// 	class HarvestCommandType
+// =====================================================
+
+//varios
+HarvestEmergencyReturnCommandType::HarvestEmergencyReturnCommandType(){
+    commandTypeClass= ccHarvestEmergencyReturn;
+    clicks= cTwo;
+
+    this->id= -10;
+}
+
+void HarvestEmergencyReturnCommandType::update(UnitUpdater *unitUpdater, Unit *unit, int frameIndex) const {
+	unitUpdater->updateHarvestEmergencyReturn(unit, frameIndex);
+}
+
+void HarvestEmergencyReturnCommandType::load(int id, const XmlNode *n, const string &dir,
+		const TechTree *tt, const FactionType *ft, const UnitType &ut,
+		std::map<string,vector<pair<string, string> > > &loadedFileList, string parentLoader) {
+//	CommandType::load(id, n, dir, tt, ft, ut, loadedFileList, parentLoader);
+}
+
+string HarvestEmergencyReturnCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
+	string str=getName(translatedValue)+"\n";
+    return str;
+}
+
+string HarvestEmergencyReturnCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "HarvestEmergencyReturn";
+	}
+	Lang &lang= Lang::getInstance();
+	return lang.getString("Harvest");
 }
 
 // =====================================================
@@ -578,7 +654,7 @@ void RepairCommandType::load(int id, const XmlNode *n, const string &dir,
 
 	//repaired units
 	const XmlNode *unitsNode= n->getChild("repaired-units");
-	for(int i=0; i<unitsNode->getChildCount(); ++i){
+	for(int i=0; i < (int)unitsNode->getChildCount(); ++i){
 		const XmlNode *unitNode= unitsNode->getChild("unit", i);
 		repairableUnits.push_back(ft->getUnitType(unitNode->getAttribute("name")->getRestrictedValue()));
 	}
@@ -586,34 +662,37 @@ void RepairCommandType::load(int id, const XmlNode *n, const string &dir,
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string RepairCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string RepairCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     Lang &lang= Lang::getInstance();
 	string str;
 
-    str= name+"\n";
-    str+= lang.get("RepairSpeed")+": "+ intToStr(repairSkillType->getSpeed())+"\n";
+    str=getName(translatedValue)+"\n";
+    str+= lang.getString("RepairSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(repairSkillType->getSpeed())+"\n";
 	if(repairSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(repairSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(repairSkillType->getEpCost())+"\n";
 	}
 	if(repairSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(repairSkillType->getHpCost())+"\n";
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(repairSkillType->getHpCost())+"\n";
 	}
-    str+="\n"+lang.get("CanRepair")+":\n";
-    for(int i=0; i<repairableUnits.size(); ++i){
-        str+= (static_cast<const UnitType*>(repairableUnits[i]))->getName()+"\n";
+    str+="\n"+lang.getString("CanRepair",(translatedValue == true ? "" : "english"))+":\n";
+    for(int i=0; i < (int)repairableUnits.size(); ++i){
+        str+= (static_cast<const UnitType*>(repairableUnits[i]))->getName(translatedValue)+"\n";
     }
-
+	str+=repairSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string RepairCommandType::toString() const{
+string RepairCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Repair";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Repair");
+	return lang.getString("Repair");
 }
 
 //get
 bool RepairCommandType::isRepairableUnitType(const UnitType *unitType) const {
-	for(int i = 0; i < repairableUnits.size(); ++i) {
+	for(int i = 0; i < (int)repairableUnits.size(); ++i) {
 		const UnitType *curUnitType = static_cast<const UnitType*>(repairableUnits[i]);
 		//printf("Lookup index = %d Can repair unittype [%s][%p] looking for [%s][%p] lookup found result = %d\n",i,curUnitType->getName().c_str(),curUnitType,unitType->getName().c_str(),unitType,(curUnitType == unitType));
 		if(curUnitType == unitType) {
@@ -654,12 +733,12 @@ void ProduceCommandType::load(int id, const XmlNode *n, const string &dir,
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string ProduceCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
-    string str= name+"\n";
+string ProduceCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
+    string str=getName(translatedValue)+"\n";
 	Lang &lang= Lang::getInstance();
 
     //prod speed
-    str+= lang.get("ProductionSpeed")+": "+ intToStr(produceSkillType->getSpeed());
+    str+= lang.getString("ProductionSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(produceSkillType->getSpeed());
 	if(totalUpgrade->getProdSpeed(produceSkillType)!=0){
         str+="+" + intToStr(totalUpgrade->getProdSpeed(produceSkillType));
 	}
@@ -667,23 +746,26 @@ string ProduceCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
 
     //mpcost
 	if(produceSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(produceSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(produceSkillType->getEpCost())+"\n";
 	}
 	if(produceSkillType->getHpCost()!=0){
-        str+= lang.get("hpCost")+": "+intToStr(produceSkillType->getHpCost())+"\n";
+        str+= lang.getString("hpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(produceSkillType->getHpCost())+"\n";
 	}
-    str+= "\n" + getProducedUnit()->getReqDesc();
-
+    str+= "\n" + getProducedUnit()->getReqDesc(translatedValue);
+	str+=produceSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string ProduceCommandType::toString() const{
+string ProduceCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Produce";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Produce");
+	return lang.getString("Produce");
 }
 
-string ProduceCommandType::getReqDesc() const{
-    return RequirableType::getReqDesc()+"\n"+getProducedUnit()->getReqDesc();
+string ProduceCommandType::getReqDesc(bool translatedValue) const{
+    return RequirableType::getReqDesc(translatedValue)+"\n"+getProducedUnit()->getReqDesc(translatedValue);
 }
 
 const ProducibleType *ProduceCommandType::getProduced() const{
@@ -721,28 +803,31 @@ void UpgradeCommandType::load(int id, const XmlNode *n, const string &dir,
 
 }
 
-string UpgradeCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
+string UpgradeCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
     string str;
 	Lang &lang= Lang::getInstance();
 
-    str= name+"\n";
-    str+= lang.get("UpgradeSpeed")+": "+ intToStr(upgradeSkillType->getSpeed())+"\n";
+    str=getName(translatedValue)+"\n";
+    str+= lang.getString("UpgradeSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(upgradeSkillType->getSpeed())+"\n";
     if(upgradeSkillType->getEpCost()!=0)
-        str+= lang.get("EpCost")+": "+intToStr(upgradeSkillType->getEpCost())+"\n";
-if(upgradeSkillType->getHpCost()!=0)
-        str+= lang.get("HpCost")+": "+intToStr(upgradeSkillType->getHpCost())+"\n";
-    str+= "\n"+getProducedUpgrade()->getReqDesc();
-
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(upgradeSkillType->getEpCost())+"\n";
+    if(upgradeSkillType->getHpCost()!=0)
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(upgradeSkillType->getHpCost())+"\n";
+    str+= "\n"+getProducedUpgrade()->getReqDesc(translatedValue);
+	str+=upgradeSkillType->getBoostDesc(translatedValue);
     return str;
 }
 
-string UpgradeCommandType::toString() const{
+string UpgradeCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Upgrade";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Upgrade");
+	return lang.getString("Upgrade");
 }
 
-string UpgradeCommandType::getReqDesc() const{
-    return RequirableType::getReqDesc()+"\n"+getProducedUpgrade()->getReqDesc();
+string UpgradeCommandType::getReqDesc(bool translatedValue) const{
+    return RequirableType::getReqDesc(translatedValue)+"\n"+getProducedUpgrade()->getReqDesc(translatedValue);
 }
 
 const ProducibleType *UpgradeCommandType::getProduced() const{
@@ -760,6 +845,8 @@ MorphCommandType::MorphCommandType(){
     morphSkillType=NULL;
     morphUnit=NULL;
     discount=0;
+    ignoreResourceRequirements = false;
+    replaceStorage = false;
 }
 
 void MorphCommandType::update(UnitUpdater *unitUpdater, Unit *unit, int frameIndex) const {
@@ -782,41 +869,58 @@ void MorphCommandType::load(int id, const XmlNode *n, const string &dir,
     //discount
 	discount= n->getChild("discount")->getAttribute("value")->getIntValue();
 
+	ignoreResourceRequirements = false;
+	if(n->hasChild("ignore-resource-requirements") == true) {
+		ignoreResourceRequirements= n->getChild("ignore-resource-requirements")->getAttribute("value")->getBoolValue();
+
+		//printf("ignoreResourceRequirements = %d\n",ignoreResourceRequirements);
+	}
+
+	replaceStorage = false;
+	if(n->hasChild("replace-storage") == true) {
+		replaceStorage = n->getChild("replace-storage")->getAttribute("value")->getBoolValue();
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string MorphCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
-    string str= name+"\n";
+string MorphCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
+    string str=getName(translatedValue)+"\n";
 	Lang &lang= Lang::getInstance();
 
     //prod speed
-    str+= lang.get("MorphSpeed")+": "+ intToStr(morphSkillType->getSpeed())+"\n";
+    str+= lang.getString("MorphSpeed",(translatedValue == true ? "" : "english"))+": "+ intToStr(morphSkillType->getSpeed())+"\n";
 
     //mpcost
 	if(morphSkillType->getEpCost()!=0){
-        str+= lang.get("EpCost")+": "+intToStr(morphSkillType->getEpCost())+"\n";
+        str+= lang.getString("EpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(morphSkillType->getEpCost())+"\n";
 	}
 		if(morphSkillType->getHpCost()!=0){
-        str+= lang.get("HpCost")+": "+intToStr(morphSkillType->getHpCost())+"\n";
+        str+= lang.getString("HpCost",(translatedValue == true ? "" : "english"))+": "+intToStr(morphSkillType->getHpCost())+"\n";
 	}
 
     //discount
 	if(discount!=0){
-        str+= lang.get("Discount")+": "+intToStr(discount)+"%\n";
+        str+= lang.getString("Discount",(translatedValue == true ? "" : "english"))+": "+intToStr(discount)+"%\n";
 	}
 
-    str+= "\n"+getProduced()->getReqDesc();
+    str+= "\n"+getProduced()->getReqDesc(ignoreResourceRequirements,translatedValue);
+
+	str+=morphSkillType->getBoostDesc(translatedValue);
 
     return str;
 }
 
-string MorphCommandType::toString() const{
+string MorphCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Morph";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("Morph");
+	return lang.getString("Morph");
 }
 
-string MorphCommandType::getReqDesc() const{
-    return RequirableType::getReqDesc() + "\n" + getProduced()->getReqDesc();
+string MorphCommandType::getReqDesc(bool translatedValue) const{
+    return RequirableType::getReqDesc(translatedValue) + "\n" + getProduced()->getReqDesc(translatedValue);
 }
 
 const ProducibleType *MorphCommandType::getProduced() const{
@@ -849,34 +953,17 @@ void SwitchTeamCommandType::load(int id, const XmlNode *n, const string &dir,
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-string SwitchTeamCommandType::getDesc(const TotalUpgrade *totalUpgrade) const{
-    string str= name+"\n";
-	//Lang &lang= Lang::getInstance();
-
-    //prod speed
-    //str+= lang.get("MorphSpeed")+": "+ intToStr(morphSkillType->getSpeed())+"\n";
-
-    //mpcost
-//	if(morphSkillType->getEpCost()!=0){
-//        str+= lang.get("EpCost")+": "+intToStr(morphSkillType->getEpCost())+"\n";
-//	}
-//		if(morphSkillType->getHpCost()!=0){
-//        str+= lang.get("HpCost")+": "+intToStr(morphSkillType->getHpCost())+"\n";
-//	}
-//
-//    //discount
-//	if(discount!=0){
-//        str+= lang.get("Discount")+": "+intToStr(discount)+"%\n";
-//	}
-//
-//    str+= "\n"+getProduced()->getReqDesc();
-
+string SwitchTeamCommandType::getDesc(const TotalUpgrade *totalUpgrade, bool translatedValue) const{
+    string str= getName(translatedValue)+"\n";
     return str;
 }
 
-string SwitchTeamCommandType::toString() const{
+string SwitchTeamCommandType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "SwitchTeam";
+	}
 	Lang &lang= Lang::getInstance();
-	return lang.get("SwitchTeam");
+	return lang.getString("SwitchTeam");
 }
 
 // =====================================================
@@ -895,6 +982,7 @@ CommandTypeFactory::CommandTypeFactory(){
 	registerClass<UpgradeCommandType>("upgrade");
 	registerClass<MorphCommandType>("morph");
 	registerClass<SwitchTeamCommandType>("switch_team");
+	registerClass<HarvestEmergencyReturnCommandType>("harvest_return");
 }
 
 CommandTypeFactory &CommandTypeFactory::getInstance(){

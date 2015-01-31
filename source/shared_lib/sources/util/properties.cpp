@@ -19,15 +19,17 @@
 #include "util.h"
 #include "platform_common.h"
 #include "platform_util.h"
+#include "randomgen.h"
 
 #ifdef WIN32
+
 #include <shlwapi.h>
 #include <shlobj.h>
+
 #endif
 
 #include "utf8.h"
 #include "font.h"
-
 #include "string_utils.h"
 
 #include "leak_dumper.h"
@@ -40,7 +42,12 @@ using namespace Shared::Graphics;
 namespace Shared{ namespace Util{
 
 string Properties::applicationPath = "";
+string Properties::applicationDataPath = "";
 string Properties::gameVersion = "";
+
+string Properties::techtreePath = "";
+string Properties::scenarioPath = "";
+string Properties::tutorialPath = "";
 
 // =====================================================
 //	class Properties
@@ -49,7 +56,7 @@ string Properties::gameVersion = "";
 void Properties::load(const string &path, bool clearCurrentProperties) {
 
 	char lineBuffer[maxLine]="";
-	string line, key, value;
+	string line, key, value, original_value;
 	size_t pos=0;
 	this->path= path;
 
@@ -68,11 +75,12 @@ void Properties::load(const string &path, bool clearCurrentProperties) {
 	
 	if(fileStream.is_open() == false){
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] path = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str());
-		throw runtime_error("File NOT FOUND, can't open file: [" + path + "]");
+		throw megaglest_runtime_error("File NOT FOUND, can't open file: [" + path + "]");
 	}
 
 	if(clearCurrentProperties == true) {
 		propertyMap.clear();
+		propertyMapTmp.clear();
 	}
 
 	while(fileStream.eof() == false) {
@@ -86,7 +94,7 @@ void Properties::load(const string &path, bool clearCurrentProperties) {
 		if(lineBuffer[0] != '\0') {
 			// If the file is NOT in UTF-8 format convert each line
 			if(is_utf8_language == false && Font::forceLegacyFonts == false) {
-				char *utfStr = String::ConvertToUTF8(&lineBuffer[0]);
+				char *utfStr = ConvertToUTF8(&lineBuffer[0]);
 
 				//printf("\nBefore [%s] After [%s]\n",&lineBuffer[0],utfStr);
 
@@ -96,7 +104,7 @@ void Properties::load(const string &path, bool clearCurrentProperties) {
 				delete [] utfStr;
 			}
 			else if(is_utf8_language == true && Font::forceLegacyFonts == true) {
-				char *asciiStr = String::ConvertFromUTF8(&lineBuffer[0]);
+				char *asciiStr = ConvertFromUTF8(&lineBuffer[0]);
 
 				//printf("\nBefore [%s] After [%s]\n",&lineBuffer[0],utfStr);
 
@@ -108,7 +116,7 @@ void Properties::load(const string &path, bool clearCurrentProperties) {
 		}
 
 		//process line if it it not a comment
-		if(lineBuffer[0] != ';') {
+		if(lineBuffer[0] != ';' && lineBuffer[0] != '#') {
 			//wstring wstr = lineBuffer;
 			//line.assign(wstr.begin(),wstr.end());
 
@@ -124,25 +132,30 @@ void Properties::load(const string &path, bool clearCurrentProperties) {
 			if(pos != string::npos){
 				key= line.substr(0, pos);
 				value= line.substr(pos+1);
+				original_value = value;
 
 				if(applyTagsToValue(value) == true) {
-					if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Property key [%s] now has value [%s]\n",key.c_str(),value.c_str());
+					if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Property key [%s] now has value [%s] original_value [%s]\n",key.c_str(),value.c_str(),original_value.c_str());
 				}
 
 				bool replaceExisting = false;
 				if(propertyMap.find(key) != propertyMap.end()) {
 					replaceExisting = true;
 				}
-				propertyMap[key] = value;
+				propertyMap[key] = original_value;
+				propertyMapTmp[key] = value;
 
 				if(replaceExisting == false) {
-					propertyVector.push_back(PropertyPair(key, value));
+					propertyVector.push_back(PropertyPair(key, original_value));
+					propertyVectorTmp.push_back(PropertyPair(key, value));
 				}
 				else {
 					for(unsigned int i = 0; i < propertyVector.size(); ++i) {
 						PropertyPair &currentPair = propertyVector[i];
 						if(currentPair.first == key) {
-							currentPair.second = value;
+							currentPair.second = original_value;
+
+							propertyVectorTmp[i].second = value;
 							break;
 						}
 					}
@@ -166,19 +179,21 @@ std::map<string,string> Properties::getTagReplacementValues(std::map<string,stri
 	// #1
 	// First add the standard tags
 	//
-	char *homeDir = NULL;
 #ifdef WIN32
-	homeDir = getenv("USERPROFILE");
+	const char *homeDirX = getenv("USERPROFILE");
 #else
-	homeDir = getenv("HOME");
+	string home = getUserHome();
+	const char *homeDirX = home.c_str();
 #endif
 
-	mapTagReplacementValues["~/"] = (homeDir != NULL ? homeDir : "");
-	mapTagReplacementValues["$HOME"] = (homeDir != NULL ? homeDir : "");
-	mapTagReplacementValues["%%HOME%%"] = (homeDir != NULL ? homeDir : "");
-	mapTagReplacementValues["%%USERPROFILE%%"] = (homeDir != NULL ? homeDir : "");
-	mapTagReplacementValues["%%HOMEPATH%%"] = (homeDir != NULL ? homeDir : "");
-	mapTagReplacementValues["{HOMEPATH}"] = (homeDir != NULL ? homeDir : "");
+	string homeDir = safeCharPtrCopy(homeDirX, 8096);
+
+	mapTagReplacementValues["~/"] 				= homeDir;
+	mapTagReplacementValues["$HOME"] 			= homeDir;
+	mapTagReplacementValues["%%HOME%%"] 		= homeDir;
+	mapTagReplacementValues["%%USERPROFILE%%"] 	= homeDir;
+	mapTagReplacementValues["%%HOMEPATH%%"] 	= homeDir;
+	mapTagReplacementValues["{HOMEPATH}"] 		= homeDir;
 
 	// For win32 we allow use of the appdata variable since that is the recommended
 	// place for application data in windows platform
@@ -203,8 +218,8 @@ std::map<string,string> Properties::getTagReplacementValues(std::map<string,stri
    }
 #endif
 
-	char *username = NULL;
-	username = getenv("USERNAME");
+	//char *username = NULL;
+   char *username = getenv("USERNAME");
 
 	mapTagReplacementValues["$USERNAME"] = (username != NULL ? username : "");
 	mapTagReplacementValues["%%USERNAME%%"] = (username != NULL ? username : "");
@@ -220,11 +235,15 @@ std::map<string,string> Properties::getTagReplacementValues(std::map<string,stri
 	mapTagReplacementValues["{APPLICATIONDATAPATH}"] = formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH));
 
 #else
-	mapTagReplacementValues["$APPLICATIONDATAPATH"] = Properties::applicationPath;
-	mapTagReplacementValues["%%APPLICATIONDATAPATH%%"] = Properties::applicationPath;
-	mapTagReplacementValues["{APPLICATIONDATAPATH}"] = Properties::applicationPath;
+	mapTagReplacementValues["$APPLICATIONDATAPATH"] = Properties::applicationDataPath;
+	mapTagReplacementValues["%%APPLICATIONDATAPATH%%"] = Properties::applicationDataPath;
+	mapTagReplacementValues["{APPLICATIONDATAPATH}"] = Properties::applicationDataPath;
 
 #endif
+
+	mapTagReplacementValues["{TECHTREEPATH}"] = Properties::techtreePath;
+	mapTagReplacementValues["{SCENARIOPATH}"] = Properties::scenarioPath;
+	mapTagReplacementValues["{TUTORIALPATH}"] = Properties::tutorialPath;
 
 	mapTagReplacementValues["$GAMEVERSION"] = Properties::gameVersion;
 
@@ -242,7 +261,7 @@ std::map<string,string> Properties::getTagReplacementValues(std::map<string,stri
 	return mapTagReplacementValues;
 }
 
-bool Properties::applyTagsToValue(string &value, std::map<string,string> *mapTagReplacementValues) {
+bool Properties::applyTagsToValue(string &value, const std::map<string,string> *mapTagReplacementValues) {
 	string originalValue = value;
 
 	//if(originalValue.find("$APPLICATIONDATAPATH") != string::npos) {
@@ -250,25 +269,35 @@ bool Properties::applyTagsToValue(string &value, std::map<string,string> *mapTag
 	//}
 
 	if(mapTagReplacementValues != NULL) {
-		for(std::map<string,string>::iterator iterMap = mapTagReplacementValues->begin();
+		for(std::map<string,string>::const_iterator iterMap = mapTagReplacementValues->begin();
 				iterMap != mapTagReplacementValues->end(); ++iterMap) {
+
+//			if(value.find("{SCENARIOPATH}") != string::npos) {
+//				printf("\n\n** WILL REPLACE [%s]\n",value.c_str());
+//				replaceAll(value, "{SCENARIOPATH}",		Properties::scenarioPath);
+//				printf("** REPLACED [%s]\n\n",value.c_str());
+//			}
+//			else {
 			replaceAll(value, iterMap->first, iterMap->second);
+//			}
 		}
 	}
 	else {
-	char *homeDir = NULL;
 #ifdef WIN32
-	homeDir = getenv("USERPROFILE");
+	const char *homeDirX = getenv("USERPROFILE");
 #else
-	homeDir = getenv("HOME");
+	string home = getUserHome();
+	const char *homeDirX = home.c_str();
 #endif
 
-	replaceAll(value, "~/", 			(homeDir != NULL ? homeDir : ""));
-	replaceAll(value, "$HOME", 			(homeDir != NULL ? homeDir : ""));
-	replaceAll(value, "%%HOME%%", 		(homeDir != NULL ? homeDir : ""));
-	replaceAll(value, "%%USERPROFILE%%",(homeDir != NULL ? homeDir : ""));
-	replaceAll(value, "%%HOMEPATH%%",	(homeDir != NULL ? homeDir : ""));
-	replaceAll(value, "{HOMEPATH}",		(homeDir != NULL ? homeDir : ""));
+	string homeDir = safeCharPtrCopy(homeDirX, 8096);
+
+	replaceAll(value, "~/", 			homeDir);
+	replaceAll(value, "$HOME", 			homeDir);
+	replaceAll(value, "%%HOME%%", 		homeDir);
+	replaceAll(value, "%%USERPROFILE%%",homeDir);
+	replaceAll(value, "%%HOMEPATH%%",	homeDir);
+	replaceAll(value, "{HOMEPATH}",		homeDir);
 
 	// For win32 we allow use of the appdata variable since that is the recommended
 	// place for application data in windows platform
@@ -292,8 +321,8 @@ bool Properties::applyTagsToValue(string &value, std::map<string,string> *mapTag
    }
 #endif
 
-	char *username = NULL;
-	username = getenv("USERNAME");
+	//char *username = NULL;
+   char *username = getenv("USERNAME");
 	replaceAll(value, "$USERNAME", 		(username != NULL ? username : ""));
 	replaceAll(value, "%%USERNAME%%", 	(username != NULL ? username : ""));
 	replaceAll(value, "{USERNAME}", 	(username != NULL ? username : ""));
@@ -308,11 +337,19 @@ bool Properties::applyTagsToValue(string &value, std::map<string,string> *mapTag
 	replaceAll(value, "{APPLICATIONDATAPATH}",		formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH)));
 
 #else
-	replaceAll(value, "$APPLICATIONDATAPATH", 		Properties::applicationPath);
-	replaceAll(value, "%%APPLICATIONDATAPATH%%",	Properties::applicationPath);
-	replaceAll(value, "{APPLICATIONDATAPATH}",		Properties::applicationPath);
+	replaceAll(value, "$APPLICATIONDATAPATH", 		Properties::applicationDataPath);
+	replaceAll(value, "%%APPLICATIONDATAPATH%%",	Properties::applicationDataPath);
+	replaceAll(value, "{APPLICATIONDATAPATH}",		Properties::applicationDataPath);
 
 #endif
+
+	replaceAll(value, "{TECHTREEPATH}",		Properties::techtreePath);
+//	if(value.find("{SCENARIOPATH}") != string::npos) {
+//		printf("\n\n** WILL REPLACE [%s]\n",value.c_str());
+	replaceAll(value, "{SCENARIOPATH}",		Properties::scenarioPath);
+//		printf("** REPLACED [%s]\n\n",value.c_str());
+//	}
+	replaceAll(value, "{TUTORIALPATH}",		Properties::tutorialPath);
 
 	replaceAll(value, "$GAMEVERSION",		Properties::gameVersion);
 	}
@@ -340,13 +377,25 @@ void Properties::save(const string &path){
 
 	fileStream.close();
 #if defined(WIN32) && !defined(__MINGW32__)
-	fclose(fp);
+	if(fp) fclose(fp);
 #endif
 }
 
 void Properties::clear(){
 	propertyMap.clear();
+	propertyMapTmp.clear();
 	propertyVector.clear();
+	propertyVectorTmp.clear();
+}
+
+int Properties::getPropertyCount() const {
+	return (int)propertyVectorTmp.size();
+}
+string Properties::getKey(int i) const {
+	return propertyVectorTmp[i].first;
+}
+string Properties::getString(int i) const {
+	return propertyVectorTmp[i].second;
 }
 
 bool Properties::getBool(const string &key, const char *defaultValueIfNotFound) const{
@@ -355,8 +404,10 @@ bool Properties::getBool(const string &key, const char *defaultValueIfNotFound) 
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + key + " in: " + path+"\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + key + " in: " + path+"\n[" + e.what() + "]");
 	}
+	return false;
 }
 
 int Properties::getInt(const string &key,const char *defaultValueIfNotFound) const{
@@ -365,51 +416,82 @@ int Properties::getInt(const string &key,const char *defaultValueIfNotFound) con
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + key + " in: " + path + "\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + key + " in: " + path + "\n[" + e.what() + "]");
 	}
+	return 0;
 }
 
 int Properties::getInt(const string &key, int min, int max,const char *defaultValueIfNotFound) const{
 	int i= getInt(key,defaultValueIfNotFound);
 	if(i<min || i>max){
-		throw runtime_error("Value out of range: " + key + ", min: " + intToStr(min) + ", max: " + intToStr(max));
+		throw megaglest_runtime_error("Value out of range: " + key + ", min: " + intToStr(min) + ", max: " + intToStr(max));
 	}
 	return i;
 }
 
 float Properties::getFloat(const string &key, const char *defaultValueIfNotFound) const{
+	float result = 0.0;
 	try{
-		return strToFloat(getString(key,defaultValueIfNotFound));
+		result = strToFloat(getString(key,defaultValueIfNotFound));
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + key + " in: " + path + "\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + key + " in: " + path + "\n[" + e.what() + "]");
 	}
+	return result;
 }
 
 float Properties::getFloat(const string &key, float min, float max, const char *defaultValueIfNotFound) const{
 	float f= getFloat(key,defaultValueIfNotFound);
 	if(f<min || f>max){
-		throw runtime_error("Value out of range: " + key + ", min: " + floatToStr(min) + ", max: " + floatToStr(max));
+		throw megaglest_runtime_error("Value out of range: " + key + ", min: " + floatToStr(min,16) + ", max: " + floatToStr(max,16));
 	}
 	return f;
 }
 
 const string Properties::getString(const string &key, const char *defaultValueIfNotFound) const{
-	PropertyMap::const_iterator it;
-	it= propertyMap.find(key);
-	if(it==propertyMap.end()){
+	PropertyMap::const_iterator it = propertyMapTmp.find(key);
+	if(it == propertyMapTmp.end()) {
 	    if(defaultValueIfNotFound != NULL) {
 	        //printf("In [%s::%s - %d]defaultValueIfNotFound = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,defaultValueIfNotFound);
 	        return string(defaultValueIfNotFound);
 	    }
 	    else {
-            throw runtime_error("Value not found in propertyMap: " + key + ", loaded from: " + path);
+            //throw megaglest_runtime_error("Value not found in propertyMap: " + key + ", loaded from: " + path);
+	    	throw runtime_error("Value not found in propertyMap: " + key + ", loaded from: " + path);
 	    }
 	}
 	else{
 		return (it->second != "" ? it->second : (defaultValueIfNotFound != NULL ? defaultValueIfNotFound : it->second));
 	}
+}
+
+const string Properties::getRandomKey(const bool realrandom) const{
+	PropertyMap::const_iterator it;
+	int max=getPropertyCount();
+	int randomIndex=-1;
+	if(realrandom == true){
+		Chrono seed(true);
+		srand((unsigned int)seed.getCurTicks());
+
+		randomIndex=rand()%max;
+	}
+	else{
+		RandomGen randgen;
+		randomIndex=randgen.randRange(0,max);
+	}
+	string s=getKey(randomIndex);
+	return (s != "" ? s : "nothing found");
+}
+
+bool Properties::hasString(const string &key) const {
+	PropertyMap::const_iterator it = propertyMapTmp.find(key);
+	if(it == propertyMapTmp.end()) {
+		return false;
+	}
+	return true;
 }
 
 void Properties::setInt(const string &key, int value){
@@ -421,25 +503,26 @@ void Properties::setBool(const string &key, bool value){
 }
 
 void Properties::setFloat(const string &key, float value){
-	setString(key, floatToStr(value));
+	setString(key, floatToStr(value,6));
 }
 
 void Properties::setString(const string &key, const string &value){
 	propertyMap.erase(key);
 	propertyMap.insert(PropertyPair(key, value));
+
+	propertyMapTmp.erase(key);
+	propertyMapTmp.insert(PropertyPair(key, value));
+
 }
 
 string Properties::toString(){
 	string rStr;
 
-	for(PropertyMap::iterator pi= propertyMap.begin(); pi!=propertyMap.end(); ++pi)
+	for(PropertyMap::iterator pi= propertyMapTmp.begin(); pi!=propertyMapTmp.end(); ++pi)
 		rStr+= pi->first + "=" + pi->second + "\n";
 
 	return rStr;
 }
-
-
-
 
 bool Properties::getBool(const char *key, const char *defaultValueIfNotFound) const{
 	try{
@@ -447,8 +530,10 @@ bool Properties::getBool(const char *key, const char *defaultValueIfNotFound) co
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + string(key) + " in: " + path+"\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + string(key) + " in: " + path+"\n[" + e.what() + "]");
 	}
+	return false;
 }
 
 int Properties::getInt(const char *key,const char *defaultValueIfNotFound) const{
@@ -457,30 +542,35 @@ int Properties::getInt(const char *key,const char *defaultValueIfNotFound) const
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + string(key) + " in: " + path + "\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + string(key) + " in: " + path + "\n[" + e.what() + "]");
 	}
+	return 0;
 }
 
 float Properties::getFloat(const char *key, const char *defaultValueIfNotFound) const{
+	float result = 0.0;
 	try{
-		return strToFloat(getString(key,defaultValueIfNotFound));
+		result = strToFloat(getString(key,defaultValueIfNotFound));
 	}
 	catch(exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		//throw megaglest_runtime_error("Error accessing value: " + string(key) + " in: " + path + "\n[" + e.what() + "]");
 		throw runtime_error("Error accessing value: " + string(key) + " in: " + path + "\n[" + e.what() + "]");
 	}
+	return result;
 }
 
 const string Properties::getString(const char *key, const char *defaultValueIfNotFound) const{
-	PropertyMap::const_iterator it;
-	it= propertyMap.find(key);
-	if(it==propertyMap.end()){
+	PropertyMap::const_iterator it = propertyMapTmp.find(key);
+	if(it == propertyMapTmp.end()) {
 	    if(defaultValueIfNotFound != NULL) {
 	        //printf("In [%s::%s - %d]defaultValueIfNotFound = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,defaultValueIfNotFound);
 	        return string(defaultValueIfNotFound);
 	    }
 	    else {
-            throw runtime_error("Value not found in propertyMap: " + string(key) + ", loaded from: " + path);
+            //throw megaglest_runtime_error("Value not found in propertyMap: " + string(key) + ", loaded from: " + path);
+	    	throw runtime_error("Value not found in propertyMap: " + string(key) + ", loaded from: " + path);
 	    }
 	}
 	else{

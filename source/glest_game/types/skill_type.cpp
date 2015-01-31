@@ -30,7 +30,7 @@ namespace Glest{ namespace Game{
 
 int SkillType::nextAttackBoostId = 0;
 
-AttackBoost::AttackBoost() {
+AttackBoost::AttackBoost() : boostUpgrade() {
 	enabled = false;
 	allowMultipleBoosts = false;
 	radius = 0;
@@ -150,6 +150,128 @@ bool AttackBoost::isAffected(const Unit *source, const Unit *dest) const {
 	return result;
 }
 
+string AttackBoost::getDesc(bool translatedValue) const{
+	Lang &lang= Lang::getInstance();
+    string str= "";
+    string indent="  ";
+    if(enabled) {
+    	if(boostUnitList.empty() == false) {
+    		str+= "\n"+ lang.getString("Effects")+":\n";
+    	}
+
+    	str += indent+lang.getString("effectRadius") + ": " + intToStr(radius) +"\n";
+    	if(allowMultipleBoosts==false) {
+    		string allowIt=lang.getString("No");
+    		if(allowMultipleBoosts==true)
+    			allowIt=lang.getString("False");
+    		str += indent+lang.getString("allowMultiBoost") + ": " + allowIt +"\n";
+    	}
+    	str+=boostUpgrade.getDesc(translatedValue);
+
+    	if(targetType==abtAlly)
+    	{
+    		str+= lang.getString("AffectedUnitsFromTeam") +":\n";
+    	}
+    	else if(targetType==abtFoe)
+    	{
+    		str+= lang.getString("AffectedUnitsFromFoe") +":\n";
+    	}
+    	else if(targetType==abtFaction)
+    	{
+    		str+= lang.getString("AffectedUnitsFromYourFaction") +":\n";
+    	}
+    	else if(targetType==abtUnitTypes)
+    	{
+    		str+= lang.getString("AffectedUnitsFromAll") +":\n";
+    	}
+    	else if(targetType==abtAll)
+    	{
+    		str+= lang.getString("AffectedUnitsFromAll") +":\n";
+    	}
+
+    	if(boostUnitList.empty() == false) {
+			for(int i=0; i < (int)boostUnitList.size(); ++i){
+				str+= "  "+boostUnitList[i]->getName(translatedValue)+"\n";
+			}
+    	}
+    	else
+    	{
+    		str+= lang.getString("All")+"\n";
+    	}
+
+    	return str;
+    }
+    else
+    	return "";
+}
+
+void AttackBoost::loadGame(const XmlNode *rootNode, Faction *faction, const SkillType *skillType) {
+	const XmlNode *attackBoostNode = rootNode->getChild("AttackBoost");
+
+	enabled = (attackBoostNode->getAttribute("enabled")->getIntValue() != 0);
+	allowMultipleBoosts = (attackBoostNode->getAttribute("allowMultipleBoosts")->getIntValue() != 0);
+	radius = attackBoostNode->getAttribute("radius")->getIntValue();
+	targetType = static_cast<AttackBoostTargetType>(attackBoostNode->getAttribute("targetType")->getIntValue());
+
+	if(attackBoostNode->hasChild("UnitType") == true) {
+		vector<XmlNode *> attackBoostNodeList = attackBoostNode->getChildList("UnitType");
+		for(unsigned int i = 0; i < attackBoostNodeList.size(); ++i) {
+			XmlNode *node = attackBoostNodeList[i];
+
+			string unitTypeName = node->getAttribute("name")->getValue();
+			const UnitType *unitType = faction->getType()->getUnitType(unitTypeName);
+			if(unitType != NULL) {
+				boostUnitList.push_back(unitType);
+			}
+		}
+	}
+	//boostUpgrade.loadGame(attackBoostNode,faction);
+	boostUpgrade = skillType->getAttackBoost()->boostUpgrade;
+
+	unitParticleSystemTypeForSourceUnit = new UnitParticleSystemType();
+	unitParticleSystemTypeForSourceUnit->loadGame(attackBoostNode);
+
+	unitParticleSystemTypeForAffectedUnit = new UnitParticleSystemType();
+	unitParticleSystemTypeForAffectedUnit->loadGame(attackBoostNode);
+
+	includeSelf = (attackBoostNode->getAttribute("includeSelf")->getIntValue() != 0);
+	name = attackBoostNode->getAttribute("name")->getValue();
+}
+
+void AttackBoost::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *attackBoostNode = rootNode->addChild("AttackBoost");
+
+//	bool enabled;
+	attackBoostNode->addAttribute("enabled",intToStr(enabled), mapTagReplacements);
+//	bool allowMultipleBoosts;
+	attackBoostNode->addAttribute("allowMultipleBoosts",intToStr(allowMultipleBoosts), mapTagReplacements);
+//	int radius;
+	attackBoostNode->addAttribute("radius",intToStr(radius), mapTagReplacements);
+//	AttackBoostTargetType targetType;
+	attackBoostNode->addAttribute("targetType",intToStr(targetType), mapTagReplacements);
+//	vector<const UnitType *> boostUnitList;
+	for(unsigned int i = 0; i < boostUnitList.size(); ++i) {
+		const UnitType *ut = boostUnitList[i];
+		XmlNode *unitTypeNode = attackBoostNode->addChild("UnitType");
+		unitTypeNode->addAttribute("name",ut->getName(false), mapTagReplacements);
+	}
+//	UpgradeTypeBase boostUpgrade;
+	boostUpgrade.saveGame(attackBoostNode);
+//	UnitParticleSystemType *unitParticleSystemTypeForSourceUnit;
+	if(unitParticleSystemTypeForSourceUnit != NULL) {
+		unitParticleSystemTypeForSourceUnit->saveGame(attackBoostNode);
+	}
+//	UnitParticleSystemType *unitParticleSystemTypeForAffectedUnit;
+	if(unitParticleSystemTypeForAffectedUnit != NULL) {
+		unitParticleSystemTypeForAffectedUnit->saveGame(attackBoostNode);
+	}
+
+//	bool includeSelf;
+	attackBoostNode->addAttribute("includeSelf",intToStr(includeSelf), mapTagReplacements);
+//	string name;
+	attackBoostNode->addAttribute("name",name, mapTagReplacements);
+}
 
 // =====================================================
 // 	class SkillType
@@ -169,7 +291,7 @@ const XmlNode * SkillType::findAttackBoostDetails(string attackBoostName,
 	const XmlNode *result = attackBoostNode;
 
 	if(attackBoostsNode != NULL && attackBoostName != "") {
-		for(int i = 0; i < attackBoostsNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)attackBoostsNode->getChildCount(); ++i) {
 			const XmlNode *abn= attackBoostsNode->getChild("attack-boost", i);
 
 			string sharedName = abn->getAttribute("name")->getRestrictedValue();
@@ -199,55 +321,61 @@ void SkillType::loadAttackBoost(const XmlNode *attackBoostsNode, const XmlNode *
         attackBoost.name = "attack-boost-autoname-" + intToStr(getNextAttackBoostId());
     }
     string targetType = attackBoostNode->getChild("target")->getAttribute("value")->getValue();
-    attackBoost.allowMultipleBoosts = attackBoostNode->getChild("allow-multiple-boosts")->getAttribute("value")->getBoolValue();
-    attackBoost.radius = attackBoostNode->getChild("radius")->getAttribute("value")->getIntValue();
-    attackBoost.includeSelf = false;
 
+    attackBoost.allowMultipleBoosts = false;
+    if(attackBoostNode->hasChild("allow-multiple-boosts") == true) {
+    	attackBoost.allowMultipleBoosts = attackBoostNode->getChild("allow-multiple-boosts")->getAttribute("value")->getBoolValue();
+    }
+
+    attackBoost.radius = attackBoostNode->getChild("radius")->getAttribute("value")->getIntValue();
+
+    attackBoost.includeSelf = false;
     if(attackBoostNode->getChild("target")->hasAttribute("include-self") == true) {
         attackBoost.includeSelf = attackBoostNode->getChild("target")->getAttribute("include-self")->getBoolValue();
     }
+
     if(targetType == "ally") {
         attackBoost.targetType = abtAlly;
-        for(int i = 0;i < attackBoostNode->getChild("target")->getChildCount();++i) {
+        for(int i = 0;i < (int)attackBoostNode->getChild("target")->getChildCount();++i) {
             const XmlNode *boostUnitNode = attackBoostNode->getChild("target")->getChild("unit-type", i);
             attackBoost.boostUnitList.push_back(ft->getUnitType(boostUnitNode->getAttribute("name")->getRestrictedValue()));
         }
     }
     else if(targetType == "foe") {
 		attackBoost.targetType = abtFoe;
-		for(int i = 0;i < attackBoostNode->getChild("target")->getChildCount();++i) {
+		for(int i = 0;i < (int)attackBoostNode->getChild("target")->getChildCount();++i) {
 			const XmlNode *boostUnitNode = attackBoostNode->getChild("target")->getChild("unit-type", i);
 			attackBoost.boostUnitList.push_back(ft->getUnitType(boostUnitNode->getAttribute("name")->getRestrictedValue()));
 		}
 	}
 	else if(targetType == "faction") {
 		attackBoost.targetType = abtFaction;
-		for(int i = 0;i < attackBoostNode->getChild("target")->getChildCount();++i) {
+		for(int i = 0;i < (int)attackBoostNode->getChild("target")->getChildCount();++i) {
 			const XmlNode *boostUnitNode = attackBoostNode->getChild("target")->getChild("unit-type", i);
 			attackBoost.boostUnitList.push_back(ft->getUnitType(boostUnitNode->getAttribute("name")->getRestrictedValue()));
 		}
 	}
 	else if(targetType == "unit-types") {
 		attackBoost.targetType = abtUnitTypes;
-		for(int i = 0;i < attackBoostNode->getChild("target")->getChildCount();++i) {
+		for(int i = 0;i < (int)attackBoostNode->getChild("target")->getChildCount();++i) {
 			const XmlNode *boostUnitNode = attackBoostNode->getChild("target")->getChild("unit-type", i);
 			attackBoost.boostUnitList.push_back(ft->getUnitType(boostUnitNode->getAttribute("name")->getRestrictedValue()));
 		}
 	}
 	else if(targetType == "all") {
 		attackBoost.targetType = abtAll;
-		for(int i = 0;i < attackBoostNode->getChild("target")->getChildCount();++i) {
+		for(int i = 0;i < (int)attackBoostNode->getChild("target")->getChildCount();++i) {
 			const XmlNode *boostUnitNode = attackBoostNode->getChild("target")->getChild("unit-type", i);
 			attackBoost.boostUnitList.push_back(ft->getUnitType(boostUnitNode->getAttribute("name")->getRestrictedValue()));
 		}
 	}
 	else {
-		char szBuf[4096] = "";
-		sprintf(szBuf, "Unsupported target [%s] specified for attack boost for skill [%s] in [%s]", targetType.c_str(), name.c_str(), parentLoader.c_str());
-		throw runtime_error(szBuf);
+		char szBuf[8096] = "";
+		snprintf(szBuf, 8096,"Unsupported target [%s] specified for attack boost for skill [%s] in [%s]", targetType.c_str(), name.c_str(), parentLoader.c_str());
+		throw megaglest_runtime_error(szBuf);
 	}
 
-    attackBoost.boostUpgrade.load(attackBoostNode);
+    attackBoost.boostUpgrade.load(attackBoostNode,attackBoost.name);
     if(attackBoostNode->hasChild("particles") == true) {
         const XmlNode *particleNode = attackBoostNode->getChild("particles");
         bool particleEnabled = particleNode->getAttribute("value")->getBoolValue();
@@ -278,8 +406,14 @@ void SkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	name= sn->getChild("name")->getAttribute("value")->getRestrictedValue();
 
 	//ep cost
-	mpCost= sn->getChild("ep-cost")->getAttribute("value")->getIntValue();
-	if (sn->hasChild("hp-cost")) {
+	if(sn->hasChild("ep-cost") == true) {
+		mpCost = sn->getChild("ep-cost")->getAttribute("value")->getIntValue();
+	}
+	else {
+		mpCost = 0;
+	}
+
+	if (sn->hasChild("hp-cost") == true) {
 		hpCost = sn->getChild("hp-cost")->getAttribute("value")->getIntValue();
 	}
 	else {
@@ -287,10 +421,20 @@ void SkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 
 	//speed
-	speed= sn->getChild("speed")->getAttribute("value")->getIntValue();
+	if(sn->hasChild("speed") == true) {
+		speed = sn->getChild("speed")->getAttribute("value")->getIntValue();
+	}
+	else {
+		speed = 0;
+	}
 
 	//anim speed
-	animSpeed= sn->getChild("anim-speed")->getAttribute("value")->getIntValue();
+	if(sn->hasChild("anim-speed") == true) {
+		animSpeed = sn->getChild("anim-speed")->getAttribute("value")->getIntValue();
+	}
+	else {
+		animSpeed = 0;
+	}
 
 	//model
 	string currentPath = dir;
@@ -302,35 +446,34 @@ void SkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 		animationRandomCycleMaxcount = randomCycleCountNode->getAttribute("value")->getIntValue();
 	}
 
-	//string path= sn->getChild("animation")->getAttribute("path")->getRestrictedValue(currentPath);
-	vector<XmlNode *> animationList = sn->getChildList("animation");
-	for(unsigned int i = 0; i < animationList.size(); ++i) {
-		string path= animationList[i]->getAttribute("path")->getRestrictedValue(currentPath);
-		if(fileExists(path) == true) {
-			Model *animation= Renderer::getInstance().newModel(rsGame);
-			if(animation) {
-				animation->load(path, false, &loadedFileList, &parentLoader);
-			}
-			loadedFileList[path].push_back(make_pair(parentLoader,animationList[i]->getAttribute("path")->getRestrictedValue()));
+	if(sn->hasChild("animation") == true) {
+		//string path= sn->getChild("animation")->getAttribute("path")->getRestrictedValue(currentPath);
+		vector<XmlNode *> animationList = sn->getChildList("animation");
+		for(unsigned int i = 0; i < animationList.size(); ++i) {
+			string path= animationList[i]->getAttribute("path")->getRestrictedValue(currentPath);
+			if(fileExists(path) == true) {
+				Model *animation= Renderer::getInstance().newModel(rsGame, path, false, &loadedFileList, &parentLoader);
+				loadedFileList[path].push_back(make_pair(parentLoader,animationList[i]->getAttribute("path")->getRestrictedValue()));
 
-			animations.push_back(animation);
-			//printf("**FOUND ANIMATION [%s]\n",path.c_str());
+				animations.push_back(animation);
+				//printf("**FOUND ANIMATION [%s]\n",path.c_str());
 
-			AnimationAttributes animationAttributeList;
-			if(animationList[i]->getAttribute("minHp",false) != NULL && animationList[i]->getAttribute("maxHp",false) != NULL) {
-				animationAttributeList.fromHp = animationList[i]->getAttribute("minHp")->getIntValue();
-				animationAttributeList.toHp = animationList[i]->getAttribute("maxHp")->getIntValue();
+				AnimationAttributes animationAttributeList;
+				if(animationList[i]->getAttribute("minHp",false) != NULL && animationList[i]->getAttribute("maxHp",false) != NULL) {
+					animationAttributeList.fromHp = animationList[i]->getAttribute("minHp")->getIntValue();
+					animationAttributeList.toHp = animationList[i]->getAttribute("maxHp")->getIntValue();
+				}
+				animationAttributes.push_back(animationAttributeList);
 			}
-			animationAttributes.push_back(animationAttributeList);
+			else {
+				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line %d] WARNING CANNOT LOAD MODEL [%s] for parentLoader [%s]\n",__FILE__,__FUNCTION__,__LINE__,path.c_str(),parentLoader.c_str());
+			}
 		}
-		else {
-			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line %d] WARNING CANNOT LOAD MODEL [%s] for parentLoader [%s]\n",__FILE__,__FUNCTION__,__LINE__,path.c_str(),parentLoader.c_str());
+		if(animations.empty() == true) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"Error no animations found for skill [%s] for parentLoader [%s]",name.c_str(),parentLoader.c_str());
+			throw megaglest_runtime_error(szBuf);
 		}
-	}
-	if(animations.empty() == true) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"Error no animations found for skill [%s] for parentLoader [%s]",name.c_str(),parentLoader.c_str());
-		throw runtime_error(szBuf);
 	}
 
 	//particles
@@ -338,7 +481,7 @@ void SkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 		const XmlNode *particleNode= sn->getChild("particles");
 		bool particleEnabled= particleNode->getAttribute("value")->getBoolValue();
 		if(particleEnabled) {
-			for(int i = 0; i < particleNode->getChildCount(); ++i) {
+			for(int i = 0; i < (int)particleNode->getChildCount(); ++i) {
 				const XmlNode *particleFileNode= particleNode->getChild("particle-file", i);
 				string path= particleFileNode->getAttribute("path")->getRestrictedValue();
 				UnitParticleSystemType *unitParticleSystemType= new UnitParticleSystemType();
@@ -361,18 +504,20 @@ void SkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 
 	//sound
-	const XmlNode *soundNode= sn->getChild("sound");
-	if(soundNode->getAttribute("enabled")->getBoolValue()) {
-		soundStartTime= soundNode->getAttribute("start-time")->getFloatValue();
-		sounds.resize(soundNode->getChildCount());
-		for(int i = 0; i < soundNode->getChildCount(); ++i) {
-			const XmlNode *soundFileNode= soundNode->getChild("sound-file", i);
-			string path= soundFileNode->getAttribute("path")->getRestrictedValue(currentPath, true);
+	if(sn->hasChild("sound")) {
+		const XmlNode *soundNode= sn->getChild("sound");
+		if(soundNode->getAttribute("enabled")->getBoolValue()) {
+			soundStartTime= soundNode->getAttribute("start-time")->getFloatValue();
+			sounds.resize((int)soundNode->getChildCount());
+			for(int i = 0; i < (int)soundNode->getChildCount(); ++i) {
+				const XmlNode *soundFileNode= soundNode->getChild("sound-file", i);
+				string path= soundFileNode->getAttribute("path")->getRestrictedValue(currentPath, true);
 
-			StaticSound *sound= new StaticSound();
-			sound->load(path);
-			loadedFileList[path].push_back(make_pair(parentLoader,soundFileNode->getAttribute("path")->getRestrictedValue()));
-			sounds[i]= sound;
+				StaticSound *sound= new StaticSound();
+				sound->load(path);
+				loadedFileList[path].push_back(make_pair(parentLoader,soundFileNode->getAttribute("path")->getRestrictedValue()));
+				sounds[i]= sound;
+			}
 		}
 	}
 
@@ -397,11 +542,16 @@ bool SkillType::CanCycleNextRandomAnimation(const int *animationRandomCycleCount
 	return result;
 }
 
+const AnimationAttributes SkillType::getAnimationAttribute(int index) const {
+	return animationAttributes[index];
+}
+
 Model *SkillType::getAnimation(float animProgress, const Unit *unit,
 		int *lastAnimationIndex, int *animationRandomCycleCount) const {
 	int modelIndex = 0;
+	//printf("Count [%d] animProgress = [%f] for skill [%s] animationRandomCycleCount = %d\n",animations.size(),animProgress,name.c_str(),*animationRandomCycleCount);
 	if(animations.size() > 1) {
-		//printf("animProgress = [%f] for skill [%s]\n",animProgress,name.c_str());
+		//printf("animProgress = [%f] for skill [%s] animationRandomCycleCount = %d\n",animProgress,name.c_str(),*animationRandomCycleCount);
 
 		if(lastAnimationIndex) {
 			modelIndex = *lastAnimationIndex;
@@ -442,14 +592,18 @@ Model *SkillType::getAnimation(float animProgress, const Unit *unit,
 
 				if(foundSpecificAnimation == false) {
 					//int modelIndex = random.randRange(0,animations.size()-1);
-					srand(time(NULL) + unit->getId());
+					Chrono seed(true);
+					srand((unsigned int)seed.getCurTicks() + (unit != NULL ? unit->getId() : 0));
+
 					modelIndex = rand() % animations.size();
 
 					//const AnimationAttributes &attributes = animationAttributes[modelIndex];
 					//printf("SELECTING RANDOM Model index = %d [%s] model attributes [%d to %d] for unit [%s - %d] with HP = %d\n",modelIndex,animations[modelIndex]->getFileName().c_str(),attributes.fromHp,attributes.toHp,unit->getType()->getName().c_str(),unit->getId(),unit->getHp());
 				}
 				else {
-					srand(time(NULL) + unit->getId());
+					Chrono seed(true);
+					srand((unsigned int)seed.getCurTicks() + unit->getId());
+
 					int filteredModelIndex = rand() % filteredAnimations.size();
 					modelIndex = filteredAnimations[filteredModelIndex];
 				}
@@ -457,6 +611,9 @@ Model *SkillType::getAnimation(float animProgress, const Unit *unit,
 		}
 	}
 	if(lastAnimationIndex) {
+		if(*lastAnimationIndex != modelIndex) {
+			//printf("Switching model from [%s] to [%s]\n",(*lastAnimationIndex >= 0 ? animations[*lastAnimationIndex]->getFileName().c_str() : "none"),animations[modelIndex]->getFileName().c_str());
+		}
 		*lastAnimationIndex = modelIndex;
 	}
 
@@ -476,22 +633,80 @@ string SkillType::skillClassToStr(SkillClass skillClass) {
 	case scBeBuilt: return "Be Built";
 	case scProduce: return "Produce";
 	case scUpgrade: return "Upgrade";
+	case scFogOfWar: return "Fog Of War";
 	default:
 		assert(false);
-		return "";
-	};
+		break;
+	}
+	return "";
 }
 
-string SkillType::fieldToStr(Field field){
-	switch(field){
-	case fLand: return "Land";
-	case fAir: return "Air";
-	default:
-		assert(false);
-		return "";
-	};
+string SkillType::fieldToStr(Field field) {
+	Lang &lang= Lang::getInstance();
+	string fieldName = "";
+	switch(field) {
+		case fLand:
+			if(lang.hasString("FieldLand") == true) {
+				fieldName = lang.getString("FieldLand");
+			}
+			else {
+				fieldName = "Land";
+			}
+			//return "Land";
+			return lang.getTilesetString("FieldLandName",fieldName.c_str());
+
+		case fAir:
+			if(lang.hasString("FieldAir") == true) {
+				fieldName = lang.getString("FieldAir");
+			}
+			else {
+				fieldName = "Air";
+			}
+
+			//return "Air";
+			return lang.getTilesetString("FieldAirName",fieldName.c_str());
+		default:
+			assert(false);
+			break;
+	}
+	return "";
 }
 
+void SkillType::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *skillTypeNode = rootNode->addChild("SkillType");
+
+//    SkillClass skillClass;
+	skillTypeNode->addAttribute("skillClass",intToStr(skillClass), mapTagReplacements);
+//	string name;
+	skillTypeNode->addAttribute("name",name, mapTagReplacements);
+//	int mpCost;
+	skillTypeNode->addAttribute("mpCost",intToStr(mpCost), mapTagReplacements);
+//	int hpCost;
+	skillTypeNode->addAttribute("hpCost",intToStr(hpCost), mapTagReplacements);
+//    int speed;
+	skillTypeNode->addAttribute("speed",intToStr(speed), mapTagReplacements);
+//    int animSpeed;
+	skillTypeNode->addAttribute("animSpeed",intToStr(animSpeed), mapTagReplacements);
+//    int animationRandomCycleMaxcount;
+	skillTypeNode->addAttribute("animationRandomCycleMaxcount",intToStr(animationRandomCycleMaxcount), mapTagReplacements);
+//    vector<Model *> animations;
+//    vector<AnimationAttributes> animationAttributes;
+//
+//    SoundContainer sounds;
+//	float soundStartTime;
+	skillTypeNode->addAttribute("soundStartTime",floatToStr(soundStartTime,6), mapTagReplacements);
+//	RandomGen random;
+	skillTypeNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	AttackBoost attackBoost;
+	attackBoost.saveGame(skillTypeNode);
+//	static int nextAttackBoostId;
+	skillTypeNode->addAttribute("nextAttackBoostId",intToStr(nextAttackBoostId), mapTagReplacements);
+//	UnitParticleSystemTypes unitParticleSystemTypes;
+	for(UnitParticleSystemTypes::iterator it = unitParticleSystemTypes.begin(); it != unitParticleSystemTypes.end(); ++it) {
+		(*it)->saveGame(skillTypeNode);
+	}
+}
 
 // =====================================================
 // 	class StopSkillType
@@ -501,8 +716,11 @@ StopSkillType::StopSkillType(){
     skillClass= scStop;
 }
 
-string StopSkillType::toString() const{
-	return Lang::getInstance().get("Stop");
+string StopSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Stop";
+	}
+	return Lang::getInstance().getString("Stop");
 }
 
 // =====================================================
@@ -513,8 +731,12 @@ MoveSkillType::MoveSkillType(){
 	skillClass= scMove;
 }
 
-string MoveSkillType::toString() const{
-	return Lang::getInstance().get("Move");
+string MoveSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Move";
+	}
+
+	return Lang::getInstance().getString("Move");
 }
 
 int MoveSkillType::getTotalSpeed(const TotalUpgrade *totalUpgrade) const{
@@ -557,6 +779,7 @@ AttackSkillType::~AttackSkillType() {
 	delete splashParticleSystemType;
 	splashParticleSystemType = NULL;
 	deleteValues(projSounds.getSounds().begin(), projSounds.getSounds().end());
+	projSounds.clearSounds();
 }
 
 void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
@@ -569,13 +792,16 @@ void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	endPathWithSlash(currentPath);
 
 	//misc
-	attackStrength= sn->getChild("attack-strenght")->getAttribute("value")->getIntValue();
+	std::vector<string> attackStrengthXMLTags;
+	attackStrengthXMLTags.push_back("attack-strenght");
+	attackStrengthXMLTags.push_back("attack-strength");
+	attackStrength= sn->getChildWithAliases(attackStrengthXMLTags)->getAttribute("value")->getIntValue();
     attackVar= sn->getChild("attack-var")->getAttribute("value")->getIntValue();
 
     if(attackVar < 0) {
-        char szBuf[4096]="";
-        sprintf(szBuf,"The attack skill has an INVALID attack var value which is < 0 [%d] in file [%s]!",attackVar,dir.c_str());
-        throw runtime_error(szBuf);
+        char szBuf[8096]="";
+        snprintf(szBuf,8096,"The attack skill has an INVALID attack var value which is < 0 [%d] in file [%s]!",attackVar,dir.c_str());
+        throw megaglest_runtime_error(szBuf);
     }
 
     attackRange= sn->getChild("attack-range")->getAttribute("value")->getIntValue();
@@ -593,7 +819,7 @@ void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 	//attack fields
 	const XmlNode *attackFieldsNode= sn->getChild("attack-fields");
-	for(int i=0; i<attackFieldsNode->getChildCount(); ++i){
+	for(int i=0; i < (int)attackFieldsNode->getChildCount(); ++i){
 		const XmlNode *fieldNode= attackFieldsNode->getChild("field", i);
 		string fieldName= fieldNode->getAttribute("value")->getRestrictedValue();
 		if(fieldName=="land"){
@@ -603,7 +829,7 @@ void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 			attackFields[fAir]= true;
 		}
 		else{
-			throw runtime_error("Not a valid field: "+fieldName+": "+ dir);
+			throw megaglest_runtime_error("Not a valid field: "+fieldName+": "+ dir);
 		}
 	}
 
@@ -627,8 +853,8 @@ void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 		const XmlNode *soundNode= projectileNode->getChild("sound");
 		if(soundNode->getAttribute("enabled")->getBoolValue()){
 
-			projSounds.resize(soundNode->getChildCount());
-			for(int i=0; i<soundNode->getChildCount(); ++i){
+			projSounds.resize((int)soundNode->getChildCount());
+			for(int i=0; i < (int)soundNode->getChildCount(); ++i){
 				const XmlNode *soundFileNode= soundNode->getChild("sound-file", i);
 				string path= soundFileNode->getAttribute("path")->getRestrictedValue(currentPath, true);
 				//printf("\n\n\n\n!@#$ ---> parentLoader [%s] path [%s] nodeValue [%s] i = %d",parentLoader.c_str(),path.c_str(),soundFileNode->getAttribute("path")->getRestrictedValue().c_str(),i);
@@ -661,8 +887,12 @@ void AttackSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 }
 
-string AttackSkillType::toString() const{
-	return Lang::getInstance().get("Attack");
+string AttackSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Attack";
+	}
+
+	return Lang::getInstance().getString("Attack");
 }
 
 //get totals
@@ -678,6 +908,52 @@ int AttackSkillType::getTotalAttackRange(const TotalUpgrade *totalUpgrade) const
 	return result;
 }
 
+void AttackSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *attackSkillTypeNode = rootNode->addChild("AttackSkillType");
+
+//    int attackStrength;
+	attackSkillTypeNode->addAttribute("attackStrength",intToStr(attackStrength), mapTagReplacements);
+//    int attackVar;
+	attackSkillTypeNode->addAttribute("attackVar",intToStr(attackVar), mapTagReplacements);
+//    int attackRange;
+	attackSkillTypeNode->addAttribute("attackRange",intToStr(attackRange), mapTagReplacements);
+//	const AttackType *attackType;
+	if(attackType != NULL) {
+		attackSkillTypeNode->addAttribute("attackType",attackType->getName(false), mapTagReplacements);
+	}
+//	bool attackFields[fieldCount];
+	for(unsigned int i = 0; i < fieldCount; ++i) {
+		XmlNode *attackFieldsNode = attackSkillTypeNode->addChild("attackFields");
+		attackFieldsNode->addAttribute("key",intToStr(i), mapTagReplacements);
+		attackFieldsNode->addAttribute("value",intToStr(attackFields[i]), mapTagReplacements);
+	}
+//	float attackStartTime;
+	attackSkillTypeNode->addAttribute("attackStartTime",floatToStr(attackStartTime,6), mapTagReplacements);
+//	string spawnUnit;
+	attackSkillTypeNode->addAttribute("spawnUnit",spawnUnit, mapTagReplacements);
+//	int spawnUnitcount;
+	attackSkillTypeNode->addAttribute("spawnUnitcount",intToStr(spawnUnitcount), mapTagReplacements);
+//    bool projectile;
+	attackSkillTypeNode->addAttribute("projectile",intToStr(projectile), mapTagReplacements);
+//    ParticleSystemTypeProjectile* projectileParticleSystemType;
+	if(projectileParticleSystemType != NULL) {
+		projectileParticleSystemType->saveGame(attackSkillTypeNode);
+	}
+//	SoundContainer projSounds;
+//
+//    bool splash;
+	attackSkillTypeNode->addAttribute("splash",intToStr(splash), mapTagReplacements);
+//    int splashRadius;
+	attackSkillTypeNode->addAttribute("splashRadius",intToStr(splashRadius), mapTagReplacements);
+//    bool splashDamageAll;
+	attackSkillTypeNode->addAttribute("splashDamageAll",intToStr(splashDamageAll), mapTagReplacements);
+//    ParticleSystemTypeSplash* splashParticleSystemType;
+	if(splashParticleSystemType != NULL) {
+		splashParticleSystemType->saveGame(attackSkillTypeNode);
+	}
+}
 // =====================================================
 // 	class BuildSkillType
 // =====================================================
@@ -686,8 +962,12 @@ BuildSkillType::BuildSkillType(){
     skillClass= scBuild;
 }
 
-string BuildSkillType::toString() const{
-	return Lang::getInstance().get("Build");
+string BuildSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Build";
+	}
+
+	return Lang::getInstance().getString("Build");
 }
 
 // =====================================================
@@ -698,8 +978,12 @@ HarvestSkillType::HarvestSkillType(){
     skillClass= scHarvest;
 }
 
-string HarvestSkillType::toString() const{
-	return Lang::getInstance().get("Harvest");
+string HarvestSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Harvest";
+	}
+
+	return Lang::getInstance().getString("Harvest");
 }
 
 // =====================================================
@@ -710,8 +994,12 @@ RepairSkillType::RepairSkillType(){
     skillClass= scRepair;
 }
 
-string RepairSkillType::toString() const{
-	return Lang::getInstance().get("Repair");
+string RepairSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Repair";
+	}
+
+	return Lang::getInstance().getString("Repair");
 }
 
 // =====================================================
@@ -738,8 +1026,12 @@ void ProduceSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 }
 
 
-string ProduceSkillType::toString() const{
-	return Lang::getInstance().get("Produce");
+string ProduceSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Produce";
+	}
+
+	return Lang::getInstance().getString("Produce");
 }
 
 int ProduceSkillType::getTotalSpeed(const TotalUpgrade *totalUpgrade) const{
@@ -748,6 +1040,13 @@ int ProduceSkillType::getTotalSpeed(const TotalUpgrade *totalUpgrade) const{
 	return result;
 }
 
+void ProduceSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *produceSkillTypeNode = rootNode->addChild("ProduceSkillType");
+
+	produceSkillTypeNode->addAttribute("animProgressBound",intToStr(animProgressBound), mapTagReplacements);
+}
 // =====================================================
 // 	class UpgradeSkillType
 // =====================================================
@@ -771,14 +1070,26 @@ void UpgradeSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 }
 
-string UpgradeSkillType::toString() const{
-	return Lang::getInstance().get("Upgrade");
+string UpgradeSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Upgrade";
+	}
+
+	return Lang::getInstance().getString("Upgrade");
 }
 
 int UpgradeSkillType::getTotalSpeed(const TotalUpgrade *totalUpgrade) const{
 	int result = speed + totalUpgrade->getProdSpeed(this);
 	result = max(0,result);
 	return result;
+}
+
+void UpgradeSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *upgradeSkillTypeNode = rootNode->addChild("UpgradeSkillType");
+
+	upgradeSkillTypeNode->addAttribute("animProgressBound",intToStr(animProgressBound), mapTagReplacements);
 }
 
 // =====================================================
@@ -808,8 +1119,20 @@ void BeBuiltSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 }
 
 
-string BeBuiltSkillType::toString() const{
+string BeBuiltSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Be built";
+	}
+
 	return "Be built";
+}
+
+void BeBuiltSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *beBuiltSkillTypeNode = rootNode->addChild("BeBuiltSkillType");
+
+	beBuiltSkillTypeNode->addAttribute("animProgressBound",intToStr(animProgressBound), mapTagReplacements);
 }
 
 // =====================================================
@@ -835,7 +1158,11 @@ void MorphSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	}
 }
 
-string MorphSkillType::toString() const{
+string MorphSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Morph";
+	}
+
 	return "Morph";
 }
 
@@ -843,6 +1170,14 @@ int MorphSkillType::getTotalSpeed(const TotalUpgrade *totalUpgrade) const{
 	int result = speed + totalUpgrade->getProdSpeed(this);
 	result = max(0,result);
 	return result;
+}
+
+void MorphSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *morphSkillTypeNode = rootNode->addChild("MorphSkillType");
+
+	morphSkillTypeNode->addAttribute("animProgressBound",intToStr(animProgressBound), mapTagReplacements);
 }
 
 // =====================================================
@@ -863,8 +1198,62 @@ void DieSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
 	fade= sn->getChild("fade")->getAttribute("value")->getBoolValue();
 }
 
-string DieSkillType::toString() const{
+string DieSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "Die";
+	}
+
 	return "Die";
+}
+
+void DieSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *dieSkillTypeNode = rootNode->addChild("DieSkillType");
+
+	dieSkillTypeNode->addAttribute("fade",intToStr(fade), mapTagReplacements);
+}
+
+
+// =====================================================
+// 	class FogOfWarSkillType
+// =====================================================
+
+FogOfWarSkillType::FogOfWarSkillType(){
+    skillClass= scFogOfWar;
+
+	fowEnable = false;
+	applyToTeam = false;
+	durationTime = 0;
+}
+
+void FogOfWarSkillType::load(const XmlNode *sn, const XmlNode *attackBoostsNode,
+		const string &dir, const TechTree *tt,
+		const FactionType *ft, std::map<string,vector<pair<string, string> > > &loadedFileList,
+		string parentLoader) {
+	SkillType::load(sn, attackBoostsNode,dir, tt, ft, loadedFileList, parentLoader);
+
+	fowEnable = sn->getChild("enable-fog")->getAttribute("value")->getBoolValue();
+	applyToTeam = sn->getChild("apply-team")->getAttribute("value")->getBoolValue();
+	durationTime = sn->getChild("duration")->getAttribute("value")->getFloatValue();
+}
+
+string FogOfWarSkillType::toString(bool translatedValue) const{
+	if(translatedValue == false) {
+		return "FogOfWar";
+	}
+
+	return "FogOfWar";
+}
+
+void FogOfWarSkillType::saveGame(XmlNode *rootNode) {
+	SkillType::saveGame(rootNode);
+	std::map<string,string> mapTagReplacements;
+	XmlNode *fogSkillTypeNode = rootNode->addChild("FogOfWarSkillType");
+
+	fogSkillTypeNode->addAttribute("enable-fog",intToStr(fowEnable), mapTagReplacements);
+	fogSkillTypeNode->addAttribute("apply-team",intToStr(applyToTeam), mapTagReplacements);
+	fogSkillTypeNode->addAttribute("duration",floatToStr(durationTime,6), mapTagReplacements);
 }
 
 // =====================================================
@@ -883,6 +1272,7 @@ SkillTypeFactory::SkillTypeFactory(){
 	registerClass<UpgradeSkillType>("upgrade");
 	registerClass<MorphSkillType>("morph");
 	registerClass<DieSkillType>("die");
+	registerClass<FogOfWarSkillType>("fog_of_war");
 }
 
 SkillTypeFactory &SkillTypeFactory::getInstance(){

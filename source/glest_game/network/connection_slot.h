@@ -12,11 +12,12 @@
 #ifndef _GLEST_GAME_CONNECTIONSLOT_H_
 #define _GLEST_GAME_CONNECTIONSLOT_H_
 
-#include <vector>
 #include "socket.h"
 #include "network_interface.h"
-#include <time.h>
 #include "base_thread.h"
+#include <time.h>
+#include <vector>
+
 #include "leak_dumper.h"
 
 using Shared::Platform::ServerSocket;
@@ -55,7 +56,7 @@ public:
 	int64 triggerId;
 	ConnectionSlot* connectionSlot;
 	ConnectionSlotEventType eventType;
-	const NetworkMessage *networkMessage;
+	NetworkMessage *networkMessage;
 	bool socketTriggered;
 	bool eventCompleted;
 	int64 eventId;
@@ -66,10 +67,16 @@ public:
 //
 class ConnectionSlotCallbackInterface {
 public:
+	virtual bool isClientConnected(int index) = 0;
+	virtual bool getAllowInGameConnections() const = 0;
+	virtual ConnectionSlot *getSlot(int index, bool lockMutex) = 0;
+	virtual Mutex *getSlotMutex(int index) = 0;
+
 	virtual void slotUpdateTask(ConnectionSlotEvent *event) = 0;
+	virtual ~ConnectionSlotCallbackInterface() {}
 };
 
-class ConnectionSlotThread : public BaseThread
+class ConnectionSlotThread : public BaseThread, public SlaveThreadControllerInterface
 {
 protected:
 
@@ -78,10 +85,13 @@ protected:
 	Mutex *triggerIdMutex;
 	vector<ConnectionSlotEvent> eventList;
 	int slotIndex;
+	MasterSlaveThreadController *masterController;
+
+	Mutex *triggerGameStarted;
+	bool gameStarted;
 
 	virtual void setQuitStatus(bool value);
 	virtual void setTaskCompleted(int eventId);
-	virtual bool canShutdown(bool deleteSelfIfShutdownDelayed=false);
 
 	void slotUpdateTask(ConnectionSlotEvent *event);
 
@@ -90,14 +100,24 @@ public:
 	ConnectionSlotThread(ConnectionSlotCallbackInterface *slotInterface,int slotIndex);
 	virtual ~ConnectionSlotThread();
 
+	bool getGameStarted();
+	void setGameStarted(bool value);
+
+	virtual void setMasterController(MasterSlaveThreadController *master) { masterController = master; }
+	virtual void signalSlave(void *userdata);
+
     virtual void execute();
     void signalUpdate(ConnectionSlotEvent *event);
     bool isSignalCompleted(ConnectionSlotEvent *event);
+
     int getSlotIndex() const {return slotIndex; }
+    void setSlotIndex(int index) { this->slotIndex = index; }
 
     void purgeCompletedEvents();
     void purgeAllEvents();
     void setAllEventsCompleted();
+
+    virtual bool canShutdown(bool deleteSelfIfShutdownDelayed=false);
 };
 
 // =====================================================
@@ -113,7 +133,7 @@ private:
 	int playerIndex;
 	string name;
 	bool ready;
-	vector<std::pair<string,int32> > vctFileList;
+	vector<std::pair<string,uint32> > vctFileList;
 	bool receivedNetworkGameStatus;
 	time_t connectedTime;
 	bool gotIntro;
@@ -132,19 +152,56 @@ private:
 	uint32 connectedRemoteIPAddress;
 	int playerStatus;
 	string playerLanguage;
+	string playerUUID;
+	string platform;
+
+	bool skipLagCheck;
+	bool joinGameInProgress;
+	bool canAcceptConnections;
+	bool startInGameConnectionLaunch;
+	bool pauseForInGameConnection;
+	bool unPauseForInGameConnection;
+	bool sentSavedGameInfo;
+
+	int autoPauseGameCountForLag;
 
 public:
 	ConnectionSlot(ServerInterface* serverInterface, int playerIndex);
 	~ConnectionSlot();
 
+	int getAutoPauseGameCountForLag();
+	void incrementAutoPauseGameCountForLag();
+
+	bool getGameStarted();
+	void setGameStarted(bool value);
+
+	bool getStartInGameConnectionLaunch() const { return startInGameConnectionLaunch; }
+	void setStartInGameConnectionLaunch(bool value) { startInGameConnectionLaunch = value; }
+
+	bool getPauseForInGameConnection() const { return pauseForInGameConnection; }
+	void setPauseForInGameConnection(bool value) { pauseForInGameConnection = value; }
+
+	bool getUnPauseForInGameConnection() const { return unPauseForInGameConnection; }
+	void setUnPauseForInGameConnection(bool value) { unPauseForInGameConnection = value; }
+
+	bool getSkipLagCheck() const { return skipLagCheck; }
+	bool getJoinGameInProgress() const { return joinGameInProgress; }
+
+	bool getSentSavedGameInfo() const { return sentSavedGameInfo; }
+	void setSentSavedGameInfo(bool value) { sentSavedGameInfo = value; }
+
+	ConnectionSlotThread *getWorkerThread() { return slotThreadWorker; }
+
     void update(bool checkForNewClients,int lockedSlotIndex);
-	void setPlayerIndex(int value) { playerIndex = value; }
+	void setPlayerIndex(int value);
 	int getPlayerIndex() const {return playerIndex;}
 
 	uint32 getConnectedRemoteIPAddress() const { return connectedRemoteIPAddress; }
 
-	void setReady()					{ready= true;}
+	void setReady();
 	const string &getName() const	{return name;}
+	const string &getUUID() const	{return playerUUID;}
+	const string &getPlatform() const { return platform; }
 	void setName(string value)      {name = value;}
 	bool isReady() const			{return ready;}
 
@@ -168,7 +225,7 @@ public:
 	void signalUpdate(ConnectionSlotEvent *event);
 	bool updateCompleted(ConnectionSlotEvent *event);
 
-	virtual void sendMessage(const NetworkMessage* networkMessage);
+	virtual void sendMessage(NetworkMessage* networkMessage);
 	int getCurrentFrameCount() const { return currentFrameCount; }
 
 	int getCurrentLagCount() const { return currentLagCount; }
@@ -196,6 +253,14 @@ public:
 	virtual bool isConnected();
 
 	PLATFORM_SOCKET getSocketId();
+
+	void setCanAcceptConnections(bool value) { canAcceptConnections = value; }
+	bool getCanAcceptConnections() const { return canAcceptConnections; }
+
+	virtual void saveGame(XmlNode *rootNode) {};
+
+	void resetJoinGameInProgressFlags();
+	void setJoinGameInProgressFlags();
 
 protected:
 

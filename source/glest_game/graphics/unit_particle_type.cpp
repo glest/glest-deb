@@ -17,7 +17,7 @@
 #include "config.h"
 #include "game_constants.h"
 #include "platform_common.h"
-
+#include "conversion.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Xml;
@@ -37,6 +37,7 @@ UnitParticleSystemType::UnitParticleSystemType() : ParticleSystemType() {
 	minRadius = 0;
 	emissionRateFade = 0;
     relative = false;
+    meshName = "";
     relativeDirection = false;
     fixed = false;
     staticParticleCount = 0;
@@ -75,7 +76,7 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
 		direction.y= directionNode->getAttribute("y")->getFloatValue();
 		direction.z= directionNode->getAttribute("z")->getFloatValue();
 		if((shape == UnitParticleSystem::sConical) && (0.0 == direction.length()))
-			throw runtime_error("direction cannot be zero");
+			throw megaglest_runtime_error("direction cannot be zero");
 		// ought to warn about 0 directions generally
 	}
 
@@ -96,12 +97,12 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
 		const XmlNode *minRadiusNode= particleSystemNode->getChild("min-radius");
 		minRadius= minRadiusNode->getAttribute("value")->getFloatValue();
 		if(minRadius > radius)
-			throw runtime_error("min-radius cannot be bigger than radius");
+			throw megaglest_runtime_error("min-radius cannot be bigger than radius");
 	} else {
 		minRadius = 0;
 	}
 	if((minRadius == 0) && (shape == UnitParticleSystem::sConical)) {
-		minRadius = 0.001; // fudge it so we aren't generating particles that are exactly centred
+		minRadius = 0.001f; // fudge it so we aren't generating particles that are exactly centred
 		if(minRadius > radius)
 			radius = minRadius;
 	}
@@ -111,6 +112,15 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
     relative= relativeNode->getAttribute("value")->getBoolValue();
     
 
+    //meshName
+    if(particleSystemNode->hasChild("meshName")){
+    	const XmlNode *tmpNode= particleSystemNode->getChild("meshName");
+    	meshName= tmpNode->getAttribute("value")->getValue();
+    }
+    else{
+    	meshName="";
+    }
+    
     //relativeDirection
     if(particleSystemNode->hasChild("relativeDirection")){
     	const XmlNode *relativeDirectionNode= particleSystemNode->getChild("relativeDirection");
@@ -119,7 +129,7 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
     else{
     	relativeDirection=true;
     }
-    
+
     if(particleSystemNode->hasChild("static-particle-count")){
 	    //staticParticleCount
 		const XmlNode *staticParticleCountNode= particleSystemNode->getChild("static-particle-count");
@@ -174,8 +184,8 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
 		const XmlNode* delayNode = particleSystemNode->getChild("delay");
 		const float delay_secs = delayNode->getAttribute("value")->getFloatValue();
 		if(delay_secs < 0)
-			throw runtime_error("particle effect delay cannot be negative");
-		delay = delay_secs * GameConstants::updateFps;
+			throw megaglest_runtime_error("particle effect delay cannot be negative");
+		delay = (int)delay_secs * GameConstants::updateFps;
 	} else{
 		delay= 0;
 	}
@@ -185,10 +195,20 @@ void UnitParticleSystemType::load(const XmlNode *particleSystemNode, const strin
 		const XmlNode* lifetimeNode = particleSystemNode->getChild("lifetime");
 		const float lifetime_secs = lifetimeNode->getAttribute("value")->getFloatValue();
 		if(lifetime_secs < 0 && lifetime_secs != -1)
-			throw runtime_error("particle effect lifetime cannot be negative (-1 means inherited from parent particle)");
-		lifetime = lifetime_secs * GameConstants::updateFps;
+			throw megaglest_runtime_error("particle effect lifetime cannot be negative (-1 means inherited from parent particle)");
+		lifetime = (int)lifetime_secs * GameConstants::updateFps;
 	} else{
 		lifetime= -1; //default
+	}
+}
+
+ObjectParticleSystemType::ObjectParticleSystemType() : UnitParticleSystemType() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s Line: %d] NEW [%p]\n",__FUNCTION__,__LINE__,this);
+}
+ObjectParticleSystemType::~ObjectParticleSystemType() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) {
+		printf("In [%s Line: %d] NEW [%p]\n",__FUNCTION__,__LINE__,this);
+		//printf("%s\n",PlatformExceptionHandler::getStackTrace().c_str());
 	}
 }
 
@@ -197,6 +217,7 @@ const void UnitParticleSystemType::setValues(UnitParticleSystem *ups){
 	// add instances of all children; some settings will cascade to all children
 	for(Children::iterator i=children.begin(); i!=children.end(); ++i){
 		UnitParticleSystem *child = new UnitParticleSystem();
+		child->setParticleOwner(ups->getParticleOwner());
 		(*i)->setValues(child);
 		ups->addChild(child);
 	}
@@ -220,6 +241,7 @@ const void UnitParticleSystemType::setValues(UnitParticleSystem *ups){
 	ups->setVarParticleEnergy(energyVar);
 	ups->setFixed(fixed);
 	ups->setRelative(relative);
+	ups->setMeshName(meshName);
 	ups->setRelativeDirection(relativeDirection);
 	ups->setDelay(delay);
 	ups->setLifetime(lifetime);
@@ -276,8 +298,84 @@ void UnitParticleSystemType::load(const XmlNode *particleFileNode, const string 
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
+		throw megaglest_runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
 	}
+}
+
+void UnitParticleSystemType::loadGame(const XmlNode *rootNode) {
+	ParticleSystemType::loadGame(rootNode);
+
+	const XmlNode *unitParticleSystemTypeNode = rootNode->getChild("UnitParticleSystemType");
+
+	shape = static_cast<UnitParticleSystem::Shape>(unitParticleSystemTypeNode->getAttribute("shape")->getIntValue());
+	angle = unitParticleSystemTypeNode->getAttribute("angle")->getFloatValue();
+	radius = unitParticleSystemTypeNode->getAttribute("radius")->getFloatValue();
+	minRadius = unitParticleSystemTypeNode->getAttribute("minRadius")->getFloatValue();
+	emissionRateFade = unitParticleSystemTypeNode->getAttribute("emissionRateFade")->getFloatValue();
+	direction = Vec3f::strToVec3(unitParticleSystemTypeNode->getAttribute("direction")->getValue());
+	relative = (unitParticleSystemTypeNode->getAttribute("relative")->getIntValue() != 0);
+	if(unitParticleSystemTypeNode->hasAttribute("meshName")){
+		meshName = unitParticleSystemTypeNode->getAttribute("meshName")->getValue();}
+	else {
+		meshName = "";
+	}
+	relativeDirection = (unitParticleSystemTypeNode->getAttribute("relativeDirection")->getIntValue() != 0);
+	fixed = (unitParticleSystemTypeNode->getAttribute("fixed")->getIntValue() != 0);
+	staticParticleCount = unitParticleSystemTypeNode->getAttribute("staticParticleCount")->getIntValue();
+	isVisibleAtNight = (unitParticleSystemTypeNode->getAttribute("isVisibleAtNight")->getIntValue() != 0);
+	isVisibleAtDay = (unitParticleSystemTypeNode->getAttribute("isVisibleAtDay")->getIntValue() != 0);
+	isDaylightAffected = (unitParticleSystemTypeNode->getAttribute("isDaylightAffected")->getIntValue() != 0);
+	radiusBasedStartenergy = (unitParticleSystemTypeNode->getAttribute("radiusBasedStartenergy")->getIntValue() != 0);
+	delay = unitParticleSystemTypeNode->getAttribute("delay")->getIntValue();
+	lifetime = unitParticleSystemTypeNode->getAttribute("lifetime")->getIntValue();
+	startTime = unitParticleSystemTypeNode->getAttribute("startTime")->getFloatValue();
+	endTime = unitParticleSystemTypeNode->getAttribute("endTime")->getFloatValue();
+}
+
+void UnitParticleSystemType::saveGame(XmlNode *rootNode) {
+	ParticleSystemType::saveGame(rootNode);
+
+	std::map<string,string> mapTagReplacements;
+	XmlNode *unitParticleSystemTypeNode = rootNode->addChild("UnitParticleSystemType");
+
+//	UnitParticleSystem::Shape shape;
+	unitParticleSystemTypeNode->addAttribute("shape",intToStr(shape), mapTagReplacements);
+//	float angle;
+	unitParticleSystemTypeNode->addAttribute("angle",floatToStr(angle,6), mapTagReplacements);
+//	float radius;
+	unitParticleSystemTypeNode->addAttribute("radius",floatToStr(radius,6), mapTagReplacements);
+//	float minRadius;
+	unitParticleSystemTypeNode->addAttribute("minRadius",floatToStr(minRadius,6), mapTagReplacements);
+//	float emissionRateFade;
+	unitParticleSystemTypeNode->addAttribute("emissionRateFade",floatToStr(emissionRateFade,6), mapTagReplacements);
+//	Vec3f direction;
+	unitParticleSystemTypeNode->addAttribute("direction",direction.getString(), mapTagReplacements);
+//    bool relative;
+	unitParticleSystemTypeNode->addAttribute("relative",intToStr(relative), mapTagReplacements);
+//    string meshName;
+	unitParticleSystemTypeNode->addAttribute("meshName",meshName, mapTagReplacements);
+//    bool relativeDirection;
+	unitParticleSystemTypeNode->addAttribute("relativeDirection",intToStr(relativeDirection), mapTagReplacements);
+//    bool fixed;
+	unitParticleSystemTypeNode->addAttribute("fixed",intToStr(fixed), mapTagReplacements);
+//    int staticParticleCount;
+	unitParticleSystemTypeNode->addAttribute("staticParticleCount",intToStr(staticParticleCount), mapTagReplacements);
+//	bool isVisibleAtNight;
+	unitParticleSystemTypeNode->addAttribute("isVisibleAtNight",intToStr(isVisibleAtNight), mapTagReplacements);
+//	bool isVisibleAtDay;
+	unitParticleSystemTypeNode->addAttribute("isVisibleAtDay",intToStr(isVisibleAtDay), mapTagReplacements);
+//	bool isDaylightAffected;
+	unitParticleSystemTypeNode->addAttribute("isDaylightAffected",intToStr(isDaylightAffected), mapTagReplacements);
+//	bool radiusBasedStartenergy;
+	unitParticleSystemTypeNode->addAttribute("radiusBasedStartenergy",intToStr(radiusBasedStartenergy), mapTagReplacements);
+//	int delay;
+	unitParticleSystemTypeNode->addAttribute("delay",intToStr(delay), mapTagReplacements);
+//	int lifetime;
+	unitParticleSystemTypeNode->addAttribute("lifetime",intToStr(lifetime), mapTagReplacements);
+//	float startTime;
+	unitParticleSystemTypeNode->addAttribute("startTime",floatToStr(startTime,6), mapTagReplacements);
+//	float endTime;
+	unitParticleSystemTypeNode->addAttribute("endTime",floatToStr(endTime,6), mapTagReplacements);
 }
 
 }}//end mamespace

@@ -20,6 +20,7 @@
 #include "string_utils.h"
 #include "utf8.h"
 #include "util.h"
+
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -58,6 +59,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 	}
 
 	string renderText			= text;
+	Font::bidi_cvt(renderText);
 	int line					= 0;
 	int size					= font->getSize();
 	const unsigned char *utext	= NULL;
@@ -176,11 +178,11 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 			else {
 				bool lastCharacterWasSpecial = true;
 				vector<string> parts;
-				char szBuf[4096]="";
+				char szBuf[8096]="";
 
 				for (int i=0; renderText[i] != '\0'; ++i) {
 					szBuf[0] = '\0';
-					sprintf(szBuf,"%c",renderText[i]);
+					snprintf(szBuf,8096,"%c",renderText[i]);
 
 					switch(renderText[i]) {
 						case '\t':
@@ -205,6 +207,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 								parts[parts.size()-1] += szBuf;
 							}
 							lastCharacterWasSpecial = false;
+							break;
 					}
 				}
 
@@ -221,6 +224,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 							break;
 						default:
 							font->getTextHandler()->Render(parts[i].c_str());
+							break;
 					}
 				}
 			}
@@ -244,7 +248,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 			}
 
 			glListBase(font->getHandle());
-			glCallLists(renderText.length(), GL_UNSIGNED_SHORT, &utext[0]);
+			glCallLists((GLsizei)renderText.length(), GL_UNSIGNED_SHORT, &utext[0]);
 
 			//std::locale loc("");
 			//wstring wText = widen(text);
@@ -270,11 +274,11 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 			else {
 				bool lastCharacterWasSpecial = true;
 				vector<string> parts;
-				char szBuf[4096]="";
+				char szBuf[8096]="";
 
 				for (int i=0; renderText[i] != '\0'; ++i) {
 					szBuf[0] = '\0';
-					sprintf(szBuf,"%c",renderText[i]);
+					snprintf(szBuf,8096,"%c",renderText[i]);
 
 					switch(renderText[i]) {
 						case '\t':
@@ -299,6 +303,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 								parts[parts.size()-1] += szBuf;
 							}
 							lastCharacterWasSpecial = false;
+							break;
 					}
 				}
 
@@ -315,6 +320,7 @@ void TextRenderer2DGl::render(const string &text, float x, float y, bool centere
 							break;
 						default:
 							font->getTextHandler()->Render(parts[i].c_str());
+							break;
 					}
 				}
 			}
@@ -384,6 +390,8 @@ void TextRenderer3DGl::render(const string &text, float  x, float y, bool center
 
 	if(text.empty() == false) {
 		string renderText = text;
+		Font::bidi_cvt(renderText);
+
 		if(Font::fontIsMultibyte == true) {
 			if(font->getTextHandler() != NULL) {
 				if(Font::fontIsRightToLeft == true) {
@@ -567,11 +575,12 @@ void TextRenderer3DGl::internalRender(const string &text, float  x, float y, boo
 			int line=0;
 			bool lastCharacterWasSpecial = true;
 			vector<string> parts;
-			char szBuf[4096]="";
+			char szBuf[8096]="";
 
-			for (int i=0; renderText[i] != '\0'; ++i) {
+			//for (int i=0; renderText[i] != '\0'; ++i) {
+			for(size_t i=0; i < renderText.size(); ++i) {
 				szBuf[0] = '\0';
-				sprintf(szBuf,"%c",renderText[i]);
+				snprintf(szBuf,8096,"%c",renderText[i]);
 
 				switch(renderText[i]) {
 					case '\t':
@@ -590,6 +599,7 @@ void TextRenderer3DGl::internalRender(const string &text, float  x, float y, boo
 							parts[parts.size()-1] += szBuf;
 						}
 						lastCharacterWasSpecial = false;
+						break;
 				}
 			}
 
@@ -635,6 +645,7 @@ void TextRenderer3DGl::internalRender(const string &text, float  x, float y, boo
 							font->getTextHandler()->Render(parts[i].c_str());
 							specialFTGLErrorCheckWorkaround(parts[i]);
 						}
+						break;
 				}
 			}
 		}
@@ -653,7 +664,7 @@ void TextRenderer3DGl::internalRender(const string &text, float  x, float y, boo
 
 			string utfText = renderText;
 			glListBase(font->getHandle());
-			glCallLists(renderText.length(), GL_UNSIGNED_SHORT, &utext[0]);
+			glCallLists((GLsizei)renderText.length(), GL_UNSIGNED_SHORT, &utext[0]);
 
 			//std::locale loc("");
 			//wstring wText = widen(text);

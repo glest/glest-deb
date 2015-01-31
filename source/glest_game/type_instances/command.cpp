@@ -15,6 +15,8 @@
 #include "util.h"
 #include "conversion.h"
 #include "unit_type.h"
+#include "faction.h"
+#include "world.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -24,14 +26,20 @@ namespace Glest{ namespace Game{
 // =====================================================
 // 	class Command
 // =====================================================
+Command::Command() : unitRef() {
+    this->commandType= NULL;
+	unitType= NULL;
+	stateType			= cst_None;
+	stateValue 			= -1;
+	unitCommandGroupId	= -1;
+}
 
-Command::Command(const CommandType *ct, const Vec2i &pos){
+Command::Command(const CommandType *ct, const Vec2i &pos) :unitRef() {
 	//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] ct = [%p]\n",__FILE__,__FUNCTION__,__LINE__,ct);
 
     this->commandType= ct;
     this->pos= pos;
     this->originalPos = this->pos;
-    this->unitRef= NULL;
 	unitType= NULL;
 	stateType			= cst_None;
 	stateValue 			= -1;
@@ -45,7 +53,7 @@ Command::Command(const CommandType *ct, Unit* unit) {
     this->unitRef= unit;
 	unitType= NULL;
 	if(unit!=NULL) {
-		unit->resetHighlight();
+		//unit->resetHighlight(); is in gui now
 		pos= unit->getCellPos();
 	}
 	stateType			= cst_None;
@@ -53,11 +61,10 @@ Command::Command(const CommandType *ct, Unit* unit) {
 	unitCommandGroupId	= -1;
 }
 
-Command::Command(const CommandType *ct, const Vec2i &pos, const UnitType *unitType, CardinalDir facing) {
+Command::Command(const CommandType *ct, const Vec2i &pos, const UnitType *unitType, CardinalDir facing) : unitRef() {
     this->commandType= ct;
     this->pos= pos;
     this->originalPos = this->pos;
-    this->unitRef= NULL;
 	this->unitType= unitType;
 	this->facing = facing;
 	stateType			= cst_None;
@@ -97,12 +104,12 @@ void Command::setUnit(Unit *unit){
      this->unitRef= unit;
 }
 
-std::string Command::toString() const {
+std::string Command::toString(bool translatedValue) const {
 	//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__, __LINE__);
 
 	std::string result = "";
 	if(commandType != NULL) {
-		result = "commandType id = " + intToStr(commandType->getId()) + ", desc = " + commandType->toString();
+		result = "commandType id = " + intToStr(commandType->getId()) + ", desc = " + commandType->toString(translatedValue);
 	}
 	else {
 		result = "commandType = NULL";
@@ -127,7 +134,7 @@ std::string Command::toString() const {
 
 	if(unitType != NULL) {
 		result += ", unitTypeId = " + intToStr(unitType->getId());
-		result += ", unitTypeDesc = " + unitType->getReqDesc();
+		result += ", unitTypeDesc = " + unitType->getReqDesc(translatedValue);
 	}
 
 	//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__, __LINE__);
@@ -136,6 +143,92 @@ std::string Command::toString() const {
 
 
 	result += ", unitCommandGroupId = " + intToStr(unitCommandGroupId);
+
+	return result;
+}
+
+Checksum Command::getCRC() {
+	Checksum crcForCmd;
+
+	crcForCmd.addInt(commandType->getId());
+	crcForCmd.addInt(originalPos.x);
+	crcForCmd.addInt(originalPos.y);
+	crcForCmd.addInt(pos.x);
+	crcForCmd.addInt(pos.y);
+	crcForCmd.addInt(unitRef.getUnitId());
+	crcForCmd.addInt(facing);
+	if(unitType != NULL) {
+		crcForCmd.addInt(unitType->getId());
+	}
+	crcForCmd.addInt(stateType);
+	crcForCmd.addInt(stateValue);
+	crcForCmd.addInt(unitCommandGroupId);
+
+	return crcForCmd;
+}
+
+void Command::saveGame(XmlNode *rootNode, Faction *faction) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *commandNode = rootNode->addChild("Command");
+
+//    const CommandType *commandType;
+	if(commandType != NULL) {
+		commandNode->addAttribute("commandType",intToStr(commandType->getId()), mapTagReplacements);
+	}
+//    Vec2i originalPos;
+	commandNode->addAttribute("originalPos",originalPos.getString(), mapTagReplacements);
+//    Vec2i pos;
+	commandNode->addAttribute("pos",pos.getString(), mapTagReplacements);
+//	UnitReference unitRef;		//target unit, used to move and attack optionally
+	unitRef.saveGame(commandNode);
+//	CardinalDir facing;			// facing, for build command
+	commandNode->addAttribute("facing",intToStr(facing), mapTagReplacements);
+//	const UnitType *unitType;	//used for build
+	if(unitType != NULL) {
+		commandNode->addAttribute("unitTypeId",intToStr(unitType->getId()), mapTagReplacements);
+		commandNode->addAttribute("unitTypeFactionIndex",intToStr(faction->getIndex()), mapTagReplacements);
+	}
+//	CommandStateType stateType;
+	commandNode->addAttribute("stateType",intToStr(stateType), mapTagReplacements);
+//	int stateValue;
+	commandNode->addAttribute("stateValue",intToStr(stateValue), mapTagReplacements);
+//	int unitCommandGroupId;
+	commandNode->addAttribute("unitCommandGroupId",intToStr(unitCommandGroupId), mapTagReplacements);
+}
+
+Command * Command::loadGame(const XmlNode *rootNode,const UnitType *ut,World *world) {
+	Command *result = new Command();
+	const XmlNode *commandNode = rootNode;
+
+	//description = commandNode->getAttribute("description")->getValue();
+
+	//    const CommandType *commandType;
+	if(commandNode->hasAttribute("commandType") == true) {
+		int cmdTypeId = commandNode->getAttribute("commandType")->getIntValue();
+		result->commandType = ut->findCommandTypeById(cmdTypeId);
+	}
+	//    Vec2i originalPos;
+	result->originalPos = Vec2i::strToVec2(commandNode->getAttribute("originalPos")->getValue());
+	//    Vec2i pos;
+	result->pos = Vec2i::strToVec2(commandNode->getAttribute("pos")->getValue());
+	//	UnitReference unitRef;		//target unit, used to move and attack optionally
+	result->unitRef.loadGame(commandNode,world);
+	//	CardinalDir facing;			// facing, for build command
+	result->facing = static_cast<CardinalDir>(commandNode->getAttribute("facing")->getIntValue());
+	//	const UnitType *unitType;	//used for build
+	if(commandNode->hasAttribute("unitTypeId") == true) {
+		//result->unitType = ut;
+		int unitTypeId = commandNode->getAttribute("unitTypeId")->getIntValue();
+		int unitTypeFactionIndex = commandNode->getAttribute("unitTypeFactionIndex")->getIntValue();
+		Faction *faction = world->getFaction(unitTypeFactionIndex);
+		result->unitType = world->findUnitTypeById(faction->getType(),unitTypeId);
+	}
+	//	CommandStateType stateType;
+	result->stateType = static_cast<CommandStateType>(commandNode->getAttribute("stateType")->getIntValue());
+	//	int stateValue;
+	result->stateValue = commandNode->getAttribute("stateValue")->getIntValue();
+	//	int unitCommandGroupId;
+	result->unitCommandGroupId = commandNode->getAttribute("unitCommandGroupId")->getIntValue();
 
 	return result;
 }

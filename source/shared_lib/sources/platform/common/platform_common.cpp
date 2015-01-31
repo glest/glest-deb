@@ -6,6 +6,12 @@
 //the terms of the GNU General Public License as published by the Free Software
 //Foundation; either version 2 of the License, or (at your option) any later
 //version.
+
+#ifdef WIN32
+  #include <winsock2.h>
+  #include <winsock.h>
+#endif
+
 #include "platform_common.h"
 #include "cache_manager.h"
 
@@ -58,11 +64,21 @@
 #include <algorithm>
 #include "platform_util.h"
 #include "utf8.h"
-#include "leak_dumper.h"
+#include "byte_order.h"
+
+#if _BSD_SOURCE || _SVID_SOURCE || _XOPEN_SOURCE >= 500 || _XOPEN_SOURCE && _XOPEN_SOURCE_EXTENDED
+#include <unistd.h>
+#include <sys/types.h>
+#include <pwd.h>
+#endif
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#include <sys/param.h>
 #endif
+
+#include "leak_dumper.h"
+
 
 using namespace Shared::Platform;
 using namespace Shared::Util;
@@ -74,6 +90,9 @@ namespace Shared { namespace PlatformCommon {
 
 const time_t REFRESH_CRC_DAY_SECONDS = 60 * 60 * 24;
 static string crcCachePath = "";
+
+static string gameVersion = "";
+static string gameGITVersion = "";
 
 namespace Private {
 
@@ -87,29 +106,29 @@ int ScreenHeight = 600;
 //          PerformanceTimer
 // =====================================
 
-void PerformanceTimer::init(float fps, int maxTimes){
-	times= 0;
-	this->maxTimes= maxTimes;
-
-	lastTicks= SDL_GetTicks();
-
-	updateTicks= static_cast<int>(1000./fps);
+void PerformanceTimer::init(float fps, int maxTimes) {
+	this->times			= 0;
+	this->maxTimes		= maxTimes;
+	this->lastTicks		= SDL_GetTicks();
+	this->updateTicks	= static_cast<int>(1000.0f / fps);
 }
 
-bool PerformanceTimer::isTime(){
+bool PerformanceTimer::isTime() {
 	Uint32 thisTicks = SDL_GetTicks();
 
-	if((thisTicks-lastTicks)>=updateTicks && times<maxTimes){
-		lastTicks+= updateTicks;
+	if((thisTicks - lastTicks) >= updateTicks &&
+		times < maxTimes) {
+
+		lastTicks += updateTicks;
 		times++;
 		return true;
 	}
-	times= 0;
+	times = 0;
 	return false;
 }
 
-void PerformanceTimer::reset(){
-	lastTicks= SDL_GetTicks();
+void PerformanceTimer::reset() {
+	lastTicks = SDL_GetTicks();
 }
 
 // =====================================
@@ -117,41 +136,45 @@ void PerformanceTimer::reset(){
 // =====================================
 
 Chrono::Chrono(bool autoStart) {
-	freq = 1000;
-	stopped= true;
-	accumCount= 0;
+	freq 			= 1000;
+	stopped			= true;
+	accumCount		= 0;
 
-	lastStartCount = 0;
-	lastTickCount = 0;
-	lastResult = 0;
-	lastMultiplier = 0;
-	lastStopped = false;
+	lastStartCount 	= 0;
+	lastTickCount 	= 0;
+	lastResult 		= 0;
+	lastMultiplier 	= 0;
+	lastStopped 	= false;
+	startCount 		= 0;
 
 	if(autoStart == true) {
 		start();
 	}
 }
 
+bool Chrono::isStarted() const {
+	return (stopped == false);
+}
+
 void Chrono::start() {
-	stopped= false;
-	startCount = SDL_GetTicks();
+	stopped		= false;
+	startCount 	= SDL_GetTicks();
 }
 
 void Chrono::stop() {
-	Uint32 endCount;
-	endCount = SDL_GetTicks();
-	accumCount += endCount-startCount;
-	stopped= true;
+	Uint32 endCount	= SDL_GetTicks();
+	accumCount 		+= endCount - startCount;
+	stopped			= true;
 }
 
 void Chrono::reset() {
-	accumCount = 0;
-	lastStartCount = 0;
-	lastTickCount = 0;
-	lastResult = 0;
-	lastMultiplier = 0;
+	accumCount 		= 0;
+	lastStartCount 	= 0;
+	lastTickCount 	= 0;
+	lastResult 		= 0;
+	lastMultiplier 	= 0;
 
-	startCount = SDL_GetTicks();
+	startCount 		= SDL_GetTicks();
 }
 
 int64 Chrono::getMicros() {
@@ -166,13 +189,13 @@ int64 Chrono::getSeconds() {
 	return queryCounter(1);
 }
 
-int64 Chrono::queryCounter(int multiplier) {
+int64 Chrono::queryCounter(int64 multiplier) {
 
 	if(	multiplier == lastMultiplier &&
 		stopped == lastStopped &&
 		lastStartCount == startCount) {
 
-		if(stopped) {
+		if(stopped == true) {
 			return lastResult;
 		}
 		else {
@@ -184,19 +207,19 @@ int64 Chrono::queryCounter(int multiplier) {
 	}
 
 	int64 result = 0;
-	if(stopped) {
-		result = multiplier*accumCount/freq;
+	if(stopped == true) {
+		result = multiplier * accumCount / freq;
 	}
 	else {
 		Uint32 endCount = SDL_GetTicks();
-		result = multiplier*(accumCount+endCount-startCount)/freq;
+		result = multiplier * (accumCount + endCount - startCount) / freq;
 		lastTickCount = endCount;
 	}
 
-	lastStartCount = startCount;
-	lastResult = result;
-	lastMultiplier = multiplier;
-	lastStopped = stopped;
+	lastStartCount 	= startCount;
+	lastResult 		= result;
+	lastMultiplier 	= multiplier;
+	lastStopped 	= stopped;
 
 	return result;
 }
@@ -243,7 +266,7 @@ void Tokenize(const string& str,vector<string>& tokens,const string& delimiters)
 			break;
 		}
 		tokens.push_back( string( textLine.substr( pos, nextPos - pos ) ) );
-		pos = nextPos + 1;
+		pos = nextPos + delimiters.size();
 	}
 
 }
@@ -329,8 +352,8 @@ void findAll(const string &path, vector<string> &results, bool cutExtension, boo
 	/** Stupid win32 is searching for all files without extension when *. is
 	 * specified as wildcard
 	 */
-	if(mypath.size() >= 2 && mypath.compare(max((size_t)0,mypath.size() - 2), 2, "*.") == 0) {
-		mypath = mypath.substr(0, max((size_t)0,mypath.size() - 2));
+	if((int)mypath.size() >= 2 && mypath.compare(max((int)0,(int)mypath.size() - 2), 2, "*.") == 0) {
+		mypath = mypath.substr(0, max((int)0,(int)mypath.size() - 2));
 		mypath += "*";
 	}
 
@@ -343,11 +366,11 @@ void findAll(const string &path, vector<string> &results, bool cutExtension, boo
 		if(errorOnNotFound) {
 			std::stringstream msg;
 			msg << "#1 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-			throw runtime_error(msg.str());
+			throw megaglest_runtime_error(msg.str());
 		}
 	}
 	else {
-		for(int i = 0; i < globbuf.gl_pathc; ++i) {
+		for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 			const char* p = globbuf.gl_pathv[i];
 			const char* begin = p;
 			for( ; *p != 0; ++p) {
@@ -355,7 +378,7 @@ void findAll(const string &path, vector<string> &results, bool cutExtension, boo
 				if(*p == '/')
 					begin = p+1;
 			}
-			if(!(strcmp(".", begin)==0 || strcmp("..", begin)==0 || strcmp(".svn", begin)==0)) {
+			if(!(strcmp(".", begin)==0 || strcmp("..", begin)==0 || strcmp(".git", begin)==0)) {
 				results.push_back(begin);
 			}
 			else {
@@ -366,7 +389,7 @@ void findAll(const string &path, vector<string> &results, bool cutExtension, boo
 		globfree(&globbuf);
 
 		if(results.empty() == true && errorOnNotFound == true) {
-			throw runtime_error("No files found in: " + mypath);
+			throw megaglest_runtime_error("No files found in: " + mypath);
 		}
 
 		if(cutExtension) {
@@ -415,7 +438,31 @@ bool isdir(const char *path)
   return ret;
 }
 
-void removeFolder(const string path) {
+bool fileExists(const string &path) {
+	 if (path.size() == 0) return false;
+
+#ifdef WIN32
+	wstring wstr = utf8_decode(path);
+	FILE* file= _wfopen(wstr.c_str(), L"rb");
+#else
+	FILE* file= fopen(path.c_str(), "rb");
+#endif
+	if(file != NULL) {
+		fclose(file);
+		return true;
+	}
+//	else {
+		//int fileErrno = errno;
+//#ifdef WIN32
+        //int fileErrno = errno;
+		//DWORD error = GetLastError();
+		//string strError = "[#6] Could not open file, result: " + intToStr(error) + " - " + intToStr(fileErrno) + " " + strerror(fileErrno) + " [" + path + "]";
+//#endif
+//	}
+	return false;
+}
+
+void removeFolder(const string &path) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] path [%s]\n",__FILE__,__FUNCTION__,__LINE__,path.c_str());
 
     string deletePath = path;
@@ -427,10 +474,10 @@ void removeFolder(const string path) {
     // First delete files
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] DELETE FILES\n",__FILE__,__FUNCTION__,__LINE__);
 
-    for(int i = results.size() -1; i >= 0; --i) {
+    for(int i = (int)results.size() -1; i >= 0; --i) {
         string item = results[i];
 
-        //if(item.find(".svn") != string::npos) {
+        //if(item.find(".git") != string::npos) {
         //	printf("!!!!!!!!!!!!!!!!!! FOUND SPECIAL FOLDER [%s] in [%s]\n",item.c_str(),path.c_str());
         //}
 
@@ -442,7 +489,7 @@ void removeFolder(const string path) {
     // Now delete folders
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] DELETE FOLDERS\n",__FILE__,__FUNCTION__,__LINE__);
 
-    for(int i = results.size() -1; i >= 0; --i) {
+    for(int i = (int)results.size() -1; i >= 0; --i) {
         string item = results[i];
         if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] item [%s] isdir(item.c_str()) = %d\n",__FILE__,__FUNCTION__,__LINE__,item.c_str(), isdir(item.c_str()));
         if(isdir(item.c_str()) == true) {
@@ -482,7 +529,7 @@ bool EndsWith(const string &str, const string& key)
 {
     bool result = false;
     if (str.length() >= key.length()) {
-    	result = (0 == str.compare(max((size_t)0,str.length() - key.length()), key.length(), key));
+    	result = (0 == str.compare(max((int)0,(int)str.length() - (int)key.length()), key.length(), key));
     }
 
     return result;
@@ -515,8 +562,36 @@ void trimPathWithStartingSlash(string &path) {
 }
 
 void updatePathClimbingParts(string &path) {
+	// Update paths with /./
+	string::size_type pos = path.find("/./");
+	if(pos != string::npos && pos != 0) {
+		string orig = path;
+		path.erase(pos,2);
+		//pos--;
+
+		pos = path.find("/./");
+		if(pos != string::npos && pos != 0) {
+			updatePathClimbingParts(path);
+		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("CHANGED relative path from [%s] to [%s]\n",orig.c_str(),path.c_str());
+	}
+	pos = path.find("\\.\\");
+	if(pos != string::npos && pos != 0) {
+		string orig = path;
+		path.erase(pos,2);
+		//pos--;
+
+		pos = path.find("\\.\\");
+		if(pos != string::npos && pos != 0) {
+			updatePathClimbingParts(path);
+		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("CHANGED relative path from [%s] to [%s]\n",orig.c_str(),path.c_str());
+	}
+
 	// Update paths with ..
-	string::size_type pos = path.find("..");
+	pos = path.find("..");
 	if(pos != string::npos && pos != 0) {
 		string orig = path;
 		path.erase(pos,2);
@@ -525,10 +600,10 @@ void updatePathClimbingParts(string &path) {
 			path.erase(pos,1);
 		}
 
-		for(int x = pos; x >= 0; --x) {
+		for(int x = (int)pos; x >= 0; --x) {
 			//printf("x [%d][%c] pos [%ld][%c] [%s]\n",x,path[x],(long int)pos,path[pos],path.substr(0,x+1).c_str());
 
-			if((path[x] == '/' || path[x] == '\\') && x != pos) {
+			if((path[x] == '/' || path[x] == '\\') && x != (int)pos) {
 				path.erase(x,pos-x);
 				break;
 			}
@@ -540,7 +615,6 @@ void updatePathClimbingParts(string &path) {
 
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("CHANGED relative path from [%s] to [%s]\n",orig.c_str(),path.c_str());
 	}
-
 
 /*
 	string::size_type pos = path.rfind("..");
@@ -574,15 +648,34 @@ void setCRCCacheFilePath(string path) {
 	crcCachePath = path;
 }
 
-string getFormattedCRCCacheFileName(std::pair<string,string> cacheKeys) {
-	string crcCacheFile = cacheKeys.first + cacheKeys.second;
-	replaceAll(crcCacheFile, "/", "_");
-	replaceAll(crcCacheFile, "\\", "_");
-	replaceAll(crcCacheFile, "*", "_");
-	replaceAll(crcCacheFile, ".", "_");
-	return getCRCCacheFilePath() + crcCacheFile;
+string getGameVersion() {
+	return gameVersion;
 }
-std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(vector<string> paths, string pathSearchString, const string filterFileExt) {
+string getGameGITVersion() {
+	return gameGITVersion;
+}
+void setGameVersion(string version) {
+	gameVersion = version;
+}
+void setGameGITVersion(string git) {
+	gameGITVersion = git;
+}
+
+string getCRCCacheFileName(std::pair<string,string> cacheKeys) {
+	string crcCacheFile = cacheKeys.first + cacheKeys.second;
+	return crcCacheFile;
+}
+string getFormattedCRCCacheFileName(std::pair<string,string> cacheKeys) {
+	string crcCacheFile = getCRCCacheFileName(cacheKeys);
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] cacheKeys.first = [%s] cacheKeys.second [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,cacheKeys.first.c_str(),cacheKeys.second.c_str());
+
+	Checksum checksum;
+	checksum.addString(crcCacheFile);
+	string result = getCRCCacheFilePath() + "CRC_CACHE_" + uIntToStr(checksum.getSum());
+	return result;
+}
+std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(vector<string> paths, string pathSearchString, const string &filterFileExt) {
 	string cacheLookupId =  CacheManager::getFolderTreeContentsCheckSumRecursivelyCacheLookupKey1;
 
 	string cacheKey = "";
@@ -593,8 +686,13 @@ std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(vector<string> pa
 	return make_pair(cacheLookupId,cacheKey);
 }
 
-pair<bool,time_t> hasCachedFileCRCValue(string crcCacheFile, int32 &value) {
+pair<bool,time_t> hasCachedFileCRCValue(string crcCacheFile, uint32 &value) {
 	//bool result = false;
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d for Cache file [%s]\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str());
+	}
+
 	pair<bool,time_t> result = make_pair(false,0);
 	if(fileExists(crcCacheFile) == true) {
 #ifdef WIN32
@@ -604,17 +702,70 @@ pair<bool,time_t> hasCachedFileCRCValue(string crcCacheFile, int32 &value) {
 #endif
 		if(fp != NULL) {
 			time_t refreshDate = 0;
-			int32 crcValue = 0;
+			uint32 crcValue = 0;
 			time_t lastUpdateDate = 0;
-			int res = fscanf(fp,"%ld,%d,%ld",&refreshDate,&crcValue,&lastUpdateDate);
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+				SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d for Cache file [%s]\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str());
+			}
+
+			char gameVer[500]="";
+			char gitVer[500]="";
+			char actualFilePath[8096]="";
+			int readbytes = fscanf(fp,"%20ld,%20u,%20ld\n%499s\n%499s\n%8095s",
+					&refreshDate,
+					&crcValue,
+					&lastUpdateDate,
+					&gameVer[0],
+					&gitVer[0],
+					&actualFilePath[0]);
+			refreshDate = Shared::PlatformByteOrder::fromCommonEndian(refreshDate);
+			crcValue = Shared::PlatformByteOrder::fromCommonEndian(crcValue);
+			lastUpdateDate = Shared::PlatformByteOrder::fromCommonEndian(lastUpdateDate);
+			string readGameVer = Shared::PlatformByteOrder::fromCommonEndian(string(gameVer));
+			string readGitVer = Shared::PlatformByteOrder::fromCommonEndian(string(gitVer));
+			string readActualFilePath = Shared::PlatformByteOrder::fromCommonEndian(string(actualFilePath));
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("CRC readGameVer [%s] [%s]\n%s\n",readGameVer.c_str(),readGitVer.c_str(),readActualFilePath.c_str());
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+				SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d for Cache file [%s] readbytes = %d\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),readbytes);
+			}
+
 			fclose(fp);
 
+			struct tm future;       /* as in future date */
+			future.tm_sec = 0;
+			future.tm_min = 0;
+			future.tm_hour = 0;
+			future.tm_mday = 6;     /* 1st */
+			future.tm_mon = 6;      /* July */
+			future.tm_year = 2012 - 1900; /* 2038 in years since 1900 */
+			future.tm_isdst = 0;          /* Daylight Saving not in affect (UTC) */
+			#ifdef _BSD_SOURCE
+			future.tm_zone = "UTC";
+			#endif
+
+			time_t tBadCRCDate = mktime( &future );
+
 			result.second = lastUpdateDate;
-			if(	refreshDate > 0 &&
+			if(	readGameVer != "" && readGitVer != "" &&
+					refreshDate > 0 &&
+				refreshDate > tBadCRCDate &&
 				time(NULL) < refreshDate) {
 
 				result.first = true;
 				value = crcValue;
+
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+			        struct tm *loctime = localtime (&refreshDate);
+			        char szBuf1[100]="";
+			        strftime(szBuf1,100,"%Y-%m-%d %H:%M:%S",loctime);
+
+					SystemFlags::OutputDebug(SystemFlags::debugSystem,
+							"=-=-=-=- READ CACHE for Cache file [%s] refreshDate = %ld [%s], crcValue = %u\n",
+							crcCacheFile.c_str(),refreshDate, szBuf1, crcValue);
+				}
 			}
 			else {
 				time_t now = time(NULL);
@@ -626,15 +777,29 @@ pair<bool,time_t> hasCachedFileCRCValue(string crcCacheFile, int32 &value) {
 		        char szBuf2[100]="";
 		        strftime(szBuf2,100,"%Y-%m-%d %H:%M:%S",loctime);
 
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"=-=-=-=- NEED TO CALCULATE CRC for Cache file [%s] now = %ld [%s], refreshDate = %ld [%s], crcValue = %d\n",crcCacheFile.c_str(),now, szBuf1, refreshDate, szBuf2, crcValue);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+					SystemFlags::OutputDebug(SystemFlags::debugSystem,
+							"=-=-=-=- NEED TO CALCULATE CRC for Cache file [%s] now = %ld [%s], refreshDate = %ld [%s], crcValue = %u\n",
+							crcCacheFile.c_str(),now, szBuf1, refreshDate, szBuf2, crcValue);
+				}
 			}
+		}
+		else {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+				SystemFlags::OutputDebug(SystemFlags::debugSystem,"FILE NOT FOUND(1) for Cache file [%s]\n",crcCacheFile.c_str());
+			}
+		}
+	}
+	else {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) {
+			SystemFlags::OutputDebug(SystemFlags::debugSystem,"FILE NOT FOUND(2) for Cache file [%s]\n",crcCacheFile.c_str());
 		}
 	}
 
 	return result;
 }
 
-void writeCachedFileCRCValue(string crcCacheFile, int32 &crcValue) {
+void writeCachedFileCRCValue(string crcCacheFile, uint32 &crcValue, string actualFileName) {
 #ifdef WIN32
 		FILE *fp = _wfopen(utf8_decode(crcCacheFile).c_str(), L"w");
 #else
@@ -643,7 +808,7 @@ void writeCachedFileCRCValue(string crcCacheFile, int32 &crcValue) {
 	if(fp != NULL) {
 		//RandomGen random;
 		//int offset = random.randRange(5, 15);
-	    srand((unsigned long)time(NULL) + (unsigned long)crcCacheFile.length());
+	    srand((unsigned int)time(NULL) + (unsigned long)crcCacheFile.length());
 	    int offset = rand() % 15;
 	    if(offset == 0) {
 	    	offset = 3;
@@ -655,17 +820,30 @@ void writeCachedFileCRCValue(string crcCacheFile, int32 &crcValue) {
         char szBuf1[100]="";
         strftime(szBuf1,100,"%Y-%m-%d %H:%M:%S",loctime);
 
-		fprintf(fp,"%ld,%d,%ld",refreshDate,crcValue,now);
+		string writeGameVer = Shared::PlatformByteOrder::toCommonEndian(gameVersion);
+		string writeGameGITVersion = Shared::PlatformByteOrder::toCommonEndian(gameGITVersion);
+		string writeActualFileName = Shared::PlatformByteOrder::toCommonEndian(actualFileName);
+
+		fprintf(fp,"%20ld,%20u,%20ld",
+				Shared::PlatformByteOrder::toCommonEndian(refreshDate),
+				Shared::PlatformByteOrder::toCommonEndian(crcValue),
+				Shared::PlatformByteOrder::toCommonEndian(now));
+
+		fprintf(fp,"\n%s\n%s\n%s",
+				writeGameVer.c_str(),
+				writeGameGITVersion.c_str(),
+				writeActualFileName.c_str());
+
 		fclose(fp);
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"========== Writing CRC Cache offset [%d] refreshDate = %ld [%s], crcValue = %d, file [%s]\n",offset,refreshDate,szBuf1,crcValue,crcCacheFile.c_str());
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"========== Writing CRC Cache offset [%d] refreshDate = %ld [%s], crcValue = %u, file [%s]\n",offset,refreshDate,szBuf1,crcValue,crcCacheFile.c_str());
 	}
 }
 
-void clearFolderTreeContentsCheckSum(vector<string> paths, string pathSearchString, const string filterFileExt) {
+void clearFolderTreeContentsCheckSum(vector<string> paths, string pathSearchString, const string &filterFileExt) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumCacheKey(paths, pathSearchString, filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,int32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,int32> >(cacheLookupId);
+	std::map<string,uint32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,uint32> >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -684,18 +862,18 @@ void clearFolderTreeContentsCheckSum(vector<string> paths, string pathSearchStri
 	}
 }
 
-time_t getFolderTreeContentsCheckSumRecursivelyLastGenerated(vector<string> paths, string pathSearchString, const string filterFileExt) {
+time_t getFolderTreeContentsCheckSumRecursivelyLastGenerated(vector<string> paths, string pathSearchString, const string &filterFileExt) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"-------------- In [%s::%s Line: %d] Calculating CRC for [%s] -----------\n",__FILE__,__FUNCTION__,__LINE__,pathSearchString.c_str());
 
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumCacheKey(paths, pathSearchString, filterFileExt);
-	string cacheLookupId =  cacheKeys.first;
-	std::map<string,int32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,int32> >(cacheLookupId);
+	//string cacheLookupId =  cacheKeys.first;
+	//std::map<string,uint32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,uint32> >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	string crcCacheFile = getFormattedCRCCacheFileName(cacheKeys);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"-------------- In [%s::%s Line: %d] looking for cached CRC file [%s] for [%s] -----------\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),pathSearchString.c_str());
 
-	int32 crcValue = 0;
+	uint32 crcValue = 0;
 	pair<bool,time_t> crcResult = hasCachedFileCRCValue(crcCacheFile, crcValue);
 	if(crcResult.first == true) {
         struct tm *loctime = localtime (&crcResult.second);
@@ -716,12 +894,12 @@ time_t getFolderTreeContentsCheckSumRecursivelyLastGenerated(vector<string> path
 }
 
 //finds all filenames like path and gets their checksum of all files combined
-int32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string pathSearchString, const string filterFileExt, Checksum *recursiveChecksum, bool forceNoCache) {
+uint32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string pathSearchString, const string &filterFileExt, Checksum *recursiveChecksum, bool forceNoCache) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"-------------- In [%s::%s Line: %d] Calculating CRC for [%s] -----------\n",__FILE__,__FUNCTION__,__LINE__,pathSearchString.c_str());
 
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumCacheKey(paths, pathSearchString, filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,int32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,int32> >(cacheLookupId);
+	std::map<string,uint32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,uint32> >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(forceNoCache == false && crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -737,7 +915,7 @@ int32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string path
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"-------------- In [%s::%s Line: %d] looking for cached CRC file [%s] for [%s] forceNoCache = %d -----------\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),pathSearchString.c_str(),forceNoCache);
 	}
 
-	int32 crcValue = 0;
+	uint32 crcValue = 0;
 	if(forceNoCache == false && hasCachedFileCRCValue(crcCacheFile, crcValue).first == true) {
 		crcTreeCache[cacheKey] = crcValue;
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] scanning folders found CACHED FILE checksum = %d for cacheKey [%s] forceNoCache = %d\n",__FILE__,__FUNCTION__,__LINE__,crcTreeCache[cacheKey],cacheKey.c_str(),forceNoCache);
@@ -767,25 +945,25 @@ int32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string path
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Final CRC file count: %d\n",__FILE__,__FUNCTION__,__LINE__,checksum.getFileCount());
 
-	int32 result = checksum.getFinalFileListSum();
+	uint32 result = checksum.getFinalFileListSum();
 	//if(forceNoCache == false) {
 	crcTreeCache[cacheKey] = result;
-	writeCachedFileCRCValue(crcCacheFile, crcTreeCache[cacheKey]);
+	writeCachedFileCRCValue(crcCacheFile, crcTreeCache[cacheKey],getCRCCacheFileName(cacheKeys));
 	//}
 	return result;
 }
 
-std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(const string &path, const string filterFileExt) {
+std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(const string &path, const string &filterFileExt) {
 	string cacheLookupId =  CacheManager::getFolderTreeContentsCheckSumRecursivelyCacheLookupKey2;
 
 	string cacheKey = path + "_" + filterFileExt;
 	return make_pair(cacheLookupId,cacheKey);
 }
 
-void clearFolderTreeContentsCheckSum(const string &path, const string filterFileExt) {
+void clearFolderTreeContentsCheckSum(const string &path, const string &filterFileExt) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumCacheKey(path,filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,int32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,int32> >(cacheLookupId);
+	std::map<string,uint32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,uint32> >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -793,17 +971,17 @@ void clearFolderTreeContentsCheckSum(const string &path, const string filterFile
 	}
 	string crcCacheFile = getFormattedCRCCacheFileName(cacheKeys);
 	if(fileExists(crcCacheFile) == true) {
-		bool result = removeFile(crcCacheFile.c_str());
+		bool result = removeFile(crcCacheFile);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] fileitem [%s] result = %d\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),result);
 	}
 }
 
 //finds all filenames like path and gets their checksum of all files combined
-int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string &filterFileExt, Checksum *recursiveChecksum, bool forceNoCache) {
+uint32 getFolderTreeContentsCheckSumRecursively(const string &path, const string &filterFileExt, Checksum *recursiveChecksum, bool forceNoCache) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumCacheKey(path, filterFileExt);
 
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,int32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,int32> >(cacheLookupId);
+	std::map<string,uint32> &crcTreeCache = CacheManager::getCachedItem< std::map<string,uint32> >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(forceNoCache == false && crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -819,7 +997,7 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"-------------- In [%s::%s Line: %d] looking for cached CRC file [%s] for [%s] forceNoCache = %d -----------\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),path.c_str(),forceNoCache);
 	}
 
-	int32 crcValue = 0;
+	uint32 crcValue = 0;
 	if(forceNoCache == false && hasCachedFileCRCValue(crcCacheFile, crcValue).first == true) {
 		crcTreeCache[cacheKey] = crcValue;
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] scanning folders found CACHED FILE checksum = %d for cacheKey [%s] forceNoCache = %d\n",__FILE__,__FUNCTION__,__LINE__,crcTreeCache[cacheKey],cacheKey.c_str(),forceNoCache);
@@ -843,8 +1021,8 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 	// Stupid win32 is searching for all files without extension when *. is
 	// specified as wildcard
 	//
-	if(mypath.size() >= 2 && mypath.compare(max((size_t)0,mypath.size() - 2), 2, "*.") == 0) {
-		mypath = mypath.substr(0, max((size_t)0,mypath.size() - 2));
+	if((int)mypath.size() >= 2 && mypath.compare(max((int)0,(int)mypath.size() - 2), 2, "*.") == 0) {
+		mypath = mypath.substr(0, max((int)0,(int)mypath.size() - 2));
 		mypath += "*";
 	}
 
@@ -855,19 +1033,19 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#2 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
 
 	int fileLoopCount = 0;
 	int fileMatchCount = 0;
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 		const char* p = globbuf.gl_pathv[i];
 		//printf("Line: %d p [%s]\n",__LINE__,p);
 
 		if(isdir(p) == false) {
             bool addFile = true;
-            if(EndsWith(p, ".") == true || EndsWith(p, "..") == true || EndsWith(p, ".svn") == true) {
+            if(EndsWith(p, ".") == true || EndsWith(p, "..") == true || EndsWith(p, ".git") == true) {
             	addFile = false;
             }
             else if(filterFileExt != "") {
@@ -895,11 +1073,11 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#3 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
 
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
 		struct stat statStruct;
 		// only process if dir..
@@ -926,11 +1104,11 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 		//printf("In [%s::%s Line: %d] Final CRC file count for [%s]: %d\n",__FILE__,__FUNCTION__,__LINE__,path.c_str(),checksum.getFileCount());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Final CRC file count for [%s]: %d\n",__FILE__,__FUNCTION__,__LINE__,path.c_str(),checksum.getFileCount());
 
-		int32 result = checksum.getFinalFileListSum();
+		uint32 result = checksum.getFinalFileListSum();
 		//if(forceNoCache == false) {
 		crcTreeCache[cacheKey] = result;
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] scanning [%s] ending checksum = %d for cacheKey [%s] fileMatchCount = %d, fileLoopCount = %d\n",__FILE__,__FUNCTION__,path.c_str(),crcTreeCache[cacheKey],cacheKey.c_str(),fileMatchCount,fileLoopCount);
-		writeCachedFileCRCValue(crcCacheFile, crcTreeCache[cacheKey]);
+		writeCachedFileCRCValue(crcCacheFile, crcTreeCache[cacheKey],getCRCCacheFileName(cacheKeys));
 		//}
 
 		return result;
@@ -941,7 +1119,7 @@ int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string 
 }
 
 
-std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(vector<string> paths, string pathSearchString, const string filterFileExt) {
+std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(vector<string> paths, string pathSearchString, const string &filterFileExt) {
 	string cacheLookupId =  CacheManager::getFolderTreeContentsCheckSumListRecursivelyCacheLookupKey1;
 
 	string cacheKey = "";
@@ -952,10 +1130,10 @@ std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(vector<string
 	return make_pair(cacheLookupId,cacheKey);
 }
 
-void clearFolderTreeContentsCheckSumList(vector<string> paths, string pathSearchString, const string filterFileExt) {
+void clearFolderTreeContentsCheckSumList(vector<string> paths, string pathSearchString, const string &filterFileExt) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumListCacheKey(paths, pathSearchString, filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,vector<std::pair<string,int32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,int32> > > >(cacheLookupId);
+	std::map<string,vector<std::pair<string,uint32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,uint32> > > >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -967,15 +1145,15 @@ void clearFolderTreeContentsCheckSumList(vector<string> paths, string pathSearch
 	}
 	string crcCacheFile = getFormattedCRCCacheFileName(cacheKeys);
 	if(fileExists(crcCacheFile) == true) {
-		bool result = removeFile(crcCacheFile.c_str());
+		bool result = removeFile(crcCacheFile);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] fileitem [%s] result = %d\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),result);
 	}
 }
 
-vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(vector<string> paths, string pathSearchString, string filterFileExt, vector<std::pair<string,int32> > *recursiveMap) {
+vector<std::pair<string,uint32> > getFolderTreeContentsCheckSumListRecursively(vector<string> paths, string pathSearchString, const string &filterFileExt, vector<std::pair<string,uint32> > *recursiveMap) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumListCacheKey(paths, pathSearchString, filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,vector<std::pair<string,int32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,int32> > > >(cacheLookupId);
+	std::map<string,vector<std::pair<string,uint32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,uint32> > > >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -988,7 +1166,7 @@ vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(ve
 
 	bool topLevelCaller = (recursiveMap == NULL);
 
-	vector<std::pair<string,int32> > checksumFiles = (recursiveMap == NULL ? vector<std::pair<string,int32> >() : *recursiveMap);
+	vector<std::pair<string,uint32> > checksumFiles = (recursiveMap == NULL ? vector<std::pair<string,uint32> >() : *recursiveMap);
 	for(unsigned int idx = 0; idx < paths.size(); ++idx) {
 		string path = paths[idx] + pathSearchString;
 		checksumFiles = getFolderTreeContentsCheckSumListRecursively(path, filterFileExt, &checksumFiles);
@@ -1013,8 +1191,8 @@ vector<string> getFolderTreeContentsListRecursively(const string &path, const st
 	/** Stupid win32 is searching for all files without extension when *. is
 	 * specified as wildcard
 	 */
-	if(mypath.size() >= 2 && mypath.compare(max((size_t)0,mypath.size() - 2), 2, "*.") == 0) {
-		mypath = mypath.substr(0, max((size_t)0,mypath.size() - 2));
+	if((int)mypath.size() >= 2 && mypath.compare(max((int)0,(int)mypath.size() - 2), 2, "*.") == 0) {
+		mypath = mypath.substr(0, max((int)0,(int)mypath.size() - 2));
 		mypath += "*";
 	}
 
@@ -1036,10 +1214,10 @@ vector<string> getFolderTreeContentsListRecursively(const string &path, const st
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#4 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 		const char* p = globbuf.gl_pathv[i];
 
 		bool skipItem = (EndsWith(p, ".") == true || EndsWith(p, "..") == true);
@@ -1076,11 +1254,11 @@ vector<string> getFolderTreeContentsListRecursively(const string &path, const st
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#5 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
 
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
 		struct stat statStruct;
 		// only get if dir..
@@ -1122,17 +1300,17 @@ vector<string> getFolderTreeContentsListRecursively(const string &path, const st
     return resultFiles;
 }
 
-std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(const string &path, const string filterFileExt) {
+std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(const string &path, const string &filterFileExt) {
 	string cacheLookupId =  CacheManager::getFolderTreeContentsCheckSumListRecursivelyCacheLookupKey2;
 
 	string cacheKey = path + "_" + filterFileExt;
 	return make_pair(cacheLookupId,cacheKey);
 }
 
-void clearFolderTreeContentsCheckSumList(const string &path, const string filterFileExt) {
+void clearFolderTreeContentsCheckSumList(const string &path, const string &filterFileExt) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumListCacheKey(path,filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,vector<std::pair<string,int32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,int32> > > >(cacheLookupId);
+	std::map<string,vector<std::pair<string,uint32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,uint32> > > >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -1140,16 +1318,16 @@ void clearFolderTreeContentsCheckSumList(const string &path, const string filter
 	}
 	string crcCacheFile = getFormattedCRCCacheFileName(cacheKeys);
 	if(fileExists(crcCacheFile) == true) {
-		bool result = removeFile(crcCacheFile.c_str());
+		bool result = removeFile(crcCacheFile);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] fileitem [%s] result = %d\n",__FILE__,__FUNCTION__,__LINE__,crcCacheFile.c_str(),result);
 	}
 }
 
 //finds all filenames like path and gets the checksum of each file
-vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(const string &path, const string &filterFileExt, vector<std::pair<string,int32> > *recursiveMap) {
+vector<std::pair<string,uint32> > getFolderTreeContentsCheckSumListRecursively(const string &path, const string &filterFileExt, vector<std::pair<string,uint32> > *recursiveMap) {
 	std::pair<string,string> cacheKeys = getFolderTreeContentsCheckSumListCacheKey(path, filterFileExt);
 	string cacheLookupId =  cacheKeys.first;
-	std::map<string,vector<std::pair<string,int32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,int32> > > >(cacheLookupId);
+	std::map<string,vector<std::pair<string,uint32> > > &crcTreeCache = CacheManager::getCachedItem< std::map<string,vector<std::pair<string,uint32> > > >(cacheLookupId);
 
 	string cacheKey = cacheKeys.second;
 	if(crcTreeCache.find(cacheKey) != crcTreeCache.end()) {
@@ -1158,14 +1336,14 @@ vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(co
 	}
 
 	bool topLevelCaller = (recursiveMap == NULL);
-    vector<std::pair<string,int32> > checksumFiles = (recursiveMap == NULL ? vector<std::pair<string,int32> >() : *recursiveMap);
+    vector<std::pair<string,uint32> > checksumFiles = (recursiveMap == NULL ? vector<std::pair<string,uint32> >() : *recursiveMap);
 
 	std::string mypath = path;
 	/** Stupid win32 is searching for all files without extension when *. is
 	 * specified as wildcard
 	 */
-	if(mypath.size() >= 2 && mypath.compare(max((size_t)0,mypath.size() - 2), 2, "*.") == 0) {
-		mypath = mypath.substr(0, max((size_t)0,mypath.size() - 2));
+	if((int)mypath.size() >= 2 && mypath.compare(max((int)0,(int)mypath.size() - 2), 2, "*.") == 0) {
+		mypath = mypath.substr(0, max((int)0,(int)mypath.size() - 2));
 		mypath += "*";
 	}
 
@@ -1177,16 +1355,16 @@ vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(co
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#6 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
 
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 		const char* p = globbuf.gl_pathv[i];
 
 		if(isdir(p) == false) {
             bool addFile = true;
-            if(EndsWith(p, ".") == true || EndsWith(p, "..") == true || EndsWith(p, ".svn") == true) {
+            if(EndsWith(p, ".") == true || EndsWith(p, "..") == true || EndsWith(p, ".git") == true) {
             	addFile = false;
             }
             else if(filterFileExt != "") {
@@ -1197,7 +1375,7 @@ vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(co
                 Checksum checksum;
                 checksum.addFile(p);
 
-                checksumFiles.push_back(std::pair<string,int32>(p,checksum.getSum()));
+                checksumFiles.push_back(std::pair<string,uint32>(p,checksum.getSum()));
             }
 		}
 	}
@@ -1215,11 +1393,11 @@ vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(co
 	if(res < 0) {
 		std::stringstream msg;
 		msg << "#7 Couldn't scan directory '" << mypath << "': " << strerror(errno);
-		throw runtime_error(msg.str());
+		throw megaglest_runtime_error(msg.str());
 	}
 #endif
 
-	for(int i = 0; i < globbuf.gl_pathc; ++i) {
+	for(int i = 0; i < (int)globbuf.gl_pathc; ++i) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
 		struct stat statStruct;
 		// only get if dir..
@@ -1278,8 +1456,8 @@ string extractLastDirectoryFromPath(string Path) {
 			result = Path.erase( 0, lastDirectory + 1);
 		}
 		else {
-			for(int i = lastDirectory-1; i >= 0; --i) {
-				if(Path[i] == '/' || Path[i] == '\\' && i > 0) {
+			for(int i = (int)lastDirectory-1; i >= 0; --i) {
+				if((Path[i] == '/' || Path[i] == '\\') && i > 0) {
 					result = Path.erase( 0, i);
 					break;
 				}
@@ -1342,9 +1520,15 @@ void getFullscreenVideoInfo(int &colorBits,int &screenWidth,int &screenHeight,bo
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
     /* Get available fullscreen/hardware modes */
-    int flags = SDL_RESIZABLE;
+
     #if defined(WIN32) || defined(__APPLE__)
-    flags = 0;
+
+	int flags = 0;
+
+    #else
+
+    int flags = SDL_RESIZABLE;
+
     #endif
     if(isFullscreen) flags = SDL_FULLSCREEN;
     SDL_Rect**modes = SDL_ListModes(NULL, SDL_OPENGL|flags);
@@ -1428,18 +1612,24 @@ void getFullscreenVideoModes(vector<ModeInfo> *modeinfos, bool isFullscreen) {
 					format.BitsPerPixel = 16;
 					bpp = 16;
 					break;
-				case 3://8 bpp
-					format.BitsPerPixel = 8;
-					bpp = 8;
-					break;
+//				case 3://8 bpp
+//					format.BitsPerPixel = 8;
+//					bpp = 8;
+//					break;
 			}
 
 			/* Get available fullscreen/hardware modes */
 			//SDL_Rect**modes = SDL_ListModes(NULL, SDL_OPENGL|SDL_RESIZABLE);
 
-		    int flags = SDL_RESIZABLE;
+
 		    #if defined(WIN32) || defined(__APPLE__)
-		    flags = 0;
+
+			int flags = 0;
+
+		    #else
+
+		    int flags = SDL_RESIZABLE;
+
 		    #endif
 		    if(isFullscreen) flags = SDL_FULLSCREEN;
 			SDL_Rect**modes = SDL_ListModes(&format, SDL_OPENGL|flags);
@@ -1580,16 +1770,16 @@ void getFullscreenVideoModes(vector<ModeInfo> *modeinfos, bool isFullscreen) {
 				    }
 			   }
 		  }
-	} while(++loops != 4);
+	//} while(++loops != 4);
+	} while(++loops != 3);
 
 	std::sort(modeinfos->begin(),modeinfos->end());
 }
 
 
 
-bool changeVideoMode(int resW, int resH, int colorBits, int ) {
-	Private::shouldBeFullscreen = true;
-	return true;
+void changeVideoModeFullScreen(bool value) {
+	Private::shouldBeFullscreen = value;
 }
 
 void restoreVideoMode(bool exitingApp) {
@@ -1647,11 +1837,10 @@ bool isKeyDown(int virtualKey) {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = %d\n",__FILE__,__FUNCTION__,__LINE__,key);
 
-	// kinda hack and wrong...
 	if(key >= 0) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] keystate[key] = %d\n",__FILE__,__FUNCTION__,__LINE__,keystate[key]);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] keystate[key] = %d\n",__FILE__,__FUNCTION__,__LINE__,keystate[(unsigned char)key]);
 
-		return (keystate[key] != 0);
+		return (keystate[(unsigned char)key] != 0);
 	}
 	switch(key) {
 		case vkAdd:
@@ -1692,6 +1881,56 @@ bool isKeyDown(int virtualKey) {
 	return false;
 }
 
+string replaceAllHTMLEntities(string& context) {
+	replaceAll(context,"&quot;","\"");
+	replaceAll(context,"&amp;","&");
+	replaceAll(context,"&lt;","<");
+	replaceAll(context,"&gt;",">");
+	//replaceAll(context,"&OElig;","Œ");
+	replaceAll(context,"&OElig;","\xC5\x92\0");
+	//replaceAll(context,"&oelig;","œ");
+	replaceAll(context,"&oelig;","\xC5\x93\0");
+	//replaceAll(context,"&Scaron;","Š");
+	replaceAll(context,"&Scaron;","\xC5\xA0\0");
+	//replaceAll(context,"&scaron;","š");
+	replaceAll(context,"&scaron;","\xC5\xA1\0");
+	//replaceAll(context,"&Yuml;","Ÿ");
+	replaceAll(context,"&Yuml;","\xC5\xB8\0");
+	replaceAll(context,"&circ;","ˆ");
+	replaceAll(context,"&tilde;","˜");
+	replaceAll(context,"&ensp;"," ");
+	replaceAll(context,"&emsp;"," ");
+	replaceAll(context,"&thinsp;"," ");
+	replaceAll(context,"&ndash;","-");
+	replaceAll(context,"&mdash;","-");
+	//replaceAll(context,"&lsquo;","‘");
+	replaceAll(context,"&lsquo;","\xE2\x80\x98\0");
+	//replaceAll(context,"&rsquo;","’");
+	replaceAll(context,"&rsquo;","\xE2\x80\x99\0");
+	//replaceAll(context,"&sbquo;","‚");
+	replaceAll(context,"&sbquo;","\xE2\x80\x9A\0");
+	//replaceAll(context,"&ldquo;","“");
+	replaceAll(context,"&ldquo;","\xE2\x80\x9C\0");
+	//replaceAll(context,"&rdquo;","”");
+	replaceAll(context,"&rdquo;","\xE2\x80\x9D\0");
+	//replaceAll(context,"&bdquo;","„");
+	replaceAll(context,"&bdquo;","\xE2\x80\x9E\0");
+	//replaceAll(context,"&dagger;","†");
+	replaceAll(context,"&dagger;","\xE2\x80\xA0\0");
+	//replaceAll(context,"&Dagger;","‡");
+	replaceAll(context,"&Dagger;","\xE2\x80\xA1\0");
+	//replaceAll(context,"&permil;","‰");
+	replaceAll(context,"&permil;","\xE2\x80\xB0\0");
+	//replaceAll(context,"&lsaquo;","‹");
+	replaceAll(context,"&lsaquo;","\xE2\x80\xB9\0");
+	//replaceAll(context,"&rsaquo;","›");
+	replaceAll(context,"&rsaquo;","\xE2\x80\xBA\0");
+	//replaceAll(context,"&euro;","€");
+	replaceAll(context,"&euro;","\xE2\x82\xAC\0");
+
+	return context;
+}
+
 string replaceAll(string& context, const string& from, const string& to) {
     size_t lookHere = 0;
     size_t foundHere = 0;
@@ -1701,6 +1940,47 @@ string replaceAll(string& context, const string& from, const string& to) {
 		while((foundHere = context.find(from, lookHere)) != string::npos) {
 			  context.replace(foundHere, from.size(), to);
 			  lookHere = foundHere + to.size();
+		}
+
+		//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("New context [%s]\n",context.c_str());
+    }
+    return context;
+}
+
+vector<char> replaceAllBetweenTokens(vector<char>& context,
+		const string &startToken, const string &endToken, const string &newText,
+		bool removeTokens) {
+	string newValue(context.begin(),context.end());
+	replaceAllBetweenTokens(newValue,startToken,endToken,newText,removeTokens);
+	context = vector<char>(newValue.begin(),newValue.end());
+	return context;
+}
+
+string replaceAllBetweenTokens(string& context, const string &startToken,
+		const string &endToken, const string &newText, bool removeTokens) {
+    size_t lookHere = 0;
+    size_t foundHere = 0;
+    if((foundHere = context.find(startToken, lookHere)) != string::npos) {
+    	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Replacing context [%s] from [%s] to [%s]\n",context.c_str(),from.c_str(),to.c_str());
+
+		while((foundHere = context.find(startToken, lookHere)) != string::npos) {
+			size_t foundHereEnd = context.find(endToken, foundHere+1);
+			if(foundHereEnd == string::npos) {
+				break;
+			}
+			if(removeTokens == true) {
+				foundHereEnd += endToken.size();
+
+				context.replace(foundHere, foundHereEnd-foundHere+1, newText);
+				lookHere = foundHere + newText.size();
+			}
+			else {
+				foundHere += startToken.size();
+				foundHereEnd -= 1;
+
+				context.replace(foundHere, foundHereEnd-foundHere+1, newText);
+				lookHere = foundHere + newText.size();
+			}
 		}
 
 		//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("New context [%s]\n",context.c_str());
@@ -1730,7 +2010,31 @@ string getFullFileArchiveExtractCommand(string fileArchiveExtractCommand,
 	return result;
 }
 
-bool executeShellCommand(string cmd, int expectedResult) {
+string getFullFileArchiveCompressCommand(string fileArchiveCompressCommand,
+		string fileArchiveCompressCommandParameters,
+		string archivename, string archivefiles) {
+	string parsedArchivename = archivename;
+	string parsedArchivefiles = archivefiles;
+
+// This is required for execution on win32
+#if defined(WIN32)
+	replaceAll(parsedArchivename, "\\\\", "\\");
+	replaceAll(parsedArchivename, "/", "\\");
+	replaceAll(parsedArchivefiles, "\\\\", "\\");
+	replaceAll(parsedArchivefiles, "/", "\\");
+
+#endif
+
+	string result = fileArchiveCompressCommand;
+	result += " ";
+	string args = replaceAll(fileArchiveCompressCommandParameters, "{archivename}", parsedArchivename);
+	args = replaceAll(args, "{archivefiles}", parsedArchivefiles);
+	result += args;
+
+	return result;
+}
+
+bool executeShellCommand(string cmd, int expectedResult, ShellCommandOutputCallbackInterface *cb) {
 	bool result = false;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"About to run [%s]", cmd.c_str());
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("About to run [%s]", cmd.c_str());
@@ -1750,6 +2054,10 @@ bool executeShellCommand(string cmd, int expectedResult) {
 			if(fgets( szBuf, 4095, file) != NULL) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
 				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("%s",szBuf);
+
+				if(cb != NULL) {
+					cb->ShellCommandOutput_CallbackEvent(cmd,szBuf,cb->getShellCommandOutput_UserData(cmd));
+				}
 			}
 		}
 #ifdef WIN32
@@ -1905,12 +2213,12 @@ bool searchAndReplaceTextInFile(string fileName, string findText, string replace
 	if(fp1 == NULL) {
 		if(fp2) fclose(fp2);
 
-		throw runtime_error("cannot open input file [" + fileName + "]");
+		throw megaglest_runtime_error("cannot open input file [" + fileName + "]");
 	}
 	if(fp2 == NULL) {
 		if(fp1) fclose(fp1);
 
-		throw runtime_error("cannot open output file [" + tempfileName + "]");
+		throw megaglest_runtime_error("cannot open output file [" + tempfileName + "]");
 	}
 
 	while(fgets(buffer,MAX_LEN_SINGLE_LINE + 2,fp1)) {
@@ -1945,6 +2253,32 @@ bool searchAndReplaceTextInFile(string fileName, string findText, string replace
 	return replacedText;
 }
 
+void saveDataToFile(string filename, string data) {
+	//Open an input and output stream in binary mode
+#if defined(WIN32) && !defined(__MINGW32__)
+	FILE *fp2 = _wfopen(utf8_decode(filename).c_str(), L"wb");
+	ofstream out(fp2);
+#else
+	ofstream out(filename.c_str(),ios::binary);
+#endif
+
+	if(out.is_open()) {
+		out<< data;
+	}
+	else if(out.is_open() == false) {
+		throw megaglest_runtime_error("cannot open input file [" + filename + "]");
+	}
+
+	//Close file
+	out.close();
+
+#if defined(WIN32) && !defined(__MINGW32__)
+	if(fp2) {
+		fclose(fp2);
+	}
+#endif
+}
+
 void copyFileTo(string fromFileName, string toFileName) {
 	//Open an input and output stream in binary mode
 #if defined(WIN32) && !defined(__MINGW32__)
@@ -1963,10 +2297,10 @@ void copyFileTo(string fromFileName, string toFileName) {
 		}
 	}
 	else if(in.is_open() == false) {
-		throw runtime_error("cannot open input file [" + fromFileName + "]");
+		throw megaglest_runtime_error("cannot open input file [" + fromFileName + "]");
 	}
 	else if(out.is_open() == false) {
-		throw runtime_error("cannot open input file [" + toFileName + "]");
+		throw megaglest_runtime_error("cannot open input file [" + toFileName + "]");
 	}
 
 	//Close both files
@@ -2010,6 +2344,33 @@ bool valid_utf8_file(const char* file_name) {
 	return result;
 }
 
+string getFileTextContents(string path) {
+#if defined(WIN32) && !defined(__MINGW32__)
+	FILE *fp = _wfopen(utf8_decode(path).c_str(), L"rb");
+	ifstream xmlFile(fp);
+#else
+	ifstream xmlFile(path.c_str(),ios::binary);
+#endif
+	if(xmlFile.is_open() == false) {
+		throw megaglest_runtime_error("Can not open file: [" + path + "]");
+	}
+
+	xmlFile.unsetf(ios::skipws);
+
+	// Determine stream size
+	xmlFile.seekg(0, ios::end);
+	streampos size = xmlFile.tellg();
+	xmlFile.seekg(0);
+
+	// Load data and add terminating 0
+	vector<char> buffer;
+	buffer.resize((unsigned int)size + 1);
+	xmlFile.read(&buffer.front(), static_cast<streamsize>(size));
+	buffer[(unsigned int)size] = 0;
+
+	return &buffer.front();
+}
+
 // =====================================
 //         ModeInfo
 // =====================================
@@ -2038,7 +2399,7 @@ void ValueCheckerVault::addItemToVault(const void *ptr,int value) {
 void ValueCheckerVault::checkItemInVault(const void *ptr,int value) const {
 #ifndef _DISABLE_MEMORY_VAULT_CHECKS
 
-	map<const void *,int32>::const_iterator iterFind = vaultList.find(ptr);
+	map<const void *,uint32>::const_iterator iterFind = vaultList.find(ptr);
 	if(iterFind == vaultList.end()) {
 //		if(SystemFlags::VERBOSE_MODE_ENABLED) {
 //			printf("In [%s::%s Line: %d] check vault key [%p] value [%d]\n",__FILE__,__FUNCTION__,__LINE__,ptr,value);
@@ -2063,6 +2424,46 @@ void ValueCheckerVault::checkItemInVault(const void *ptr,int value) const {
 
 #endif
 
+}
+
+string getUserHome() {
+	string home_folder = "";
+	home_folder = safeCharPtrCopy(getenv("HOME"),8095);
+	if(home_folder == "") {
+#if _BSD_SOURCE || _SVID_SOURCE || _XOPEN_SOURCE >= 500 || _XOPEN_SOURCE && _XOPEN_SOURCE_EXTENDED
+		struct passwd *pw = getpwuid(getuid());
+		home_folder = safeCharPtrCopy(pw->pw_dir,8095);
+#endif
+	}
+	return home_folder;
+}
+
+string safeCharPtrCopy(const char *ptr,int maxLength) {
+	string result = "";
+	if(ptr == NULL) {
+		return result;
+	}
+	if(maxLength <= 0) {
+		maxLength = 8096;
+	}
+
+	int ptrLength = (int)strlen(ptr);
+	if(ptrLength >= maxLength) {
+		char *pBuffer = new char[maxLength+1];
+		memset(pBuffer,0,maxLength+1);
+#ifdef WIN32
+		memcpy(pBuffer,ptr,min((int)strlen(ptr),maxLength));
+#else
+		memcpy(pBuffer,ptr,std::min((int)strlen(ptr),maxLength));
+#endif
+
+		result = pBuffer;
+		delete [] pBuffer;
+	}
+	else {
+		result = ptr;
+	}
+	return result;
 }
 
 

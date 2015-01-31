@@ -44,7 +44,7 @@ Section *Section::getChild(const string &name){
 void Section::print(FILE *outStream, int tabLevel){
 
 	float percent= (parent==NULL || parent->milisElapsed==0)? 100.0f: 100.0f*milisElapsed/parent->milisElapsed;
-	string pname= parent==NULL? "": parent->getName();
+	//string pname= parent==NULL? "": parent->getName();
 
 	for(int i=0; i<tabLevel; ++i)
 		fprintf(outStream, "\t");
@@ -89,7 +89,7 @@ Profiler::~Profiler(){
 	FILE *f= fopen(profileLog.c_str(), "w");
 #endif
 	if(f==NULL)
-		throw runtime_error("Can not open file: " + profileLog);
+		throw megaglest_runtime_error("Can not open file: " + profileLog);
 
 	fprintf(f, "Profiler Results\n\n");
 
@@ -120,7 +120,7 @@ void Profiler::sectionEnd(const string &name){
 		currSection= currSection->getParent();
 	}
 	else{
-		throw runtime_error("Profile: Leaving section is not current section: "+name);
+		throw megaglest_runtime_error("Profile: Leaving section is not current section: "+name);
 	}
 }
 

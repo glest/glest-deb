@@ -17,13 +17,22 @@
 #include <string>
 #include <SDL.h>
 #include <cassert>
-#include "types.h"
+#include "data_types.h"
 #include "vec.h"
+#include <vector>
 #include "leak_dumper.h"
 
 using std::map;
+using std::vector;
 using std::string;
 using Shared::Graphics::Vec2i;
+
+#if SDL_VERSION_ATLEAST(2,0,0)
+
+typedef SDL_Keysym SDL_keysym;
+typedef SDL_Keycode SDLKey;
+
+#endif
 
 namespace Shared{ namespace Platform{
 
@@ -112,6 +121,7 @@ private:
     static void setKeystate(SDL_keysym state)					{ keystate = state; }
 
     //static bool masterserverMode;
+    static map<wchar_t,bool> mapAllowedKeys;
 
 protected:
 	int w, h;
@@ -123,15 +133,26 @@ protected:
 public:
 	static bool handleEvent();
 	static void revertMousePos();
+	static Vec2i getOldMousePos();
 	static bool isKeyDown() { return isKeyPressedDown; }
 	static void setupGraphicsScreen(int depthBits=-1, int stencilBits=-1, bool hardware_acceleration=false, bool fullscreen_anti_aliasing=false);
 	static const bool getIsFullScreen() { return isFullScreen; }
 	static void setIsFullScreen(bool value) { isFullScreen = value; }
 	//static SDL_keysym getKeystate() { return keystate; }
+	static bool isKeyStateModPressed(int mod);
+	static wchar_t extractLastKeyPressed();
 
 	Window();
 	virtual ~Window();
 
+	static void addAllowedKeys(string keyList);
+	static void clearAllowedKeys();
+	static bool isAllowedKey(wchar_t key);
+
+	virtual bool ChangeVideoMode(bool preserveContext,int resWidth, int resHeight,
+			bool fullscreenWindow, int colorBits, int depthBits, int stencilBits,
+            bool hardware_acceleration, bool fullscreen_anti_aliasing,
+            float gammaValue) = 0;
 	//static void setMasterserverMode(bool value) { Window::masterserverMode = value;}
 	//static bool getMasterserverMode() { return Window::masterserverMode;}
 
@@ -198,13 +219,18 @@ private:
 	//static char getKey(SDL_keysym keysym, bool skipSpecialKeys=false);
 	//static char getNormalKey(SDL_keysym keysym,bool skipSpecialKeys=false);
 	static void toggleFullscreen();
+
+	static wchar_t convertStringtoSDLKey(const string &value);
 };
 
+bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input, vector<int> modifiersToCheck);
 bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input, bool modifiersAllowed=true);
+
 SDLKey extractKeyPressed(SDL_KeyboardEvent input);
 bool isAllowedInputTextKey(SDLKey key);
 
 wchar_t extractKeyPressedUnicode(SDL_KeyboardEvent input);
+vector<int> extractKeyPressedUnicodeLength(string text);
 bool isAllowedInputTextKey(wchar_t &key);
 
 }}//end namespace

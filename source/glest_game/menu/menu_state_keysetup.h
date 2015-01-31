@@ -32,6 +32,12 @@ private:
 	GraphicButton buttonDefaults;
 	GraphicButton buttonReturn;
 
+	GraphicButton buttonKeyboardSetup; // configure the keyboard
+	GraphicButton buttonVideoSection;
+	GraphicButton buttonAudioSection;
+	GraphicButton buttonMiscSection;
+	GraphicButton buttonNetworkSettings;
+
 	GraphicLabel labelTitle;
 
 	GraphicScrollBar keyScrollBar;
@@ -64,6 +70,7 @@ public:
 	virtual ~MenuStateKeysetup();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
+	void mouseUp(int x, int y, const MouseButton mouseButton);
 	void mouseMove(int x, int y, const MouseState *mouseState);
 	void update();
 	void render();

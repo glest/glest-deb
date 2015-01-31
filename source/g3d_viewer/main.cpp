@@ -25,6 +25,8 @@
 #include "game_constants.h"
 #include <wx/stdpaths.h>
 #include <platform_util.h>
+//#include "interpolation.h"
+
 #ifndef WIN32
 #include <errno.h>
 #endif
@@ -62,10 +64,11 @@ const string g3dviewerVersionString= "v1.3.6";
 string fileFormat = "png";
 
 namespace Glest { namespace Game {
+
 string getGameReadWritePath(string lookupKey) {
 	string path = "";
     if(path == "" && getenv("GLESTHOME") != NULL) {
-        path = getenv("GLESTHOME");
+        path = safeCharPtrCopy(getenv("GLESTHOME"),8096);
         if(path != "" && EndsWith(path, "/") == false && EndsWith(path, "\\") == false) {
             path += "/";
         }
@@ -125,7 +128,7 @@ enum GAME_ARG_TYPE {
 	GAME_ARG_VERBOSE,
 };
 
-bool hasCommandArgument(int argc, wxChar** argv,const string argName,
+bool hasCommandArgument(int argc, wxChar** argv,const string &argName,
 						int *foundIndex=NULL, int startLookupIndex=1,
 						bool useArgParamLen=false) {
 	bool result = false;
@@ -179,12 +182,12 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tWhere x is a g3d filename to load separated with a");
 	printf("\n                     \t\tcomma and one or more skill names to try loading:");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=techs/megapack/factions/tech/units/battle_machine,attack_skill,stop_skill",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_UNIT]));
+	printf("\n %s\n %s=techs/megapack/factions/tech/units/battle_machine,attack_skill,stop_skill",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_UNIT]));
 
 	printf("\n%s=x\t\t\tAuto load the model specified in path/filename x",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL]));
 	printf("\n                     \t\tWhere x is a g3d filename to load:");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=techs/megapack/factions/tech/units/battle_machine/models/battle_machine_dying.g3d",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL]));
+	printf("\n %s\n %s=techs/megapack/factions/tech/units/battle_machine/models/battle_machine_dying.g3d",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL]));
 
 	printf("\n%s=x\tAnimation value when loading a model",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL_ANIMATION_VALUE]));
 	printf("\n                     \t\tWhere x is a decimal value from -1.0 to 1.0:");
@@ -201,14 +204,14 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tenable_normals, disable_grid, disable_wireframe,");
 	printf("\n                     \t\tdisable_normals, saveas-<filename>, resize-wxh");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=transparent,disable_grid,saveas-test.png,resize-800x600 %s=techs/megapack/factions/tech/units/battle_machine/models/battle_machine_dying.g3d",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_AUTO_SCREENSHOT]),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL]));
+	printf("\n %s\n %s=transparent,disable_grid,saveas-test.png,resize-800x600\n %s=techs/megapack/factions/tech/units/battle_machine/models/battle_machine_dying.g3d",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_AUTO_SCREENSHOT]),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_MODEL]));
 
 	//     "================================================================================"
 	printf("\n%s=x",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE]));
 	printf("\n                     \t\tAuto load the particle specified in path/filename x");
 	printf("\n                     \t\tWhere x is a Particle XML filename to load:");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=techs/megapack/factions/persian/units/genie/glow_particles.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE]));
+	printf("\n %s\n %s=techs/megapack/factions/persian/units/genie/glow_particles.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE]));
 
 	printf("\n%s=x",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_PROJECTILE]));
 	printf("\n                     \t\tAuto load the projectile particle specified in");
@@ -216,7 +219,7 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tWhere x is a Projectile Particle Definition XML");
 	printf("\n                     \t\t        filename to load:");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=techs/megapack/factions/persian/units/genie/particle_proj.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_PROJECTILE]));
+	printf("\n %s\n %s=techs/megapack/factions/persian/units/genie/particle_proj.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_PROJECTILE]));
 
 	printf("\n%s=x",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_SPLASH]));
 	printf("\n                     \t\tAuto load the splash particle specified in");
@@ -224,7 +227,7 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tWhere x is a Splash Particle Definition XML");
 	printf("\n                     \t\t        filename to load:");
 	printf("\n                     \t\texample:");
-	printf("\n %s %s=techs/megapack/factions/persian/units/genie/particle_splash.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_SPLASH]));
+	printf("\n %s\n %s=techs/megapack/factions/persian/units/genie/particle_splash.xml",extractFileFromDirectoryPath(argv0).c_str(),(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_SPLASH]));
 
 	printf("\n%s=x",(const char *)wxConvCurrent->cWX2MB(GAME_ARGS[GAME_ARG_LOAD_PARTICLE_LOOP_VALUE]));
 	printf("\n                     \t\tParticle loop value when loading one or more");
@@ -282,23 +285,30 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
     :	wxFrame(NULL, -1, ToUnicode(winHeader),
     	        wxPoint(Renderer::windowX, Renderer::windowY),
 		        wxSize(Renderer::windowW, Renderer::windowH)),
-		        model(NULL), glCanvas(NULL), renderer(NULL),
-		        initTextureManager(true), timer(NULL),
+		        glCanvas(NULL),
+		        renderer(NULL),
+		        timer(NULL),
+		        menu(NULL),
+		        fileDialog(NULL),
+		        colorPicker(NULL),
+		        model(NULL),
+		        initTextureManager(true),
 		        startupSettingsInited(false)
+
 {
 	this->appPath = appPath;
 	Properties::setApplicationPath(executable_path(appPath));
 
 	Config &config = Config::getInstance();
-	string iniFilePath = extractDirectoryPathFromFile(config.getFileName(false));
     //getGlPlatformExtensions();
 
+	isControlKeyPressed = false;
 	int args[] = { WX_GL_RGBA, WX_GL_DOUBLEBUFFER,  WX_GL_MIN_ALPHA,  8  }; // to prevent flicker
 	//int args[] = { WX_GL_RGBA, WX_GL_MIN_ALPHA,  0  }; // to prevent flicker
 	glCanvas = new GlCanvas(this, args);
 
 #if wxCHECK_VERSION(2, 9, 1)
-	//glCanvas->setCurrentGLContext();
+
 #else
 	glCanvas->SetCurrent();
 #endif
@@ -309,7 +319,7 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
 
 	if(modelPath != "") {
 		this->modelPathList.push_back(modelPath);
-		printf("Startup Adding model [%s] list size %lu\n",modelPath.c_str(),this->modelPathList.size());
+		printf("Startup Adding model [%s] list size " MG_SIZE_T_SPECIFIER "\n",modelPath.c_str(),this->modelPathList.size());
 	}
 	if(particlePath != "") {
 		this->particlePathList.push_back(particlePath);
@@ -405,6 +415,7 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
 
 #else
 	wxIcon icon;
+	string iniFilePath = extractDirectoryPathFromFile(config.getFileName(false));
 	string icon_file = iniFilePath + "g3dviewer.ico";
 	std::ifstream testFile(icon_file.c_str());
 	if(testFile.good())	{
@@ -418,7 +429,7 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
 	if(modelPath != "") {
 		fileDialog->SetPath(ToUnicode(modelPath));
 	}
-    string userData = Config::getInstance().getString("UserData_Root","");
+    string userData = config.getString("UserData_Root","");
     if(userData != "") {
     	endPathWithSlash(userData);
     }
@@ -448,7 +459,7 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
 	std::auto_ptr<wchar_t> wstr(Ansi2WideString(appPath.c_str()));
 	
 	wstring launchApp = wstring(wstr.get()) + L" \"%1\"";
-	DWORD len = launchApp.length() + 1;
+	DWORD len = (DWORD)launchApp.length() + 1;
 	RegSetValueEx(keyHandle, NULL, 0, REG_SZ, (PBYTE)launchApp.c_str(), len);
 	RegCloseKey(keyHandle);
 
@@ -456,7 +467,7 @@ MainWindow::MainWindow(	std::pair<string,vector<string> > unitToLoad,
 	RegCreateKeyEx(HKEY_CURRENT_USER,subKey.c_str(),0, NULL, 0, KEY_ALL_ACCESS, NULL, &keyHandle, &dwDisposition);
 	//Set the value.
 	launchApp = L"megaglest.g3d";
-	len = launchApp.length() + 1;
+	len = (DWORD)launchApp.length() + 1;
 	RegSetValueEx(keyHandle, NULL, 0, REG_SZ, (PBYTE)launchApp.c_str(), len);
 	RegCloseKey(keyHandle);
 
@@ -469,6 +480,13 @@ void MainWindow::setupTimer() {
 }
 
 void MainWindow::setupStartupSettings() {
+	 GLuint err = glewInit();
+	 if (GLEW_OK != err) {
+		fprintf(stderr, "Error [main]: glewInit failed: %s\n", glewGetErrorString(err));
+		//return 1;
+		throw std::runtime_error((char *)glewGetErrorString(err));
+	 }
+
 	renderer= Renderer::getInstance();
 
 	for(unsigned int i = 0; i < autoScreenShotParams.size(); ++i) {
@@ -528,30 +546,35 @@ void MainWindow::setupStartupSettings() {
 }
 
 MainWindow::~MainWindow(){
-	delete renderer;
-	renderer = NULL;
-	delete model;
-	model = NULL;
 	delete timer;
 	timer = NULL;
-	delete glCanvas;
+
+	delete fileDialog;
+	fileDialog = NULL;
+
+	delete model;
+	model = NULL;
+
+	delete renderer;
+	renderer = NULL;
+
+	//delete glCanvas;
+	if(glCanvas) glCanvas->Destroy();
 	glCanvas = NULL;
 
 }
 
 void MainWindow::init() {
-#if wxCHECK_VERSION(2, 9, 1)
+
+#if wxCHECK_VERSION(2, 9, 3)
+	glCanvas->setCurrentGLContext();
+	//printf("setcurrent #1\n");
+#elif wxCHECK_VERSION(2, 9, 1)
 
 #else
 	glCanvas->SetCurrent();
+	//printf("setcurrent #2\n");
 #endif
-
-	 GLuint err = glewInit();
-	 if (GLEW_OK != err) {
-		fprintf(stderr, "Error [main]: glewInit failed: %s\n", glewGetErrorString(err));
-		//return 1;
-		throw std::runtime_error((char *)glewGetErrorString(err));
-	 }
 
 	//renderer->init();
 
@@ -562,7 +585,9 @@ void MainWindow::init() {
 void MainWindow::onPaint(wxPaintEvent &event) {
 	if(!IsShown()) return;
 	
-#if wxCHECK_VERSION(2, 9, 1)
+#if wxCHECK_VERSION(2, 9, 3)
+
+#elif wxCHECK_VERSION(2, 9, 1)
 	glCanvas->setCurrentGLContext();
 #endif
 
@@ -580,11 +605,31 @@ void MainWindow::onPaint(wxPaintEvent &event) {
 //		dc.DestroyClippingRegion();
 //	}
 
+	static float autoScreenshotRender = -1;
+	if(autoScreenShotAndExit == true && autoScreenshotRender >= 0) {
+		anim = autoScreenshotRender;
+	}
 	// notice that we use GetSize() here and not GetClientSize() because
 	// the latter doesn't return correct results for the minimized windows
 	// (at least not under Windows)
 	int viewportW = GetClientSize().x;
 	int viewportH = GetClientSize().y;
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("%d x %d\n",viewportW,viewportH);
+
+	if(viewportW == 0 && viewportH == 0) {
+		printf("#1 %d x %d\n",viewportW,viewportH);
+
+		viewportW = GetSize().x;
+		viewportH = GetSize().y;
+
+		if(viewportH > 0) {
+			//viewportH -= menu->GetSize().y;
+			viewportH -= 22;
+		}
+
+		printf("#2 %d x %d\n",viewportW,viewportH);
+	}
 
 #if defined(WIN32)
 	renderer->reset(viewportW, viewportH, playerColor);
@@ -617,11 +662,12 @@ void MainWindow::onPaint(wxPaintEvent &event) {
 	
 	bool haveLoadedParticles = (particleProjectilePathList.empty() == false || particleSplashPathList.empty() == false);
 
-	if(autoScreenShotAndExit == true) {
+	if(autoScreenShotAndExit == true && viewportW > 0 && viewportH > 0) {
 		printf("Auto exiting app...\n");
 		fflush(stdout);
 
 		autoScreenShotAndExit = false;
+
 		saveScreenshot();
 		Close();
 		return;
@@ -629,6 +675,13 @@ void MainWindow::onPaint(wxPaintEvent &event) {
 	
 	glCanvas->SwapBuffers();
 
+	if(autoScreenShotAndExit == true && viewportW == 0 && viewportH == 0) {
+		autoScreenshotRender = anim;
+
+		printf("Auto exiting desired but waiting for w x h > 0...\n");
+
+		return;
+	}
 	if((modelPathList.empty() == false) && resetAnimation && haveLoadedParticles) {
 		if(anim >= resetAnim && resetAnim > 0) {
 			printf("RESETTING EVERYTHING [%f][%f]...\n",anim,resetAnim);
@@ -700,7 +753,20 @@ void MainWindow::onClose(wxCloseEvent &event){
 	//printf("OnClose about to END\n");
 	//fflush(stdout);
 
-	delete this;
+	delete timer;
+	timer = NULL;
+
+	delete model;
+	model = NULL;
+
+	delete renderer;
+	renderer = NULL;
+
+	//delete glCanvas;
+	if(glCanvas) glCanvas->Destroy();
+	glCanvas = NULL;
+
+	this->Destroy();
 }
 
 // for the mousewheel
@@ -775,13 +841,13 @@ void MainWindow::onMouseMove(wxMouseEvent &event){
 
 void MainWindow::onMenuFileLoad(wxCommandEvent &event){
 	try {
-		string fileName;
+		//string fileName;
 		fileDialog->SetWildcard(wxT("G3D files (*.g3d)|*.g3d;*.G3D"));
 		fileDialog->SetMessage(wxT("Selecting Glest Model for current view."));
 
 		if(fileDialog->ShowModal()==wxID_OK){
 			modelPathList.clear();
-			string file = "";
+			string file;
 #ifdef WIN32
 			const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(fileDialog->GetPath());
 			file = tmp_buf;
@@ -805,7 +871,7 @@ void MainWindow::onMenuFileLoad(wxCommandEvent &event){
 
 void MainWindow::onMenuFileLoadParticleXML(wxCommandEvent &event){
 	try {
-		string fileName;
+		//string fileName;
 		fileDialog->SetWildcard(wxT("XML files (*.xml)|*.xml"));
 
 		if(isControlKeyPressed == true) {
@@ -817,7 +883,7 @@ void MainWindow::onMenuFileLoadParticleXML(wxCommandEvent &event){
 
 		if(fileDialog->ShowModal()==wxID_OK){
 			//string path = (const char*)wxFNCONV(fileDialog->GetPath().c_str());
-			string file = "";
+			string file;
 #ifdef WIN32
 			const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(fileDialog->GetPath());
 			file = tmp_buf;
@@ -839,7 +905,7 @@ void MainWindow::onMenuFileLoadParticleXML(wxCommandEvent &event){
 
 void MainWindow::onMenuFileLoadProjectileParticleXML(wxCommandEvent &event){
 	try {
-		string fileName;
+		//string fileName;
 		fileDialog->SetWildcard(wxT("XML files (*.xml)|*.xml"));
 
 		if(isControlKeyPressed == true) {
@@ -851,7 +917,7 @@ void MainWindow::onMenuFileLoadProjectileParticleXML(wxCommandEvent &event){
 
 		if(fileDialog->ShowModal()==wxID_OK){
 			//string path = (const char*)wxFNCONV(fileDialog->GetPath().c_str());
-			string file = "";
+			string file;
 #ifdef WIN32
 			const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(fileDialog->GetPath());
 			file = tmp_buf;
@@ -873,7 +939,7 @@ void MainWindow::onMenuFileLoadProjectileParticleXML(wxCommandEvent &event){
 
 void MainWindow::onMenuFileLoadSplashParticleXML(wxCommandEvent &event){
 	try {
-		string fileName;
+		//string fileName;
 		fileDialog->SetWildcard(wxT("XML files (*.xml)|*.xml"));
 
 		if(isControlKeyPressed == true) {
@@ -885,7 +951,7 @@ void MainWindow::onMenuFileLoadSplashParticleXML(wxCommandEvent &event){
 
 		if(fileDialog->ShowModal()==wxID_OK){
 			//string path = (const char*)wxFNCONV(fileDialog->GetPath().c_str());
-			string file = "";
+			string file;
 #ifdef WIN32
 			const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(fileDialog->GetPath());
 			file = tmp_buf;
@@ -1111,7 +1177,7 @@ void MainWindow::loadUnit(string path, string skillName) {
 				const XmlNode *skillsNode= unitNode->getChild("skills");
 				for(unsigned int i = 0; foundSkillName == false && i < skillsNode->getChildCount(); ++i) {
 					const XmlNode *sn= skillsNode->getChild("skill", i);
-					const XmlNode *typeNode= sn->getChild("type");
+					//const XmlNode *typeNode= sn->getChild("type");
 					const XmlNode *nameNode= sn->getChild("name");
 					string skillXmlName = nameNode->getAttribute("value")->getRestrictedValue();
 					if(skillXmlName == lookipForSkillName) {
@@ -1203,20 +1269,18 @@ void MainWindow::loadModel(string path) {
     try {
         if(path != "" && fileExists(path) == true) {
             this->modelPathList.push_back(path);
-            printf("Adding model [%s] list size %lu\n",path.c_str(),this->modelPathList.size());
+            printf("Adding model [%s] list size " MG_SIZE_T_SPECIFIER "\n",path.c_str(),this->modelPathList.size());
         }
 
         string titlestring=winHeader;
         for(unsigned int idx =0; idx < this->modelPathList.size(); idx++) {
             string modelPath = this->modelPathList[idx];
 
-            //printf("Loading model [%s] %u of %lu\n",modelPath.c_str(),idx, this->modelPathList.size());
+            //printf("Loading model [%s] %u of " MG_SIZE_T_SPECIFIER "\n",modelPath.c_str(),idx, this->modelPathList.size());
 
             if(timer) timer->Stop();
             delete model;
-            Model *tmpModel= new ModelGl();
-            if(renderer) renderer->loadTheModel(tmpModel, modelPath);
-            model= tmpModel;
+            model = renderer? renderer->newModel(rsGlobal, modelPath): NULL;
 
             statusbarText = getModelInfo();
             string statusTextValue = statusbarText + " animation speed: " + floatToStr(speed * 1000.0) + " anim value: " + floatToStr(anim) + " zoom: " + floatToStr(zoom) + " rotX: " + floatToStr(rotX) + " rotY: " + floatToStr(rotY);
@@ -1234,6 +1298,8 @@ void MainWindow::loadModel(string path) {
 
 void MainWindow::loadParticle(string path) {
 	if(timer) timer->Stop();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str());
 	if(path != "" && fileExists(path) == true) {
 		renderer->end();
 		unitParticleSystems.clear();
@@ -1248,9 +1314,11 @@ void MainWindow::loadParticle(string path) {
 			this->particlePathList.clear();
 			this->particlePathList.push_back(path);
 		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] added file [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str());
 	}
 
-	try{
+	try {
 	if(this->particlePathList.empty() == false) {
         string titlestring=winHeader;
 		for(unsigned int idx = 0; idx < this->particlePathList.size(); idx++) {
@@ -1267,13 +1335,14 @@ void MainWindow::loadParticle(string path) {
 
 			std::string unitXML = dir + folderDelimiter + extractFileFromDirectoryPath(dir) + ".xml";
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] looking for unit XML [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,unitXML.c_str());
+
 			//int size   = -1;
 			//int height = -1;
+			int size  = 0;
+			int height= 0;
 
 			if(fileExists(unitXML) == true) {
-
-				int size  = 0;
-				int height= 0;
 				{
 				XmlTree xmlTree;
 				xmlTree.load(unitXML,Properties::getTagReplacementValues());
@@ -1286,36 +1355,43 @@ void MainWindow::loadParticle(string path) {
 				}
 
                 // std::cout << "About to load [" << particlePath << "] from [" << dir << "] unit [" << unitXML << "]" << std::endl;
-
-				std::map<string,vector<pair<string, string> > > loadedFileList;
-                UnitParticleSystemType *unitParticleSystemType = new UnitParticleSystemType();
-                unitParticleSystemType->load(NULL, dir, dir + folderDelimiter + particlePath, //### if we knew which particle it was, we could be more accurate
-                		renderer,loadedFileList,"g3dviewer","");
-                unitParticleSystemTypes.push_back(unitParticleSystemType);
-
-                for(std::vector<UnitParticleSystemType *>::const_iterator it= unitParticleSystemTypes.begin(); it != unitParticleSystemTypes.end(); ++it) {
-                    UnitParticleSystem *ups= new UnitParticleSystem(200);
-                    (*it)->setValues(ups);
-                    if(size > 0) {
-                        //getCurrVectorFlat() + Vec3f(0.f, type->getHeight()/2.f, 0.f);
-                        Vec3f vec = Vec3f(0.f, height / 2.f, 0.f);
-                        ups->setPos(vec);
-                    }
-                    //ups->setFactionColor(getFaction()->getTexture()->getPixmap()->getPixel3f(0,0));
-                    ups->setFactionColor(renderer->getPlayerColorTexture(playerColor)->getPixmap()->getPixel3f(0,0));
-                    unitParticleSystems.push_back(ups);
-                    renderer->manageParticleSystem(ups);
-
-                    ups->setVisible(true);
-                }
-
-                if(path != "" && fileExists(path) == true) {
-                    renderer->initModelManager();
-                    if(initTextureManager) {
-                    	renderer->initTextureManager();
-                    }
-                }
 			}
+			else {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] unit XML NOT FOUND [%s] using default position values\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,unitXML.c_str());
+
+				size  = 1;
+				height= 1;
+			}
+
+			std::map<string,vector<pair<string, string> > > loadedFileList;
+            UnitParticleSystemType *unitParticleSystemType = new UnitParticleSystemType();
+            unitParticleSystemType->load(NULL, dir, dir + folderDelimiter + particlePath, //### if we knew which particle it was, we could be more accurate
+            		renderer,loadedFileList,"g3dviewer","");
+            unitParticleSystemTypes.push_back(unitParticleSystemType);
+
+            for(std::vector<UnitParticleSystemType *>::const_iterator it= unitParticleSystemTypes.begin(); it != unitParticleSystemTypes.end(); ++it) {
+                UnitParticleSystem *ups= new UnitParticleSystem(200);
+                (*it)->setValues(ups);
+                if(size > 0) {
+                    //getCurrVectorFlat() + Vec3f(0.f, type->getHeight()/2.f, 0.f);
+                    Vec3f vec = Vec3f(0.f, height / 2.f, 0.f);
+                    ups->setPos(vec);
+                }
+                //ups->setFactionColor(getFaction()->getTexture()->getPixmap()->getPixel3f(0,0));
+                ups->setFactionColor(renderer->getPlayerColorTexture(playerColor)->getPixmap()->getPixel3f(0,0));
+                unitParticleSystems.push_back(ups);
+                renderer->manageParticleSystem(ups);
+
+                ups->setVisible(true);
+            }
+
+            if(path != "" && fileExists(path) == true) {
+                renderer->initModelManager();
+                if(initTextureManager) {
+                	renderer->initTextureManager();
+                }
+            }
+
 		}
 		SetTitle(ToUnicode(titlestring));
 	}
@@ -1328,7 +1404,7 @@ void MainWindow::loadParticle(string path) {
 }
 
 void MainWindow::loadProjectileParticle(string path) {
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s] particleProjectilePathList.size() = %lu\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleProjectilePathList.size());
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s] particleProjectilePathList.size() = " MG_SIZE_T_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleProjectilePathList.size());
 
 	if(timer) timer->Stop();
 	if(path != "" && fileExists(path) == true) {
@@ -1349,7 +1425,7 @@ void MainWindow::loadProjectileParticle(string path) {
 
 	try {
 	if(this->particleProjectilePathList.empty() == false) {
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("this->particleProjectilePathList.size() = %lu\n",this->particleProjectilePathList.size());
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("this->particleProjectilePathList.size() = " MG_SIZE_T_SPECIFIER "\n",this->particleProjectilePathList.size());
 
         string titlestring=winHeader;
 		for(unsigned int idx = 0; idx < this->particleProjectilePathList.size(); idx++) {
@@ -1366,11 +1442,11 @@ void MainWindow::loadProjectileParticle(string path) {
 
 			std::string unitXML = dir + folderDelimiter + extractFileFromDirectoryPath(dir) + ".xml";
 
-			int size   = -1;
-			int height = -1;
+			int size   = 1;
+			int height = 1;
 
 			if(fileExists(unitXML) == true) {
-				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,unitXML.c_str(),idx);
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,unitXML.c_str(),idx);
 
 				XmlTree xmlTree;
 				xmlTree.load(unitXML,Properties::getTagReplacementValues());
@@ -1386,7 +1462,7 @@ void MainWindow::loadProjectileParticle(string path) {
 
 			string particleFile = dir + folderDelimiter + particlePath;
 			{
-				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
 				XmlTree xmlTree;
 				xmlTree.load(particleFile,Properties::getTagReplacementValues());
 				//const XmlNode *particleSystemNode= xmlTree.getRootNode();
@@ -1394,7 +1470,7 @@ void MainWindow::loadProjectileParticle(string path) {
 				// std::cout << "Loaded successfully, loading values..." << std::endl;
 			}
 
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loading [%s] idx = %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
 			std::map<string,vector<pair<string, string> > > loadedFileList;
 			ParticleSystemTypeProjectile *projectileParticleSystemType= new ParticleSystemTypeProjectile();
 			projectileParticleSystemType->load(NULL, dir, //### we don't know if there are overrides in the unit XML
@@ -1408,7 +1484,7 @@ void MainWindow::loadProjectileParticle(string path) {
 			for(std::vector<ParticleSystemTypeProjectile *>::const_iterator it= projectileParticleSystemTypes.begin();
 					it != projectileParticleSystemTypes.end(); ++it) {
 
-				ProjectileParticleSystem *ps = (*it)->create();
+				ProjectileParticleSystem *ps = (*it)->create(NULL);
 
 				if(size > 0) {
 					Vec3f vec = Vec3f(0.f, height / 2.f, 0.f);
@@ -1425,7 +1501,7 @@ void MainWindow::loadProjectileParticle(string path) {
 				renderer->manageParticleSystem(ps);
 			}
 
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loaded [%s] idx = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] loaded [%s] idx = %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,particleFile.c_str(),idx);
 		}
 		SetTitle(ToUnicode(titlestring));
 
@@ -1446,7 +1522,7 @@ void MainWindow::loadProjectileParticle(string path) {
 }
 
 void MainWindow::loadSplashParticle(string path) {  // uses ParticleSystemTypeSplash::load  (and own list...)
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s] particleSplashPathList.size() = %lu\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleSplashPathList.size());
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] about to load [%s] particleSplashPathList.size() = " MG_SIZE_T_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleSplashPathList.size());
 
 	if(timer) timer->Stop();
 	if(path != "" && fileExists(path) == true) {
@@ -1482,8 +1558,8 @@ void MainWindow::loadSplashParticle(string path) {  // uses ParticleSystemTypeSp
 
 			std::string unitXML = dir + folderDelimiter + extractFileFromDirectoryPath(dir) + ".xml";
 
-			int size   = -1;
-			int height = -1;
+			int size   = 1;
+			//int height = 1;
 
 			if(fileExists(unitXML) == true) {
 				XmlTree xmlTree;
@@ -1493,7 +1569,7 @@ void MainWindow::loadSplashParticle(string path) {  // uses ParticleSystemTypeSp
 				//size
 				size= parametersNode->getChild("size")->getAttribute("value")->getIntValue();
 				//height
-				height= parametersNode->getChild("height")->getAttribute("value")->getIntValue();
+				//height= parametersNode->getChild("height")->getAttribute("value")->getIntValue();
 			}
 
 			// std::cout << "About to load [" << particlePath << "] from [" << dir << "] unit [" << unitXML << "]" << std::endl;
@@ -1517,10 +1593,10 @@ void MainWindow::loadSplashParticle(string path) {  // uses ParticleSystemTypeSp
                                       //ParticleSystemTypeSplash
 			for(std::vector<ParticleSystemTypeSplash *>::const_iterator it= splashParticleSystemTypes.begin(); it != splashParticleSystemTypes.end(); ++it) {
 
-				SplashParticleSystem *ps = (*it)->create();
+				SplashParticleSystem *ps = (*it)->create(NULL);
 
 				if(size > 0) {
-					Vec3f vec = Vec3f(0.f, height / 2.f, 0.f);
+					//Vec3f vec = Vec3f(0.f, height / 2.f, 0.f);
 					//ps->setPos(vec);
 
 					//Vec3f vec2 = Vec3f(size * 2.f, height * 2.f, height * 2.f);   // <------- removed relative projectile
@@ -1549,7 +1625,7 @@ void MainWindow::loadSplashParticle(string path) {  // uses ParticleSystemTypeSp
 		wxMessageDialog(NULL, ToUnicode(e.what()), ToUnicode("Not a Mega-Glest projectile particle XML file, or broken"), wxOK | wxICON_ERROR).ShowModal();
 	}
 	if(timer) timer->Start(100);
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] after load [%s] particleSplashPathList.size() = %lu\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleSplashPathList.size());
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] after load [%s] particleSplashPathList.size() = " MG_SIZE_T_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str(),this->particleSplashPathList.size());
 }
 
 void MainWindow::onMenuModeNormals(wxCommandEvent &event){
@@ -1942,7 +2018,7 @@ void translateCoords(wxWindow *wnd, int &x, int &y) {
 GlCanvas::GlCanvas(MainWindow *	mainWindow, int *args)
 #if wxCHECK_VERSION(2, 9, 1)
 		: wxGLCanvas(mainWindow, -1, args, wxDefaultPosition, wxDefaultSize, 0, wxT("GLCanvas")) {
-	this->context = new wxGLContext(this);
+	this->context = NULL;
 #else
 		: wxGLCanvas(mainWindow, -1, wxDefaultPosition, wxDefaultSize, 0, wxT("GLCanvas"), args) {
 	this->context = NULL;
@@ -1957,8 +2033,15 @@ GlCanvas::~GlCanvas() {
 
 void GlCanvas::setCurrentGLContext() {
 #ifndef __APPLE__
+
+#if wxCHECK_VERSION(2, 9, 1)
+	if(this->context == NULL) {
+		this->context = new wxGLContext(this);
+	}
+#endif
+	//printf("Set ctx [%p]\n",this->context);
 	if(this->context) {
-		this->SetCurrent(*this->context);
+		wxGLCanvas::SetCurrent(*this->context);
 	}
 #else
 	this->SetCurrent();
@@ -1999,10 +2082,10 @@ END_EVENT_TABLE()
 
 bool App::OnInit() {
 	SystemFlags::VERBOSE_MODE_ENABLED  = false;
-	//Renderer::windowW = 1920;
-	//Renderer::windowH = 1440;
-	//Renderer::windowX= 0;
-	//Renderer::windowY= 0;
+
+#if defined(wxMAJOR_VERSION) && defined(wxMINOR_VERSION) && defined(wxRELEASE_NUMBER) && defined(wxSUBRELEASE_NUMBER)
+	printf("Using wxWidgets version [%d.%d.%d.%d]\n",wxMAJOR_VERSION,wxMINOR_VERSION,wxRELEASE_NUMBER,wxSUBRELEASE_NUMBER);
+#endif
 
 	string modelPath="";
 	string particlePath="";
@@ -2404,8 +2487,6 @@ bool App::OnInit() {
 
 	}
 
-	string appPath = "";
-
 //#if defined(__MINGW32__)
 //		const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(wxFNCONV(argv[0]));
 //		appPath = tmp_buf;
@@ -2422,12 +2503,12 @@ bool App::OnInit() {
 //#if defined(__MINGW32__)
 #ifdef WIN32
 	const wxWX2MBbuf tmp_buf = wxConvCurrent->cWX2MB(wxFNCONV(exe_path));
-	appPath = tmp_buf;
+	string appPath = tmp_buf;
 
 	std::auto_ptr<wchar_t> wstr(Ansi2WideString(appPath.c_str()));
 	appPath = utf8_encode(wstr.get());
 #else
-	appPath = wxFNCONV(exe_path);
+	string appPath(wxFNCONV(exe_path));
 #endif
 
 //#else
@@ -2466,8 +2547,9 @@ int App::MainLoop(){
 	}
 	catch(const exception &e){
 		wxMessageDialog(NULL, ToUnicode(e.what()), ToUnicode("Exception"), wxOK | wxICON_ERROR).ShowModal();
-		return 0;
+		return 1;
 	}
+	return 0;
 }
 
 int App::OnExit(){

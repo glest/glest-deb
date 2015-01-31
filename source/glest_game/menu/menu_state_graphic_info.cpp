@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -14,7 +14,7 @@
 #include "renderer.h"
 #include "sound_renderer.h"
 #include "core_data.h"
-#include "menu_state_options.h"
+#include "menu_state_options_graphics.h"
 #include "config.h"
 #include "opengl.h"
 #include "leak_dumper.h"
@@ -34,18 +34,18 @@ MenuStateGraphicInfo::MenuStateGraphicInfo(Program *program, MainMenu *mainMenu)
 	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
 	buttonReturn.init(100, 540, 125);
 
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
 	labelInfo.registerGraphicComponent(containerName,"labelInfo");
-	labelInfo.init(100, 700);
+	labelInfo.init(0, 730);
 
 	labelMoreInfo.registerGraphicComponent(containerName,"labelMoreInfo");
-	labelMoreInfo.init(100, 520);
+	labelMoreInfo.init(0, 520);
 	labelMoreInfo.setFont(CoreData::getInstance().getDisplayFontSmall());
 	labelMoreInfo.setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
 
 	labelInternalInfo.registerGraphicComponent(containerName,"labelInternalInfo");
-	labelInternalInfo.init(600, 700);
+	labelInternalInfo.init(300, 730);
 	labelInternalInfo.setFont(CoreData::getInstance().getDisplayFontSmall());
 	labelInternalInfo.setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
 
@@ -68,8 +68,8 @@ MenuStateGraphicInfo::MenuStateGraphicInfo(Program *program, MainMenu *mainMenu)
 	strInternalInfo += "\nrenderText3DEnabled: " + boolToStr(Renderer::renderText3DEnabled);
 	strInternalInfo += "\nuseTextureCompression: " + boolToStr(Texture::useTextureCompression);
 	strInternalInfo += "\nfontIsRightToLeft: " + boolToStr(Font::fontIsRightToLeft);
-	strInternalInfo += "\nscaleFontValue: " + boolToStr(Font::scaleFontValue);
-	strInternalInfo += "\nscaleFontValueCenterHFactor: " + boolToStr(Font::scaleFontValueCenterHFactor);
+	strInternalInfo += "\nscaleFontValue: " + floatToStr(Font::scaleFontValue);
+	strInternalInfo += "\nscaleFontValueCenterHFactor: " + floatToStr(Font::scaleFontValueCenterHFactor);
 	strInternalInfo += "\nlangHeightText: " + Font::langHeightText;
 	strInternalInfo += "\nAllowAltEnterFullscreenToggle: " + boolToStr(Window::getAllowAltEnterFullscreenToggle());
 	strInternalInfo += "\nTryVSynch: " + boolToStr(Window::getTryVSynch());
@@ -81,7 +81,7 @@ void MenuStateGraphicInfo::reloadUI() {
 	Lang &lang= Lang::getInstance();
 
 	console.resetFonts();
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
 	labelMoreInfo.setFont(CoreData::getInstance().getDisplayFontSmall());
 	labelMoreInfo.setFont3D(CoreData::getInstance().getDisplayFontSmall3D());
@@ -106,8 +106,8 @@ void MenuStateGraphicInfo::reloadUI() {
 	strInternalInfo += "\nrenderText3DEnabled: " + boolToStr(Renderer::renderText3DEnabled);
 	strInternalInfo += "\nuseTextureCompression: " + boolToStr(Texture::useTextureCompression);
 	strInternalInfo += "\nfontIsRightToLeft: " + boolToStr(Font::fontIsRightToLeft);
-	strInternalInfo += "\nscaleFontValue: " + boolToStr(Font::scaleFontValue);
-	strInternalInfo += "\nscaleFontValueCenterHFactor: " + boolToStr(Font::scaleFontValueCenterHFactor);
+	strInternalInfo += "\nscaleFontValue: " + floatToStr(Font::scaleFontValue);
+	strInternalInfo += "\nscaleFontValueCenterHFactor: " + floatToStr(Font::scaleFontValueCenterHFactor);
 	strInternalInfo += "\nlangHeightText: " + Font::langHeightText;
 	strInternalInfo += "\nAllowAltEnterFullscreenToggle: " + boolToStr(Window::getAllowAltEnterFullscreenToggle());
 	strInternalInfo += "\nTryVSynch: " + boolToStr(Window::getTryVSynch());
@@ -123,7 +123,7 @@ void MenuStateGraphicInfo::mouseClick(int x, int y, MouseButton mouseButton){
 
 	if(buttonReturn.mouseClick(x,y)){
 		soundRenderer.playFx(coreData.getClickSoundA());
-		mainMenu->setState(new MenuStateOptions(program, mainMenu));
+		mainMenu->setState(new MenuStateOptionsGraphics(program, mainMenu));
     }
 }
 
@@ -150,7 +150,7 @@ void MenuStateGraphicInfo::keyDown(SDL_KeyboardEvent key) {
 	if(isKeyPressed(configKeys.getSDLKey("SaveGUILayout"),key) == true) {
 		GraphicComponent::saveAllCustomProperties(containerName);
 		//Lang &lang= Lang::getInstance();
-		//console.addLine(lang.get("GUILayoutSaved") + " [" + (saved ? lang.get("Yes") : lang.get("No"))+ "]");
+		//console.addLine(lang.getString("GUILayoutSaved") + " [" + (saved ? lang.getString("Yes") : lang.getString("No"))+ "]");
 	}
 }
 

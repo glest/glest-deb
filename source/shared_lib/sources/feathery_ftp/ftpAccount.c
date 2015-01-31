@@ -35,9 +35,9 @@
  */
 typedef struct
 {
-	char name[MAXLEN_USERNAME];		///< user name
-	char passw[MAXLEN_PASSWORD];	///< password of the account
-	char ftpRoot[MAX_PATH_LEN];		///< root path of the user account on the server
+	char name[MAXLEN_USERNAME+1];		///< user name
+	char passw[MAXLEN_PASSWORD+1];	///< password of the account
+	char ftpRoot[MAX_PATH_LEN+1];		///< root path of the user account on the server
 	int  ftpRootLen;				///< length of ftpRoot
 	int  accRights;					///< access rights of a account
 
@@ -69,7 +69,7 @@ int ftpDeleteAccount(const char* name)
  *  The translated path depends on the current working directory of the
  *  session and the root path of the session. In addition the path will
  *  be normalized.
- *  @todo normalize root and check if normalized path really exists
+ *  normalize root and check if normalized path really exists
  *
  *  @param name    user name
  *  @param passw   account password
@@ -99,7 +99,7 @@ int ftpCreateAccount(const char* name, const char* passw, const char* root, int 
 			strncpy(ftpUsers[n].name, name, MAXLEN_USERNAME);
 			strncpy(ftpUsers[n].passw, passw, MAXLEN_PASSWORD);
 			strncpy(ftpUsers[n].ftpRoot, root, MAX_PATH_LEN);
-			ftpUsers[n].ftpRootLen = strlen(root);
+			ftpUsers[n].ftpRootLen = (int)strlen(root);
 			ftpUsers[n].accRights = acc;
 			return 0;
 		}

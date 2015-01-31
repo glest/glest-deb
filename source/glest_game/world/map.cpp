@@ -23,11 +23,12 @@
 #include "util.h"
 #include "game_settings.h"
 #include "platform_util.h"
-#include "pos_iterator.h"
 #include "faction.h"
 #include "command.h"
-#include "leak_dumper.h"
 #include "map_preview.h"
+#include "world.h"
+#include "byte_order.h"
+#include "leak_dumper.h"
 
 using namespace Shared::Graphics;
 using namespace Shared::Util;
@@ -51,29 +52,71 @@ Cell::Cell() {
 // ==================== misc ====================
 
 //returns if the cell is free
-bool Cell::isFree(Field field) const {
-	bool result = getUnit(field) == NULL || getUnit(field)->isPutrefacting();
-
-	if(result == false) {
-		//printf("[%s] Line: %d returning false, unit id = %d [%s]\n",__FUNCTION__,__LINE__,getUnit(field)->getId(),getUnit(field)->getType()->getName().c_str());
-	}
-
-	return result;
-}
 
 //returns if the cell is free
-bool Cell::isFreeOrMightBeFreeSoon(Vec2i originPos, Vec2i cellPos, Field field) const {
-	bool result = getUnit(field) == NULL || getUnit(field)->isPutrefacting();
 
-	if(result == false) {
-		if(originPos.dist(cellPos) > 5 && getUnit(field)->getType()->isMobile() == true) {
-			result = true;
+void Cell::saveGame(XmlNode *rootNode, int index) const {
+	bool saveCell = false;
+	if(saveCell == false) {
+		for(unsigned int i = 0; i < fieldCount; ++i) {
+			if(units[i] != NULL) {
+				saveCell = true;
+				break;
+			}
+			if(unitsWithEmptyCellMap[i] != NULL) {
+				saveCell = true;
+				break;
+			}
 		}
-
-		//printf("[%s] Line: %d returning false, unit id = %d [%s]\n",__FUNCTION__,__LINE__,getUnit(field)->getId(),getUnit(field)->getType()->getName().c_str());
 	}
 
-	return result;
+	if(saveCell == true) {
+		std::map<string,string> mapTagReplacements;
+		XmlNode *cellNode = rootNode->addChild("Cell" + intToStr(index));
+		cellNode->addAttribute("index",intToStr(index), mapTagReplacements);
+
+	//    Unit *units[fieldCount];	//units on this cell
+		for(unsigned int i = 0; i < fieldCount; ++i) {
+			if(units[i] != NULL) {
+				XmlNode *unitsNode = cellNode->addChild("units");
+				unitsNode->addAttribute("field",intToStr(i), mapTagReplacements);
+				unitsNode->addAttribute("unitid",intToStr(units[i]->getId()), mapTagReplacements);
+			}
+		}
+	//    Unit *unitsWithEmptyCellMap[fieldCount];	//units with an empty cellmap on this cell
+		for(unsigned int i = 0; i < fieldCount; ++i) {
+			if(unitsWithEmptyCellMap[i] != NULL) {
+				XmlNode *unitsWithEmptyCellMapNode = cellNode->addChild("unitsWithEmptyCellMap");
+				unitsWithEmptyCellMapNode->addAttribute("field",intToStr(i), mapTagReplacements);
+				unitsWithEmptyCellMapNode->addAttribute("unitid",intToStr(unitsWithEmptyCellMap[i]->getId()), mapTagReplacements);
+			}
+		}
+
+	//	float height;
+		cellNode->addAttribute("height",floatToStr(getHeight(),6), mapTagReplacements);
+	}
+}
+
+void Cell::loadGame(const XmlNode *rootNode, int index, World *world) {
+	if(rootNode->hasChild("Cell" + intToStr(index)) == true) {
+		const XmlNode *cellNode = rootNode->getChild("Cell" + intToStr(index));
+
+		unsigned int unitCount = (unsigned int)cellNode->getChildCount();
+		for(unsigned int i = 0; i < unitCount; ++i) {
+			if(cellNode->hasChildAtIndex("units",i) == true) {
+				const XmlNode *unitsNode = cellNode->getChild("units",i);
+				int field = unitsNode->getAttribute("field")->getIntValue();
+				int unitId = unitsNode->getAttribute("unitid")->getIntValue();
+				units[field] = world->findUnitById(unitId);
+			}
+			if(cellNode->hasChildAtIndex("unitsWithEmptyCellMap",i) == true) {
+				const XmlNode *unitsNode = cellNode->getChild("unitsWithEmptyCellMap",i);
+				int field = unitsNode->getAttribute("field")->getIntValue();
+				int unitId = unitsNode->getAttribute("unitid")->getIntValue();
+				unitsWithEmptyCellMap[field] = world->findUnitById(unitId);
+			}
+		}
+	}
 }
 
 // =====================================================
@@ -87,6 +130,7 @@ SurfaceCell::SurfaceCell() {
 	surfaceType= -1;
 	surfaceTexture= NULL;
 	nearSubmerged = false;
+	cellChangedFromOriginalMapLoad = false;
 
 	for(int i = 0; i < GameConstants::maxPlayers + GameConstants::specialFactions; ++i) {
 		visible[i] = false;
@@ -96,6 +140,7 @@ SurfaceCell::SurfaceCell() {
 
 SurfaceCell::~SurfaceCell() {
 	delete object;
+	object=NULL;
 }
 
 void SurfaceCell::end(){
@@ -104,29 +149,133 @@ void SurfaceCell::end(){
 	}
 }
 
-
-bool SurfaceCell::isFree() const {
-	bool result = object==NULL || object->getWalkable();
-
-	if(result == false) {
-		//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-	}
-	return result;
-}
-
 void SurfaceCell::deleteResource() {
+	cellChangedFromOriginalMapLoad = true;
+
 	delete object;
 	object= NULL;
 }
 
+void SurfaceCell::setHeight(float height, bool cellChangedFromOriginalMapLoadValue) {
+	height = truncateDecimal<float>(height);
+	vertex.y= height;
+	if(cellChangedFromOriginalMapLoadValue == true) {
+		this->cellChangedFromOriginalMapLoad = true;
+	}
+}
+
+bool SurfaceCell::decAmount(int value) {
+	cellChangedFromOriginalMapLoad = true;
+
+	return object->getResource()->decAmount(value);
+}
 void SurfaceCell::setExplored(int teamIndex, bool explored) {
 	this->explored[teamIndex]= explored;
+	//printf("Setting explored to %d for teamIndex %d\n",explored,teamIndex);
 }
 
 void SurfaceCell::setVisible(int teamIndex, bool visible) {
     this->visible[teamIndex]= visible;
 }
 
+void SurfaceCell::saveGame(XmlNode *rootNode,int index) const {
+	bool saveCell = (this->getCellChangedFromOriginalMapLoad() == true);
+
+	if(saveCell == true) {
+		std::map<string,string> mapTagReplacements;
+		XmlNode *surfaceCellNode = rootNode->addChild("SurfaceCell" + intToStr(index));
+		surfaceCellNode->addAttribute("index",intToStr(index), mapTagReplacements);
+
+	//	//geometry
+	//	Vec3f vertex;
+		surfaceCellNode->addAttribute("vertex",vertex.getString(), mapTagReplacements);
+	//	Vec3f normal;
+		//surfaceCellNode->addAttribute("normal",normal.getString(), mapTagReplacements);
+	//	Vec3f color;
+		//surfaceCellNode->addAttribute("color",color.getString(), mapTagReplacements);
+	//
+	//	//tex coords
+	//	Vec2f fowTexCoord;		//tex coords for TEXTURE1 when multitexturing and fogOfWar
+		//surfaceCellNode->addAttribute("fowTexCoord",fowTexCoord.getString(), mapTagReplacements);
+	//	Vec2f surfTexCoord;		//tex coords for TEXTURE0
+		//surfaceCellNode->addAttribute("surfTexCoord",surfTexCoord.getString(), mapTagReplacements);
+	//	//surface
+	//	int surfaceType;
+		//surfaceCellNode->addAttribute("surfaceType",intToStr(surfaceType), mapTagReplacements);
+	//    const Texture2D *surfaceTexture;
+	//
+	//	//object & resource
+	//	Object *object;
+		if(object != NULL) {
+			object->saveGame(surfaceCellNode);
+		}
+		else {
+			XmlNode *objectNode = surfaceCellNode->addChild("Object");
+			objectNode->addAttribute("isDeleted",intToStr(true), mapTagReplacements);
+		}
+	//	//visibility
+	//	bool visible[GameConstants::maxPlayers + GameConstants::specialFactions];
+//		for(unsigned int i = 0; i < GameConstants::maxPlayers; ++i) {
+//			if(visible[i] == true) {
+//				XmlNode *visibleNode = surfaceCellNode->addChild("visible");
+//				visibleNode->addAttribute("index",intToStr(i), mapTagReplacements);
+//				visibleNode->addAttribute("value",intToStr(visible[i]), mapTagReplacements);
+//			}
+//		}
+//	//    bool explored[GameConstants::maxPlayers + GameConstants::specialFactions];
+//		for(unsigned int i = 0; i < GameConstants::maxPlayers; ++i) {
+//			if(explored[i] == true) {
+//				XmlNode *exploredNode = surfaceCellNode->addChild("explored");
+//				exploredNode->addAttribute("index",intToStr(i), mapTagReplacements);
+//				exploredNode->addAttribute("value",intToStr(explored[i]), mapTagReplacements);
+//			}
+//		}
+
+	//	//cache
+	//	bool nearSubmerged;
+		//surfaceCellNode->addAttribute("nearSubmerged",intToStr(nearSubmerged), mapTagReplacements);
+	}
+}
+
+void SurfaceCell::loadGame(const XmlNode *rootNode, int index, World *world) {
+	if(rootNode->hasChild("SurfaceCell" + intToStr(index)) == true) {
+		const XmlNode *surfaceCellNode = rootNode->getChild("SurfaceCell" + intToStr(index));
+
+		if(surfaceCellNode->hasAttribute("vertex") == true) {
+			vertex = Vec3f::strToVec3(surfaceCellNode->getAttribute("vertex")->getValue());
+		}
+
+		//int visibleCount = cellNode->getChildCount();
+		XmlNode *objectNode = surfaceCellNode->getChild("Object");
+		if(objectNode->hasAttribute("isDeleted") == true) {
+			this->deleteResource();
+		}
+		else {
+			object->loadGame(surfaceCellNode,world->getTechTree());
+		}
+
+		//printf("Loading game, sc index [%d][%d]\n",index,visibleCount);
+
+//		for(unsigned int i = 0; i < visibleCount; ++i) {
+//			if(cellNode->hasChildAtIndex("visible",i) == true) {
+//				const XmlNode *visibleNode = cellNode->getChild("visible",i);
+//				int indexCell = visibleNode->getAttribute("index")->getIntValue();
+//				bool value = visibleNode->getAttribute("value")->getIntValue();
+//				visible[indexCell] = value;
+//
+//				//printf("Loading game, sc visible index [%d][%d][%d]\n",index,indexCell,value);
+//			}
+//			if(cellNode->hasChildAtIndex("explored",i) == true) {
+//				const XmlNode *exploredNode = cellNode->getChild("explored",i);
+//				int indexCell = exploredNode->getAttribute("index")->getIntValue();
+//				bool value = exploredNode->getAttribute("value")->getIntValue();
+//				explored[indexCell] = value;
+//
+//				//printf("Loading game, sc explored cell index [%d] exploredIndex [%d] value [%d]\n",index,indexCell,value);
+//			}
+//		}
+	}
+}
 // =====================================================
 // 	class Map
 // =====================================================
@@ -150,12 +299,13 @@ Map::Map() {
 	h=0;
 	surfaceW=0;
 	surfaceH=0;
+	surfaceSize=(surfaceW * surfaceH);
 	maxPlayers=0;
 	maxMapHeight=0;
 }
 
 Map::~Map() {
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingMapCells","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingMapCells","",true), true);
 
 	delete [] cells;
 	cells = NULL;
@@ -167,7 +317,7 @@ Map::~Map() {
 
 void Map::end(){
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingMap","",true), true);
+    Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingMap","",true), true);
 	//read heightmap
 	for(int j = 0; j < surfaceH; ++j) {
 		for(int i = 0; i < surfaceW; ++i) {
@@ -177,58 +327,16 @@ void Map::end(){
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
-int Map::getSurfaceCellArraySize() const {
-	return (surfaceW * surfaceH);
-}
-
-SurfaceCell *Map::getSurfaceCell(const Vec2i &sPos) const {
-	return getSurfaceCell(sPos.x, sPos.y);
-}
-
-SurfaceCell *Map::getSurfaceCell(int sx, int sy) const {
-	int arrayIndex = sy * surfaceW + sx;
-	if(arrayIndex < 0 || arrayIndex >= getSurfaceCellArraySize()) {
-		throw runtime_error("arrayIndex >= getSurfaceCellArraySize(), arrayIndex = " + intToStr(arrayIndex) +
-				            " surfaceW = " + intToStr(surfaceW) + " surfaceH = " + intToStr(surfaceH) +
-				            " sx: " + intToStr(sx) + " sy: " + intToStr(sy));
-	}
-	else if(surfaceCells == NULL) {
-		throw runtime_error("surfaceCells == NULL");
-	}
-	return &surfaceCells[arrayIndex];
-}
-
-int Map::getCellArraySize() const {
-	return (w * h);
-}
-
-Cell *Map::getCell(const Vec2i &pos) const {
-	return getCell(pos.x, pos.y);
-}
-
-Cell *Map::getCell(int x, int y) const {
-	int arrayIndex = y * w + x;
-	if(arrayIndex < 0 || arrayIndex >= getCellArraySize()) {
-		//abort();
-		throw runtime_error("arrayIndex >= getCellArraySize(), arrayIndex = " + intToStr(arrayIndex) + " w = " + intToStr(w) + " h = " + intToStr(h));
-	}
-	else if(cells == NULL) {
-		throw runtime_error("cells == NULL");
-	}
-
-	return &cells[arrayIndex];
-}
-
 Vec2i Map::getStartLocation(int locationIndex) const {
 	if(locationIndex >= maxPlayers) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"locationIndex >= maxPlayers [%d] [%d]",locationIndex, maxPlayers);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"locationIndex >= maxPlayers [%d] [%d]",locationIndex, maxPlayers);
 		printf("%s\n",szBuf);
-		//throw runtime_error(szBuf);
-		assert(locationIndex < maxPlayers);
+		throw megaglest_runtime_error(szBuf);
+		//assert(locationIndex < maxPlayers);
 	}
 	else if(startLocations == NULL) {
-		throw runtime_error("startLocations == NULL");
+		throw megaglest_runtime_error("startLocations == NULL");
 	}
 
 	return startLocations[locationIndex];
@@ -243,26 +351,40 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 		FILE *f = fopen(path.c_str(), "rb");
 #endif
 		if(f != NULL) {
+			mapFile = path;
+
 		    mapChecksum.addFile(path);
 		    checksumValue.addFile(path);
 			//read header
 			MapFileHeader header;
 			size_t readBytes = fread(&header, sizeof(MapFileHeader), 1, f);
+			if(readBytes != 1) {
+				throw megaglest_runtime_error("Invalid map header detected for file: " + path);
+			}
+			fromEndianMapFileHeader(header);
 
 			if(next2Power(header.width) != header.width){
-				throw runtime_error("Map width is not a power of 2");
+				throw megaglest_runtime_error("Map width is not a power of 2");
 			}
 
 			if(next2Power(header.height) != header.height){
-				throw runtime_error("Map height is not a power of 2");
+				throw megaglest_runtime_error("Map height is not a power of 2");
 			}
 
 			heightFactor= header.heightFactor;
+			if(heightFactor>100){
+				heightFactor=heightFactor/100;
+				heightFactor = truncateDecimal<float>(heightFactor,6);
+			}
 			waterLevel= static_cast<float>((header.waterLevel-0.01f)/heightFactor);
+			waterLevel = truncateDecimal<float>(waterLevel,6);
 			title= header.title;
 			maxPlayers= header.maxFactions;
+
 			surfaceW= header.width;
 			surfaceH= header.height;
+			surfaceSize=(surfaceW * surfaceH);
+
 			w= surfaceW*cellScale;
 			h= surfaceH*cellScale;
 			cliffLevel = 0;
@@ -274,9 +396,9 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 				//desc = header.version2.short_desc;
 				if(header.version2.cliffLevel > 0  && header.version2.cliffLevel < 5000){
 					cliffLevel=static_cast<float>((header.version2.cliffLevel-0.01f)/(heightFactor));
+					cliffLevel = truncateDecimal<float>(cliffLevel,6);
 				}
-				if(header.version2.cameraHeight > 0 && header.version2.cameraHeight < 5000)
-				{
+				if(header.version2.cameraHeight > 0 && header.version2.cameraHeight < 5000) {
 					cameraHeight = header.version2.cameraHeight;
 				}
 			}
@@ -286,7 +408,21 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 			for(int i=0; i < maxPlayers; ++i) {
 				int x=0, y=0;
 				readBytes = fread(&x, sizeof(int32), 1, f);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				x = ::Shared::PlatformByteOrder::fromCommonEndian(x);
+
 				readBytes = fread(&y, sizeof(int32), 1, f);
+				if(readBytes != 1) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+					throw megaglest_runtime_error(szBuf);
+				}
+				y = ::Shared::PlatformByteOrder::fromCommonEndian(y);
+
 				startLocations[i]= Vec2i(x, y)*cellScale;
 			}
 
@@ -299,6 +435,13 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 				for(int i = 0; i < surfaceW; ++i) {
 					float32 alt=0;
 					readBytes = fread(&alt, sizeof(float32), 1, f);
+					if(readBytes != 1) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+						throw megaglest_runtime_error(szBuf);
+					}
+					alt = ::Shared::PlatformByteOrder::fromCommonEndian(alt);
+
 					SurfaceCell *sc= getSurfaceCell(i, j);
 					sc->setVertex(Vec3f(i*mapScale, alt / heightFactor, j*mapScale));
 				}
@@ -309,6 +452,13 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 				for(int i = 0; i < surfaceW; ++i) {
 					int8 surf=0;
 					readBytes = fread(&surf, sizeof(int8), 1, f);
+					if(readBytes != 1) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+						throw megaglest_runtime_error(szBuf);
+					}
+					surf = ::Shared::PlatformByteOrder::fromCommonEndian(surf);
+
 					getSurfaceCell(i, j)->setSurfaceType(surf-1);
 				}
 			}
@@ -319,6 +469,13 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 
 					int8 objNumber=0;
 					readBytes = fread(&objNumber, sizeof(int8), 1, f);
+					if(readBytes != 1) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+						throw megaglest_runtime_error(szBuf);
+					}
+					objNumber = ::Shared::PlatformByteOrder::fromCommonEndian(objNumber);
+
 					SurfaceCell *sc= getSurfaceCell(toSurfCoords(Vec2i(i, j)));
 					if(objNumber == 0) {
 						sc->setObject(NULL);
@@ -341,24 +498,22 @@ Checksum Map::load(const string &path, TechTree *techTree, Tileset *tileset) {
 					}
 				}
 			}
-		}
-		else{
 			if(f) fclose(f);
-
-			throw runtime_error("Can't open file");
 		}
-		fclose(f);
+		else {
+			throw megaglest_runtime_error("Can't open file");
+		}
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading map: "+ path+ "\n"+ e.what());
+		throw megaglest_runtime_error("Error loading map: "+ path+ "\n"+ e.what());
 	}
 
 	return mapChecksum;
 }
 
 void Map::init(Tileset *tileset) {
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingMap","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingMap","",true), true);
 	maxMapHeight=0.0f;
 	smoothSurface(tileset);
 	computeNormals();
@@ -370,22 +525,6 @@ void Map::init(Tileset *tileset) {
 
 // ==================== is ====================
 
-bool Map::isInside(int x, int y) const {
-	return x>=0 && y>=0 && x<w && y<h;
-}
-
-bool Map::isInside(const Vec2i &pos) const {
-	return isInside(pos.x, pos.y);
-}
-
-bool Map::isInsideSurface(int sx, int sy) const {
-	return sx>=0 && sy>=0 && sx<surfaceW && sy<surfaceH;
-}
-
-bool Map::isInsideSurface(const Vec2i &sPos) const {
-	return isInsideSurface(sPos.x, sPos.y);
-}
-
 class FindBestPos  {
 public:
 	float distanceFromUnitNoAdjustment;
@@ -394,7 +533,7 @@ public:
 };
 
 //returns if there is a resource next to a unit, in "resourcePos" is stored the relative position of the resource
-bool Map::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i &resourcePos,
+bool Map::isResourceNear(int frameIndex,const Vec2i &pos, const ResourceType *rt, Vec2i &resourcePos,
 		int size, Unit *unit, bool fallbackToPeersHarvestingSameResource,
 		Vec2i *resourceClickPos) const {
 
@@ -468,15 +607,21 @@ bool Map::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i &resour
 
 			// Check the faction cache for a known position where we can harvest
 			// this resource type
-			Vec2i result = unit->getFaction()->getClosestResourceTypeTargetFromCache(unit, rt);
+			Vec2i result = unit->getFaction()->getClosestResourceTypeTargetFromCache(unit, rt,frameIndex);
 			if(result.x >= 0) {
 				resourcePos = result;
 
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true) {
-					char szBuf[4096]="";
-								sprintf(szBuf,"[found peer harvest pos] pos [%s] resourcePos [%s] unit->getFaction()->getCacheResourceTargetListSize() [%d]",
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[found peer harvest pos] pos [%s] resourcePos [%s] unit->getFaction()->getCacheResourceTargetListSize() [%d]",
 										pos.getString().c_str(),resourcePos.getString().c_str(),unit->getFaction()->getCacheResourceTargetListSize());
-					unit->logSynchData(__FILE__,__LINE__,szBuf);
+
+					if(frameIndex < 0) {
+						unit->logSynchData(__FILE__,__LINE__,szBuf);
+					}
+					else {
+						unit->logSynchDataThreaded(__FILE__,__LINE__,szBuf);
+					}
 				}
 
 				if(unit->getPos().dist(resourcePos) <= size) {
@@ -512,13 +657,15 @@ bool Map::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i &resour
 								(distanceFromUnit < 0 || unit->getCenteredPos().dist(resPos) <= (distanceFromUnit + 2.0))) {
 
 								if(resourceClickPos->dist(resPos) <= 1.0) {
-									FindBestPos bestPosItem;
+									if(unit != NULL) {
+										FindBestPos bestPosItem;
 
-									bestPosItem.distanceFromUnitNoAdjustment = unit->getCenteredPos().dist(resPos);
-									bestPosItem.distanceFromClickNoAdjustment =distanceFromClick = resourceClickPos->dist(resPos);
-									bestPosItem.resourcePosNoAdjustment = resPos;
+										bestPosItem.distanceFromUnitNoAdjustment = unit->getCenteredPos().dist(resPos);
+										bestPosItem.distanceFromClickNoAdjustment =distanceFromClick = resourceClickPos->dist(resPos);
+										bestPosItem.resourcePosNoAdjustment = resPos;
 
-									bestPosList.push_back(bestPosItem);
+										bestPosList.push_back(bestPosItem);
+									}
 								}
 
 								//printf("!!!! unit [%s - %d] resPos = [%s] resourceClickPos->dist(resPos) [%f] distanceFromClick [%f] unit->getCenteredPos().dist(resPos) [%f] distanceFromUnit [%f]\n",unit->getFullName().c_str(),unit->getId(),resPos.getString().c_str(),resourceClickPos->dist(resPos),distanceFromClick,unit->getCenteredPos().dist(resPos),distanceFromUnit);
@@ -563,24 +710,6 @@ bool Map::isResourceNear(const Vec2i &pos, const ResourceType *rt, Vec2i &resour
 	return resourceNear;
 }
 
-//returns if there is a resource next to a unit, in "resourcePos" is stored the relative position of the resource
-bool Map::isResourceNear(const Vec2i &pos, int size, const ResourceType *rt, Vec2i &resourcePos) const {
-	Vec2i p1 = pos + Vec2i(-size);
-	Vec2i p2 = pos + Vec2i(size);
-	Util::PerimeterIterator iter(p1, p2);
-	while (iter.more()) {
-		Vec2i cur = iter.next();
-		if (isInside(cur) && isInsideSurface(toSurfCoords(cur))) {
-			Resource *r = getSurfaceCell(toSurfCoords(cur))->getResource();
-			if (r && r->getType() == rt) {
-				resourcePos = cur;
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 // ==================== free cells ====================
 
 bool Map::isFreeCell(const Vec2i &pos, Field field) const {
@@ -592,41 +721,11 @@ bool Map::isFreeCell(const Vec2i &pos, Field field) const {
 		(field!=fLand || getDeepSubmerged(getCell(pos)) == false);
 }
 
-bool Map::isFreeCellOrMightBeFreeSoon(Vec2i originPos, const Vec2i &pos, Field field) const {
-	return
-		isInside(pos) &&
-		isInsideSurface(toSurfCoords(pos)) &&
-		getCell(pos)->isFreeOrMightBeFreeSoon(originPos,pos,field) &&
-		(field==fAir || getSurfaceCell(toSurfCoords(pos))->isFree()) &&
-		(field!=fLand || getDeepSubmerged(getCell(pos)) == false);
-}
 
-bool Map::isFreeCellOrHasUnit(const Vec2i &pos, Field field, const Unit *unit) const {
-	if(isInside(pos) && isInsideSurface(toSurfCoords(pos))) {
-		if(unit->getCurrField() != field) {
-			return isFreeCell(pos, field);
-		}
+bool Map::isFreeCellOrHasUnit(const Vec2i &pos, Field field, const Unit *unit) const{
+	if(isInside(pos)){
 		Cell *c= getCell(pos);
-		if(c->getUnit(unit->getCurrField()) == unit) {
-			if(unit->getCurrField() == fAir) {
-				if(field == fAir) {
-					return true;
-				}
-				const SurfaceCell *sc= getSurfaceCell(toSurfCoords(pos));
-				if(sc != NULL) {
-					if(getDeepSubmerged(sc) == true) {
-						return false;
-					}
-					else if(field == fLand) {
-						if(sc->isFree() == false) {
-							return false;
-						}
-						else if(c->getUnit(field) != NULL) {
-							return false;
-						}
-					}
-				}
-			}
+		if(c->getUnit(field) == unit && unit != NULL) {
 			return true;
 		}
 		else{
@@ -636,31 +735,48 @@ bool Map::isFreeCellOrHasUnit(const Vec2i &pos, Field field, const Unit *unit) c
 	return false;
 }
 
+//TT: this is much more complicated compared with the old one above. I think its no more needed
+//bool Map::isFreeCellOrHasUnit(const Vec2i &pos, Field field, const Unit *unit) const {
+//	if(isInside(pos) && isInsideSurface(toSurfCoords(pos))) {
+//		if(unit->getCurrField() != field) {
+//			return isFreeCell(pos, field);
+//		}
+//		Cell *c= getCell(pos);
+//		if(c->getUnit(unit->getCurrField()) == unit) {
+//			if(unit->getCurrField() == fAir) {
+//				if(field == fAir) {
+//					return true;
+//				}
+//				const SurfaceCell *sc= getSurfaceCell(toSurfCoords(pos));
+//				if(sc != NULL) {
+//					if(getDeepSubmerged(sc) == true) {
+//						return false;
+//					}
+//					else if(field == fLand) {
+//						if(sc->isFree() == false) {
+//							return false;
+//						}
+//						else if(c->getUnit(field) != NULL) {
+//							return false;
+//						}
+//					}
+//				}
+//			}
+//			return true;
+//		}
+//		else{
+//			return isFreeCell(pos, field);
+//		}
+//	}
+//	return false;
+//}
+
 bool Map::isAproxFreeCell(const Vec2i &pos, Field field, int teamIndex) const {
 	if(isInside(pos) && isInsideSurface(toSurfCoords(pos))) {
 		const SurfaceCell *sc= getSurfaceCell(toSurfCoords(pos));
 
 		if(sc->isVisible(teamIndex)) {
 			return isFreeCell(pos, field);
-		}
-		else if(sc->isExplored(teamIndex)) {
-			return field==fLand? sc->isFree() && !getDeepSubmerged(getCell(pos)): true;
-		}
-		else {
-			return true;
-		}
-	}
-
-	//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-	return false;
-}
-
-bool Map::isAproxFreeCellOrMightBeFreeSoon(Vec2i originPos,const Vec2i &pos, Field field, int teamIndex) const {
-	if(isInside(pos) && isInsideSurface(toSurfCoords(pos))) {
-		const SurfaceCell *sc= getSurfaceCell(toSurfCoords(pos));
-
-		if(sc->isVisible(teamIndex)) {
-			return isFreeCellOrMightBeFreeSoon(originPos, pos, field);
 		}
 		else if(sc->isExplored(teamIndex)) {
 			return field==fLand? sc->isFree() && !getDeepSubmerged(getCell(pos)): true;
@@ -687,15 +803,15 @@ bool Map::isFreeCells(const Vec2i & pos, int size, Field field) const  {
 }
 
 bool Map::isFreeCellsOrHasUnit(const Vec2i &pos, int size, Field field,
-		const Unit *unit, const UnitType *munit) const {
-	if(unit == NULL) {
-		throw runtime_error("unit == NULL");
+		const Unit *unit, const UnitType *munit,bool allowNullUnit) const {
+	if(unit == NULL && allowNullUnit == false) {
+		throw megaglest_runtime_error("unit == NULL");
 	}
-	if(munit == NULL) {
-		throw runtime_error("munit == NULL");
+	if(munit == NULL && allowNullUnit == false) {
+		throw megaglest_runtime_error("munit == NULL");
 	}
-	for(int i=pos.x; i<pos.x+size; ++i) {
-		for(int j=pos.y; j<pos.y+size; ++j) {
+	for(int i = pos.x; i < pos.x + size; ++i) {
+		for(int j = pos.y; j < pos.y + size; ++j) {
 			if(isFreeCellOrHasUnit(Vec2i(i,j), field, unit) == false) {
 				return false;
 			}
@@ -728,7 +844,7 @@ bool Map::canOccupy(const Vec2i &pos, Field field, const UnitType *ut, CardinalD
 					}
 				}
 				else {
-					false;
+					return false;
 				}
 			}
 		}
@@ -787,7 +903,7 @@ bool Map::canMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, std::m
 	}
 
 	bool isBadHarvestPos = false;
-	if(unit != NULL) {
+	//if(unit != NULL) {
 		Command *command= unit->getCurrCommand();
 		if(command != NULL) {
 			const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
@@ -795,9 +911,9 @@ bool Map::canMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, std::m
 				isBadHarvestPos = true;
 			}
 		}
-	}
+	//}
 
-	if(unit == NULL || isBadHarvestPos == true) {
+	if(isBadHarvestPos == true) {
 		if(lookupCache != NULL) {
 			(*lookupCache)[pos1][pos2][size][field]=false;
 		}
@@ -821,6 +937,9 @@ bool Map::aproxCanMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, s
 		return false;
 	}
 
+	if(unit == NULL) {
+		throw megaglest_runtime_error("unit == NULL");
+	}
 	int size= unit->getType()->getSize();
 	int teamIndex= unit->getTeam();
 	Field field= unit->getCurrField();
@@ -882,7 +1001,7 @@ bool Map::aproxCanMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, s
 		}
 
 		bool isBadHarvestPos = false;
-		if(unit != NULL) {
+		//if(unit != NULL) {
 			Command *command= unit->getCurrCommand();
 			if(command != NULL) {
 				const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
@@ -890,7 +1009,7 @@ bool Map::aproxCanMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, s
 					isBadHarvestPos = true;
 				}
 			}
-		}
+		//}
 
 		if(unit == NULL || isBadHarvestPos == true) {
 			if(lookupCache != NULL) {
@@ -938,17 +1057,15 @@ bool Map::aproxCanMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, s
 		}
 
 		bool isBadHarvestPos = false;
-		if(unit != NULL) {
-			Command *command= unit->getCurrCommand();
-			if(command != NULL) {
-				const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
-				if(hct != NULL && unit->isBadHarvestPos(pos2) == true) {
-					isBadHarvestPos = true;
-				}
+		Command *command= unit->getCurrCommand();
+		if(command != NULL) {
+			const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
+			if(hct != NULL && unit->isBadHarvestPos(pos2) == true) {
+				isBadHarvestPos = true;
 			}
 		}
 
-		if(unit == NULL || isBadHarvestPos == true) {
+		if(isBadHarvestPos == true) {
 			if(lookupCache != NULL) {
 				(*lookupCache)[pos1][pos2][teamIndex][size][field]=false;
 			}
@@ -964,112 +1081,19 @@ bool Map::aproxCanMove(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2, s
 	return true;
 }
 
-//checks if a unit can move from between 2 cells using only visible cells (for pathfinding)
-bool Map::aproxCanMoveSoon(const Unit *unit, const Vec2i &pos1, const Vec2i &pos2) const {
-	if(isInside(pos1) == false || isInsideSurface(toSurfCoords(pos1)) == false ||
-	   isInside(pos2) == false || isInsideSurface(toSurfCoords(pos2)) == false) {
-
-		//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-		return false;
-	}
-
-	int size= unit->getType()->getSize();
-	int teamIndex= unit->getTeam();
-	Field field= unit->getCurrField();
-
-	//single cell units
-	if(size == 1) {
-		if(isAproxFreeCellOrMightBeFreeSoon(unit->getPos(),pos2, field, teamIndex) == false) {
-
-			//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-			return false;
-		}
-		if(pos1.x != pos2.x && pos1.y != pos2.y) {
-			if(isAproxFreeCellOrMightBeFreeSoon(unit->getPos(),Vec2i(pos1.x, pos2.y), field, teamIndex) == false) {
-
-				//Unit *cellUnit = getCell(Vec2i(pos1.x, pos2.y))->getUnit(field);
-				//Object * obj = getSurfaceCell(toSurfCoords(Vec2i(pos1.x, pos2.y)))->getObject();
-
-				//printf("[%s] Line: %d returning false cell [%s] free [%d] cell unitid = %d object class = %d\n",__FUNCTION__,__LINE__,Vec2i(pos1.x, pos2.y).getString().c_str(),this->isFreeCell(Vec2i(pos1.x, pos2.y),field),(cellUnit != NULL ? cellUnit->getId() : -1),(obj != NULL ? obj->getType()->getClass() : -1));
-				//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-				return false;
-			}
-			if(isAproxFreeCellOrMightBeFreeSoon(unit->getPos(),Vec2i(pos2.x, pos1.y), field, teamIndex) == false) {
-				//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-				return false;
-			}
-		}
-
-		bool isBadHarvestPos = false;
-		if(unit != NULL) {
-			Command *command= unit->getCurrCommand();
-			if(command != NULL) {
-				const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
-				if(hct != NULL && unit->isBadHarvestPos(pos2) == true) {
-					isBadHarvestPos = true;
-				}
-			}
-		}
-
-		if(unit == NULL || isBadHarvestPos == true) {
-
-			//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-			return false;
-		}
-
-		return true;
-	}
-	//multi cell units
-	else {
-		for(int i = pos2.x; i < pos2.x + size; ++i) {
-			for(int j = pos2.y; j < pos2.y + size; ++j) {
-
-				Vec2i cellPos = Vec2i(i,j);
-				if(isInside(cellPos) && isInsideSurface(toSurfCoords(cellPos))) {
-					if(getCell(cellPos)->getUnit(unit->getCurrField()) != unit) {
-						if(isAproxFreeCellOrMightBeFreeSoon(unit->getPos(),cellPos, field, teamIndex) == false) {
-
-							//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-							return false;
-						}
-					}
-				}
-				else {
-
-					//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-					return false;
-				}
-			}
-		}
-
-		bool isBadHarvestPos = false;
-		if(unit != NULL) {
-			Command *command= unit->getCurrCommand();
-			if(command != NULL) {
-				const HarvestCommandType *hct = dynamic_cast<const HarvestCommandType*>(command->getCommandType());
-				if(hct != NULL && unit->isBadHarvestPos(pos2) == true) {
-					isBadHarvestPos = true;
-				}
-			}
-		}
-
-		if(unit == NULL || isBadHarvestPos == true) {
-
-			//printf("[%s] Line: %d returning false\n",__FUNCTION__,__LINE__);
-			return false;
-		}
-
-	}
-	return true;
-}
 
 Vec2i Map::computeRefPos(const Selection *selection) const {
     Vec2i total= Vec2i(0);
+
+	if(selection == NULL) {
+		throw megaglest_runtime_error("selection == NULL");
+	}
+
     for(int i = 0; i < selection->getCount(); ++i) {
-    	if(selection == NULL || selection->getUnit(i) == NULL) {
-    		throw runtime_error("selection == NULL || selection->getUnit(i) == NULL");
+    	if(selection->getUnit(i) == NULL) {
+    		throw megaglest_runtime_error("selection == NULL || selection->getUnit(i) == NULL");
     	}
-        total = total + selection->getUnit(i)->getPos();
+        total = total + selection->getUnit(i)->getPosNotThreadSafe();
     }
 
     return Vec2i(total.x / selection->getCount(), total.y / selection->getCount());
@@ -1096,12 +1120,12 @@ Vec2i Map::computeDestPos(	const Vec2i &refUnitPos, const Vec2i &unitPos,
 
 std::pair<float,Vec2i> Map::getUnitDistanceToPos(const Unit *unit,Vec2i pos,const UnitType *ut) {
 	if(unit == NULL) {
-		throw runtime_error("unit == NULL");
+		throw megaglest_runtime_error("unit == NULL");
 	}
 
 	std::pair<float,Vec2i> result(-1,Vec2i(0));
 	//int unitId= unit->getId();
-	Vec2i unitPos= computeDestPos(unit->getPos(), unit->getPos(), pos);
+	Vec2i unitPos= computeDestPos(unit->getPosNotThreadSafe(), unit->getPosNotThreadSafe(), pos);
 
 	Vec2i start = pos - Vec2i(1);
 	int unitTypeSize = 0;
@@ -1146,7 +1170,7 @@ const Unit * Map::findClosestUnitToPos(const Selection *selection, Vec2i origina
 	for(int i = 0; i < selection->getCount(); ++i) {
 		const Unit *unit = selection->getUnit(i);
 		//int unitId= unit->getId();
-		Vec2i unitBuilderPos= computeDestPos(refPos, unit->getPos(), pos);
+		Vec2i unitBuilderPos= computeDestPos(refPos, unit->getPosNotThreadSafe(), pos);
 
 		for(int i = start.x; i <= end.x; ++i) {
 			for(int j = start.y; j <= end.y; ++j){
@@ -1167,7 +1191,14 @@ const Unit * Map::findClosestUnitToPos(const Selection *selection, Vec2i origina
 }
 
 Vec2i Map::findBestBuildApproach(const Unit *unit, Vec2i originalBuildPos,const UnitType *ut) const {
-    Vec2i unitBuilderPos    = unit->getPos();
+	if(unit == NULL) {
+		throw megaglest_runtime_error("unit == NULL");
+	}
+	if(ut == NULL) {
+		throw megaglest_runtime_error("ut == NULL");
+	}
+
+    Vec2i unitBuilderPos    = unit->getPosNotThreadSafe();
 	Vec2i pos               = originalBuildPos;
 
 	float bestRange = -1;
@@ -1221,7 +1252,7 @@ bool Map::isInUnitTypeCells(const UnitType *ut, const Vec2i &pos,
 							const Vec2i &testPos) const {
 	assert(ut != NULL);
 	if(ut == NULL) {
-		throw runtime_error("ut == NULL");
+		throw megaglest_runtime_error("ut == NULL");
 	}
 
 	if(isInside(testPos) && isInsideSurface(toSurfCoords(testPos))) {
@@ -1242,27 +1273,47 @@ bool Map::isInUnitTypeCells(const UnitType *ut, const Vec2i &pos,
 }
 
 //put a units into the cells
-void Map::putUnitCells(Unit *unit, const Vec2i &pos) {
+void Map::putUnitCells(Unit *unit, const Vec2i &pos, bool ignoreSkill) {
 	assert(unit != NULL);
 	if(unit == NULL) {
-		throw runtime_error("ut == NULL");
+		throw megaglest_runtime_error("ut == NULL");
+	}
+	putUnitCellsPrivate(unit, pos, unit->getType(), false);
+
+	// block space for morphing units
+	if(ignoreSkill==false &&
+			unit->getCurrSkill() != NULL &&
+	        unit->getCurrSkill()->getClass() == scMorph) {
+		Command *command= unit->getCurrCommand();
+		if(command != NULL && command->getCommandType()->commandTypeClass == ccMorph){
+			const MorphCommandType *mct= static_cast<const MorphCommandType*>(command->getCommandType());
+			putUnitCellsPrivate(unit, pos, mct->getMorphUnit(),true);
+			unit->setMorphFieldsBlocked(true);
+		}
+	}
+}
+
+void Map::putUnitCellsPrivate(Unit *unit, const Vec2i &pos, const UnitType *ut, bool isMorph) {
+	assert(unit != NULL);
+	if(unit == NULL) {
+		throw megaglest_runtime_error("ut == NULL");
 	}
 
     bool canPutInCell = true;
-	const UnitType *ut= unit->getType();
-
+	Field field=ut->getField();
 	for(int i = 0; i < ut->getSize(); ++i) {
 		for(int j = 0; j < ut->getSize(); ++j) {
 			Vec2i currPos= pos + Vec2i(i, j);
 			assert(isInside(currPos));
 			if(isInside(currPos) == false) {
-				throw runtime_error("isInside(currPos) == false");
+				throw megaglest_runtime_error("isInside(currPos) == false");
 			}
 
 			if( ut->hasCellMap() == false || ut->getCellMapCell(i, j, unit->getModelFacing())) {
-				if(getCell(currPos)->getUnit(unit->getCurrField()) != NULL &&
-                   getCell(currPos)->getUnit(unit->getCurrField()) != unit) {
+				if(getCell(currPos)->getUnit(field) != NULL &&
+                   getCell(currPos)->getUnit(field) != unit) {
 
+// TT: is this ok ?
                     // If unit tries to move into a cell where another unit resides
                     // cancel the move command
                     if(unit->getCurrSkill() != NULL &&
@@ -1277,22 +1328,37 @@ void Map::putUnitCells(Unit *unit, const Vec2i &pos) {
                         //      unit->toString().c_str(),
                         //      getCell(currPos)->getUnit(unit->getCurrField())->toString().c_str());
                     }
-                    // If the unit trying to move into the cell is not in the moving state
-                    // it is likely being created or morphed so we will will log the error
-                    else {
-                        canPutInCell = false;
-				        // throw runtime_error("getCell(currPos)->getUnit(unit->getCurrField()) != NULL");
-                        SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] ERROR [getCell(currPos)->getUnit(unit->getCurrField()) != NULL] currPos [%s] unit [%s] cell unit [%s]\n",
-                              __FILE__,__FUNCTION__,__LINE__,
-                              currPos.getString().c_str(),
-                              unit->toString().c_str(),
-                              getCell(currPos)->getUnit(unit->getCurrField())->toString().c_str());
-                    }
+//TT: Nonsens?
+//                    else {
+//                        // If the unit trying to move into the cell is not in the moving state
+//                        // it is likely being created or morphed so we will will log the error
+//                        canPutInCell = false;
+//				        // throw megaglest_runtime_error("getCell(currPos)->getUnit(unit->getCurrField()) != NULL");
+//                        SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] ERROR [getCell(currPos)->getUnit(unit->getCurrField()) != NULL] currPos [%s] unit [%s] cell unit [%s]\n",
+//                              __FILE__,__FUNCTION__,__LINE__,
+//                              currPos.getString().c_str(),
+//                              unit->toString().c_str(),
+//                              getCell(currPos)->getUnit(unit->getCurrField())->toString().c_str());
+//                    }
 				}
 
-                if(canPutInCell == true) {
-                    getCell(currPos)->setUnit(unit->getCurrField(), unit);
-                }
+
+				if(getCell(currPos)->getUnit(field) == NULL ||
+								   getCell(currPos)->getUnit(field) == unit) {
+					if(isMorph) {
+						// unit is beeing morphed to another unit with maybe other field.
+						getCell(currPos)->setUnit(field, unit);
+						canPutInCell = false;
+					}
+					if(canPutInCell == true) {
+						getCell(currPos)->setUnit(unit->getCurrField(), unit);
+					}
+				}
+				else if(canPutInCell == true) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"Trying to move unit [%d - %s] into occupied cell [%s] and field = %d, unit already in cell [%d - %s] ",unit->getId(),unit->getType()->getName(false).c_str(),pos.getString().c_str(),field,getCell(currPos)->getUnit(field)->getId(),getCell(currPos)->getUnit(field)->getType()->getName(false).c_str());
+					throw megaglest_runtime_error(szBuf);
+				}
 			}
 			else if(ut->hasCellMap() == true &&
 					ut->getAllowEmptyCellMap() == true &&
@@ -1312,20 +1378,35 @@ void Map::putUnitCells(Unit *unit, const Vec2i &pos) {
 }
 
 //removes a unit from cells
-void Map::clearUnitCells(Unit *unit, const Vec2i &pos) {
+void Map::clearUnitCells(Unit *unit, const Vec2i &pos, bool ignoreSkill) {
 	assert(unit != NULL);
 	if(unit == NULL) {
-		throw runtime_error("unit == NULL");
+		throw megaglest_runtime_error("unit == NULL");
 	}
 
 	const UnitType *ut= unit->getType();
+	Field currentField=unit->getCurrField();
+
+	if(ignoreSkill==false &&
+			unit->getCurrSkill() != NULL &&
+	        unit->getCurrSkill()->getClass() == scMorph &&
+	        unit->getMorphFieldsBlocked() == true) {
+		Command *command= unit->getCurrCommand();
+		const MorphCommandType *mct= static_cast<const MorphCommandType*>(command->getCommandType());
+		if(unit->getType()->getSize()<=mct->getMorphUnit()->getSize()){
+			ut=mct->getMorphUnit();
+			currentField=ut->getField();
+			unit->setMorphFieldsBlocked(false);
+		}
+	}
+
 
 	for(int i=0; i<ut->getSize(); ++i){
 		for(int j=0; j<ut->getSize(); ++j){
 			Vec2i currPos= pos + Vec2i(i, j);
 			assert(isInside(currPos));
 			if(isInside(currPos) == false) {
-				throw runtime_error("isInside(currPos) == false");
+				throw megaglest_runtime_error("isInside(currPos) == false");
 			}
 
 			if(ut->hasCellMap() == false || ut->getCellMapCell(i, j, unit->getModelFacing())) {
@@ -1334,7 +1415,7 @@ void Map::clearUnitCells(Unit *unit, const Vec2i &pos) {
 
 				//assert(getCell(currPos)->getUnit(unit->getCurrField()) == unit || getCell(currPos)->getUnit(unit->getCurrField()) == NULL);
 				//if(getCell(currPos)->getUnit(unit->getCurrField()) != unit && getCell(currPos)->getUnit(unit->getCurrField()) != NULL) {
-				//	throw runtime_error("getCell(currPos)->getUnit(unit->getCurrField()) != unit");
+				//	throw megaglest_runtime_error("getCell(currPos)->getUnit(unit->getCurrField()) != unit");
 					//SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] ERROR [getCell(currPos)->getUnit(unit->getCurrField()) != unit] currPos [%s] unit [%s] cell unit [%s]\n",
                     //          __FILE__,__FUNCTION__,__LINE__,
                     //          currPos.getString().c_str(),
@@ -1343,14 +1424,14 @@ void Map::clearUnitCells(Unit *unit, const Vec2i &pos) {
 				//}
 
                 // Only clear the cell if its the unit we expect to clear out of it
-                if(getCell(currPos)->getUnit(unit->getCurrField()) == unit) {
-                    getCell(currPos)->setUnit(unit->getCurrField(), NULL);
+                if(getCell(currPos)->getUnit(currentField) == unit) {
+                    getCell(currPos)->setUnit(currentField, NULL);
                 }
 			}
 			else if(ut->hasCellMap() == true &&
 					ut->getAllowEmptyCellMap() == true &&
 					ut->hasEmptyCellMap() == true) {
-				getCell(currPos)->setUnitWithEmptyCellMap(unit->getCurrField(), NULL);
+				getCell(currPos)->setUnitWithEmptyCellMap(currentField, NULL);
 
 				//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] currPos = %s unit = %s\n",
                 //             __FILE__,__FUNCTION__,__LINE__,
@@ -1383,7 +1464,7 @@ bool Map::isNextTo(const Vec2i &pos, const Unit *unit) const {
 
 //return if unit is next to pos
 bool Map::isNextTo(const Unit *unit1, const Unit *unit2) const {
-	Vec2i pos = unit1->getPos();
+	Vec2i pos = unit1->getPosNotThreadSafe();
 	const UnitType *ut = unit1->getType();
 	for (int y=-1; y < ut->getSize()+1; ++y) {
 		for (int x=-1; x < ut->getSize()+1; ++x) {
@@ -1457,13 +1538,13 @@ void Map::flatternTerrain(const Unit *unit){
 	float refHeight= getSurfaceCell(toSurfCoords(unit->getCenteredPos()))->getHeight();
 	for(int i=-1; i<=unit->getType()->getSize(); ++i){
         for(int j=-1; j<=unit->getType()->getSize(); ++j){
-            Vec2i pos= unit->getPos()+Vec2i(i, j);
+            Vec2i pos= unit->getPosNotThreadSafe()+Vec2i(i, j);
             if(isInside(pos) && isInsideSurface(toSurfCoords(pos))) {
 				Cell *c= getCell(pos);
 				SurfaceCell *sc= getSurfaceCell(toSurfCoords(pos));
 				//we change height if pos is inside world, if its free or ocupied by the currenty building
 				if(sc->getObject() == NULL && (c->getUnit(fLand)==NULL || c->getUnit(fLand)==unit)) {
-					sc->setHeight(refHeight);
+					sc->setHeight(refHeight,true);
 				}
             }
         }
@@ -1537,8 +1618,8 @@ void Map::smoothSurface(Tileset *tileset) {
 			for (int k = -1; k <= 1; ++k) {
 				for (int l = -1; l <= 1; ++l) {
 #ifdef USE_STREFLOP
-					if (cliffLevel<=0.1f || cliffLevel > streflop::fabs(oldHeights[(j) * surfaceW + (i)]
-							- oldHeights[(j + k) * surfaceW + (i + l)])) {
+					if (cliffLevel<=0.1f || cliffLevel > streflop::fabs(static_cast<streflop::Simple>(oldHeights[(j) * surfaceW + (i)]
+							- oldHeights[(j + k) * surfaceW + (i + l)]))) {
 #else
 					if (cliffLevel<=0.1f || cliffLevel > fabs(oldHeights[(j) * surfaceW + (i)]
 							- oldHeights[(j + k) * surfaceW + (i + l)])) {
@@ -1563,8 +1644,8 @@ void Map::smoothSurface(Tileset *tileset) {
 						}
 						if (formerObject == NULL) {
 							Object *o = new Object(tileset->getObjectType(9),
-									getSurfaceCell(i, j)->getVertex(), Vec2i(i,
-											j));
+									getSurfaceCell(i, j)->getVertex(),
+									Vec2i(i,j));
 							getSurfaceCell(i, j)->setObject(o);
 						}
 					}
@@ -1620,31 +1701,202 @@ void Map::computeCellColors(){
 	}
 }
 
-// static
-string Map::getMapPath(const string &mapName, string scenarioDir, bool errorOnNotFound) {
+void Map::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *mapNode = rootNode->addChild("Map");
 
-    Config &config = Config::getInstance();
-    vector<string> pathList = config.getPathListForType(ptMaps,scenarioDir);
+//	string title;
+	mapNode->addAttribute("title",title, mapTagReplacements);
+//	float waterLevel;
+	mapNode->addAttribute("waterLevel",floatToStr(waterLevel,6), mapTagReplacements);
+//	float heightFactor;
+	mapNode->addAttribute("heightFactor",floatToStr(heightFactor,6), mapTagReplacements);
+//	float cliffLevel;
+	mapNode->addAttribute("cliffLevel",floatToStr(cliffLevel,6), mapTagReplacements);
+//	int cameraHeight;
+	mapNode->addAttribute("cameraHeight",intToStr(cameraHeight), mapTagReplacements);
+//	int w;
+	mapNode->addAttribute("w",intToStr(w), mapTagReplacements);
+//	int h;
+	mapNode->addAttribute("h",intToStr(h), mapTagReplacements);
+//	int surfaceW;
+	mapNode->addAttribute("surfaceW",intToStr(surfaceW), mapTagReplacements);
+//	int surfaceH;
+	mapNode->addAttribute("surfaceH",intToStr(surfaceH), mapTagReplacements);
+//	int maxPlayers;
+	mapNode->addAttribute("maxPlayers",intToStr(maxPlayers), mapTagReplacements);
+//	Cell *cells;
+	//printf("getCellArraySize() = %d\n",getCellArraySize());
+//	for(unsigned int i = 0; i < getCellArraySize(); ++i) {
+//		Cell &cell = cells[i];
+//		cell.saveGame(mapNode,i);
+//	}
+//	SurfaceCell *surfaceCells;
+	//printf("getSurfaceCellArraySize() = %d\n",getSurfaceCellArraySize());
 
-    for(int idx = 0; idx < pathList.size(); idx++) {
-        string map_path = pathList[idx];
-    	endPathWithSlash(map_path);
+	string exploredList = "";
+	string visibleList = "";
 
-        const string mega = map_path + mapName + ".mgm";
-        const string glest = map_path + mapName + ".gbm";
-        if (fileExists(mega)) {
-            return mega;
-        }
-        else if (fileExists(glest)) {
-            return glest;
-        }
-    }
+	for(unsigned int i = 0; i < (unsigned int)getSurfaceCellArraySize(); ++i) {
+		SurfaceCell &surfaceCell = surfaceCells[i];
 
-	if(errorOnNotFound == true) {
-		throw runtime_error("Map [" + mapName + "] not found, scenarioDir [" + scenarioDir + "]");
+		if(exploredList != "") {
+			exploredList += ",";
+		}
+
+		for(unsigned int j = 0; j < (unsigned int)GameConstants::maxPlayers; ++j) {
+			if(j > 0) {
+				exploredList += "|";
+			}
+
+			exploredList += intToStr(surfaceCell.isExplored(j));
+		}
+
+		if(visibleList != "") {
+			visibleList += ",";
+		}
+
+		for(unsigned int j = 0; j < (unsigned int)GameConstants::maxPlayers; ++j) {
+			if(j > 0) {
+				visibleList += "|";
+			}
+
+			visibleList += intToStr(surfaceCell.isVisible(j));
+		}
+
+		surfaceCell.saveGame(mapNode,i);
+
+		if(i > 0 && i % 100 == 0) {
+			XmlNode *surfaceCellNode = mapNode->addChild("SurfaceCell");
+			surfaceCellNode->addAttribute("batchIndex",intToStr(i), mapTagReplacements);
+			surfaceCellNode->addAttribute("exploredList",exploredList, mapTagReplacements);
+			surfaceCellNode->addAttribute("visibleList",visibleList, mapTagReplacements);
+
+			exploredList = "";
+			visibleList = "";
+		}
 	}
 
-	return "";
+	if(exploredList != "") {
+		XmlNode *surfaceCellNode = mapNode->addChild("SurfaceCell");
+		surfaceCellNode->addAttribute("batchIndex",intToStr(getSurfaceCellArraySize()), mapTagReplacements);
+		surfaceCellNode->addAttribute("exploredList",exploredList, mapTagReplacements);
+		surfaceCellNode->addAttribute("visibleList",visibleList, mapTagReplacements);
+	}
+
+//	Vec2i *startLocations;
+	for(unsigned int i = 0; i < (unsigned int)maxPlayers; ++i) {
+		XmlNode *startLocationsNode = mapNode->addChild("startLocations");
+		startLocationsNode->addAttribute("location",startLocations[i].getString(), mapTagReplacements);
+	}
+//	Checksum checksumValue;
+//	mapNode->addAttribute("checksumValue",intToStr(checksumValue.getSum()), mapTagReplacements);
+//	float maxMapHeight;
+	mapNode->addAttribute("maxMapHeight",floatToStr(maxMapHeight,6), mapTagReplacements);
+//	string mapFile;
+	mapNode->addAttribute("mapFile",mapFile, mapTagReplacements);
+}
+
+void Map::loadGame(const XmlNode *rootNode, World *world) {
+	const XmlNode *mapNode = rootNode->getChild("Map");
+
+	//description = gameSettingsNode->getAttribute("description")->getValue();
+
+//	for(unsigned int i = 0; i < getCellArraySize(); ++i) {
+//		Cell &cell = cells[i];
+//		cell.saveGame(mapNode,i);
+//	}
+//	for(unsigned int i = 0; i < getSurfaceCellArraySize(); ++i) {
+//		SurfaceCell &surfaceCell = surfaceCells[i];
+//		surfaceCell.saveGame(mapNode,i);
+//	}
+
+//	printf("getCellArraySize() = %d\n",getCellArraySize());
+//	for(unsigned int i = 0; i < getCellArraySize(); ++i) {
+//		Cell &cell = cells[i];
+//		cell.loadGame(mapNode,i,world);
+//	}
+
+//	printf("getSurfaceCellArraySize() = %d\n",getSurfaceCellArraySize());
+	for(unsigned int i = 0; i < (unsigned int)getSurfaceCellArraySize(); ++i) {
+		SurfaceCell &surfaceCell = surfaceCells[i];
+		surfaceCell.loadGame(mapNode,i,world);
+	}
+
+	int surfaceCellIndexExplored = 0;
+	int surfaceCellIndexVisible = 0;
+	vector<XmlNode *> surfaceCellNodeList = mapNode->getChildList("SurfaceCell");
+	for(unsigned int i = 0; i < surfaceCellNodeList.size(); ++i) {
+		XmlNode *surfaceCellNode = surfaceCellNodeList[i];
+
+		//XmlNode *surfaceCellNode = mapNode->getChild("SurfaceCell");
+		string exploredList = surfaceCellNode->getAttribute("exploredList")->getValue();
+		string visibleList = surfaceCellNode->getAttribute("visibleList")->getValue();
+		//int batchIndex = surfaceCellNode->getAttribute("batchIndex")->getIntValue();
+
+		vector<string> tokensExplored;
+		Tokenize(exploredList,tokensExplored,",");
+
+		//printf("=====================\nNew batchIndex = %d batchsize = %d\n",batchIndex,tokensExplored.size());
+		//for(unsigned int j = 0; j < tokensExplored.size(); ++j) {
+			//string valueList = tokensExplored[j];
+			//printf("valueList [%s]\n",valueList.c_str());
+		//}
+		for(unsigned int j = 0; j < tokensExplored.size(); ++j) {
+			string valueList = tokensExplored[j];
+
+			//int surfaceCellIndex = (i * tokensExplored.size()) + j;
+			//printf("Loading sc = %d batchIndex = %d\n",surfaceCellIndexExplored,batchIndex);
+			SurfaceCell &surfaceCell = surfaceCells[surfaceCellIndexExplored];
+
+			vector<string> tokensExploredValue;
+			Tokenize(valueList,tokensExploredValue,"|");
+
+//			if(tokensExploredValue.size() != GameConstants::maxPlayers) {
+//				for(unsigned int k = 0; k < tokensExploredValue.size(); ++k) {
+//					string value = tokensExploredValue[k];
+//					printf("k = %d [%s]\n",k,value.c_str());
+//				}
+//				throw megaglest_runtime_error("tokensExploredValue.size() [" + intToStr(tokensExploredValue.size()) + "] != GameConstants::maxPlayers");
+//			}
+			for(unsigned int k = 0; k < tokensExploredValue.size(); ++k) {
+				string value = tokensExploredValue[k];
+
+				surfaceCell.setExplored(k,strToInt(value) != 0);
+
+				//if(surfaceCell.isExplored(k) == true) {
+				//	printf("Setting cell at index: %d for team: %d to: %d [%s]\n",surfaceCellIndexExplored,k,surfaceCell.isExplored(k),value.c_str());
+				//}
+			}
+			surfaceCellIndexExplored++;
+		}
+
+		vector<string> tokensVisible;
+		Tokenize(visibleList,tokensVisible,",");
+		for(unsigned int j = 0; j < tokensVisible.size(); ++j) {
+			string valueList = tokensVisible[j];
+
+			//int surfaceCellIndex = (i * tokensVisible.size()) + j;
+			SurfaceCell &surfaceCell = surfaceCells[surfaceCellIndexVisible];
+
+			vector<string> tokensVisibleValue;
+			Tokenize(valueList,tokensVisibleValue,"|");
+
+//			if(tokensVisibleValue.size() != GameConstants::maxPlayers) {
+//				throw megaglest_runtime_error("tokensVisibleValue.size() [" + intToStr(tokensVisibleValue.size()) + "] != GameConstants::maxPlayers");
+//			}
+
+			for(unsigned int k = 0; k < tokensVisibleValue.size(); ++k) {
+				string value = tokensVisibleValue[k];
+
+				surfaceCell.setVisible(k,strToInt(value) != 0);
+			}
+			surfaceCellIndexVisible++;
+		}
+	}
+
+    computeNormals();
+	computeInterpolatedHeights();
 }
 
 // =====================================================
@@ -1673,11 +1925,10 @@ bool PosCircularIterator::next(){
 			return false;
 	}
 #ifdef USE_STREFLOP
-	while(streflop::floor(pos.dist(center)) >= (radius+1) || !map->isInside(pos) || !map->isInsideSurface(map->toSurfCoords(pos)) );
+	while(streflop::floor(static_cast<streflop::Simple>(pos.dist(center))) >= (radius+1) || !map->isInside(pos) || !map->isInsideSurface(map->toSurfCoords(pos)) );
 #else
 	while(floor(pos.dist(center)) >= (radius+1) || !map->isInside(pos) || !map->isInsideSurface(map->toSurfCoords(pos)) );
 #endif
-	//while(!(pos.dist(center) <= radius && map->isInside(pos)));
 
 	return true;
 }

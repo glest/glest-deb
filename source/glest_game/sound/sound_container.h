@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_SOUNDCONTAINER_H_
 #define _GLEST_GAME_SOUNDCONTAINER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <vector>
 #include "sound.h"
 #include "randomgen.h"
@@ -45,6 +50,7 @@ public:
 	StaticSound *&operator[](int i)	{return sounds[i];}
 
 	const Sounds &getSounds() const	{return sounds;}
+	void clearSounds() {sounds.clear();}
 	Sounds *getSoundsPtr() {return &sounds;}
 	StaticSound *getRandSound() const;
 };

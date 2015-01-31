@@ -29,9 +29,11 @@
 #ifdef WIN32
 
   #include <windows.h>
+  #include <winsock2.h>
   #include <winsock.h>
   #include <iphlpapi.h>
   #include <strstream>
+  #include <strsafe.h>
 
 #define MSG_NOSIGNAL 0
 #define MSG_DONTWAIT 0
@@ -73,6 +75,7 @@ int ServerSocket::maxPlayerCount = -1;
 int ServerSocket::externalPort  = Socket::broadcast_portno;
 BroadCastClientSocketThread *ClientSocket::broadCastClientThread = NULL;
 SDL_Thread *ServerSocket::upnpdiscoverThread = NULL;
+bool ServerSocket::cancelUpnpdiscoverThread = false;
 Mutex ServerSocket::mutexUpnpdiscoverThread;
 //
 // UPnP - Start
@@ -90,9 +93,10 @@ Mutex UPNP_Tools::mutexUPNP;
 
     #define socklen_t 	int
 	#define MAXHOSTNAME 254
-	#define PLATFORM_SOCKET_TRY_AGAIN WSAEWOULDBLOCK
-    #define PLATFORM_SOCKET_INPROGRESS WSAEINPROGRESS
-	#define PLATFORM_SOCKET_INTERRUPTED WSAEWOULDBLOCK
+
+//#define PLATFORM_SOCKET_TRY_AGAIN WSAEWOULDBLOCK
+//#define PLATFORM_SOCKET_INPROGRESS WSAEINPROGRESS
+//#define PLATFORM_SOCKET_INTERRUPTED WSAEWOULDBLOCK
 	typedef SSIZE_T ssize_t;
 
 	//// Constants /////////////////////////////////////////////////////////
@@ -194,8 +198,8 @@ Mutex UPNP_Tools::mutexUPNP;
 									   int nErrorID = 0 )
 	{
 		// Build basic error string
-		static char acErrorBuffer[256];
-		std::ostrstream outs(acErrorBuffer, (sizeof(acErrorBuffer) / sizeof(acErrorBuffer[0])));
+		static char acErrorBuffer[8096];
+		std::ostrstream outs(acErrorBuffer, 8095);
 		outs << pcMessagePrefix << ": ";
 
 		// Tack appropriate canned message onto end of supplied message
@@ -211,13 +215,13 @@ Mutex UPNP_Tools::mutexUPNP;
 		else
 		{
 			// Didn't find error in list, so make up a generic one
-			outs << "unknown error";
+			outs << "unknown socket error";
 		}
 		outs << " (" << Target.nID << ")";
 
 		// Finish error message off and return it.
 		outs << std::ends;
-		acErrorBuffer[(sizeof(acErrorBuffer) / sizeof(acErrorBuffer[0])) - 1] = '\0';
+		acErrorBuffer[8095] = '\0';
 		return acErrorBuffer;
 	}
 
@@ -245,13 +249,13 @@ Mutex UPNP_Tools::mutexUPNP;
 	typedef UINT_PTR        SOCKET;
 	#define INVALID_SOCKET  (SOCKET)(~0)
 
-	#define PLATFORM_SOCKET_TRY_AGAIN EAGAIN
-	#define PLATFORM_SOCKET_INPROGRESS EINPROGRESS
-	#define PLATFORM_SOCKET_INTERRUPTED EINTR
+	//#define PLATFORM_SOCKET_TRY_AGAIN EAGAIN
+	//#define PLATFORM_SOCKET_INPROGRESS EINPROGRESS
+	//#define PLATFORM_SOCKET_INTERRUPTED EINTR
 
 #endif
 
-int getLastSocketError() {
+int Socket::getLastSocketError() {
 #ifndef WIN32
 	return errno;
 #else
@@ -259,7 +263,7 @@ int getLastSocketError() {
 #endif
 }
 
-const char * getLastSocketErrorText(int *errNumber=NULL) {
+const char * Socket::getLastSocketErrorText(int *errNumber) {
 	int errId = (errNumber != NULL ? *errNumber : getLastSocketError());
 #ifndef WIN32
 	return strerror(errId);
@@ -268,7 +272,7 @@ const char * getLastSocketErrorText(int *errNumber=NULL) {
 #endif
 }
 
-string getLastSocketErrorFormattedText(int *errNumber=NULL) {
+string Socket::getLastSocketErrorFormattedText(int *errNumber) {
 	int errId = (errNumber != NULL ? *errNumber : getLastSocketError());
 	string msg = "(Error: " + intToStr(errId) + " - [" + string(getLastSocketErrorText(&errId)) +"])";
 	return msg;
@@ -347,6 +351,7 @@ void Ip::Inet_NtoA(uint32 addr, char * ipbuf)
    sprintf(ipbuf, "%d.%d.%d.%d", (addr>>24)&0xFF, (addr>>16)&0xFF, (addr>>8)&0xFF, (addr>>0)&0xFF);
 }
 
+#if defined(WIN32)
 // convert a string represenation of an IP address into its numeric equivalent
 static uint32 Inet_AtoN(const char * buf)
 {
@@ -367,6 +372,7 @@ static uint32 Inet_AtoN(const char * buf)
    }
    return ret;
 }
+#endif
 
 /*
 static void PrintNetworkInterfaceInfos()
@@ -476,7 +482,7 @@ static void PrintNetworkInterfaceInfos()
          char buf[128];
          if (name == NULL)
          {
-            sprintf(buf, "unnamed-%i", i);
+            snprintf(buf, 128,"unnamed-%i", i);
             name = buf;
          }
 
@@ -542,20 +548,26 @@ string getNetworkInterfaceBroadcastAddress(string ipAddress)
    // Adapted from example code at http://msdn2.microsoft.com/en-us/library/aa365917.aspx
    // Now get Windows' IPv4 addresses table.  Once again, we gotta call GetIpAddrTable()
    // multiple times in order to deal with potential race conditions properly.
-   MIB_IPADDRTABLE * ipTable = NULL;
+   PMIB_IPADDRTABLE ipTable = NULL;
+   // Before calling AddIPAddress we use GetIpAddrTable to get
+   // an adapter to which we can add the IP.
+   ipTable = (PMIB_IPADDRTABLE) malloc(sizeof (MIB_IPADDRTABLE));
+   ipTable->dwNumEntries = 0;
+
    {
       ULONG bufLen = 0;
-      for (int i=0; i<5; i++)
-      {
+      for (int i = 0; i < 5; i++) {
+
          DWORD ipRet = GetIpAddrTable(ipTable, &bufLen, false);
-         if (ipRet == ERROR_INSUFFICIENT_BUFFER)
-         {
+         if (ipRet == ERROR_INSUFFICIENT_BUFFER) {
             free(ipTable);  // in case we had previously allocated it
             ipTable = (MIB_IPADDRTABLE *) malloc(bufLen);
+            ipTable->dwNumEntries = 0;
          }
-         else if (ipRet == NO_ERROR) break;
-         else
-         {
+         else if(ipRet == NO_ERROR) {
+        	 break;
+         }
+         else {
             free(ipTable);
             ipTable = NULL;
             break;
@@ -563,8 +575,7 @@ string getNetworkInterfaceBroadcastAddress(string ipAddress)
      }
    }
 
-   if (ipTable)
-   {
+   if (ipTable) {
       // Try to get the Adapters-info table, so we can given useful names to the IP
       // addresses we are returning.  Gotta call GetAdaptersInfo() up to 5 times to handle
       // the potential race condition between the size-query call and the get-data call.
@@ -572,17 +583,16 @@ string getNetworkInterfaceBroadcastAddress(string ipAddress)
       IP_ADAPTER_INFO * pAdapterInfo = NULL;
       {
          ULONG bufLen = 0;
-         for (int i=0; i<5; i++)
-         {
+         for (int i = 0; i < 5; i++) {
             DWORD apRet = GetAdaptersInfo(pAdapterInfo, &bufLen);
-            if (apRet == ERROR_BUFFER_OVERFLOW)
-            {
+            if (apRet == ERROR_BUFFER_OVERFLOW) {
                free(pAdapterInfo);  // in case we had previously allocated it
                pAdapterInfo = (IP_ADAPTER_INFO *) malloc(bufLen);
             }
-            else if (apRet == ERROR_SUCCESS) break;
-            else
-            {
+            else if(apRet == ERROR_SUCCESS) {
+            	break;
+            }
+            else {
                free(pAdapterInfo);
                pAdapterInfo = NULL;
                break;
@@ -590,25 +600,20 @@ string getNetworkInterfaceBroadcastAddress(string ipAddress)
          }
       }
 
-      for (DWORD i=0; i<ipTable->dwNumEntries; i++)
-      {
+      for (DWORD i = 0; i < ipTable->dwNumEntries; i++) {
          const MIB_IPADDRROW & row = ipTable->table[i];
 
          // Now lookup the appropriate adaptor-name in the pAdaptorInfos, if we can find it
          const char * name = NULL;
-         const char * desc = NULL;
-         if (pAdapterInfo)
-         {
+         //const char * desc = NULL;
+         if (pAdapterInfo) {
             IP_ADAPTER_INFO * next = pAdapterInfo;
-            while((next)&&(name==NULL))
-            {
+            while((next)&&(name==NULL)) {
                IP_ADDR_STRING * ipAddr = &next->IpAddressList;
-               while(ipAddr)
-               {
-                  if (Inet_AtoN(ipAddr->IpAddress.String) == ntohl(row.dwAddr))
-                  {
+               while(ipAddr) {
+                  if (Inet_AtoN(ipAddr->IpAddress.String) == ntohl(row.dwAddr)) {
                      name = next->AdapterName;
-                     desc = next->Description;
+                     //desc = next->Description;
                      break;
                   }
                   ipAddr = ipAddr->Next;
@@ -616,29 +621,31 @@ string getNetworkInterfaceBroadcastAddress(string ipAddress)
                next = next->Next;
             }
          }
-         //char buf[128]="";
-         if (name == NULL)
-         {
-            //sprintf(buf, "unnamed-%i", i);
+         if (name == NULL) {
             name = "";
          }
 
          uint32 ipAddr  = ntohl(row.dwAddr);
          uint32 netmask = ntohl(row.dwMask);
          uint32 baddr   = ipAddr & netmask;
-         if (row.dwBCastAddr) baddr |= ~netmask;
+         if (row.dwBCastAddr) {
+        	 baddr |= ~netmask;
+         }
 
-         char ifaAddrStr[32];  Ip::Inet_NtoA(ipAddr,  ifaAddrStr);
-         char maskAddrStr[32]; Ip::Inet_NtoA(netmask, maskAddrStr);
-         char dstAddrStr[32];  Ip::Inet_NtoA(baddr,   dstAddrStr);
+         char ifaAddrStr[32];
+         Ip::Inet_NtoA(ipAddr,  ifaAddrStr);
+         char maskAddrStr[32];
+         Ip::Inet_NtoA(netmask, maskAddrStr);
+         char dstAddrStr[32];
+         Ip::Inet_NtoA(baddr,   dstAddrStr);
          //printf("  Found interface:  name=[%s] desc=[%s] address=[%s] netmask=[%s] broadcastAddr=[%s]\n", name, desc?desc:"unavailable", ifaAddrStr, maskAddrStr, dstAddrStr);
 		 if(strcmp(ifaAddrStr,ipAddress.c_str()) == 0) {
 			broadCastAddress = dstAddrStr;
 		 }
       }
 
-      free(pAdapterInfo);
-      free(ipTable);
+      if(pAdapterInfo) free(pAdapterInfo);
+      if(ipTable) free(ipTable);
    }
 #else
    // Dunno what we're running on here!
@@ -668,7 +675,6 @@ std::vector<std::string> Socket::getLocalIPAddressList() {
 	/* get my host name */
 	char myhostname[101]="";
 	gethostname(myhostname,100);
-	char myhostaddr[101] = "";
 
 	struct hostent* myhostent = gethostbyname(myhostname);
 	if(myhostent) {
@@ -677,11 +683,6 @@ std::vector<std::string> Socket::getLocalIPAddressList() {
 		//int ipIdx = 0;
 		//while (myhostent->h_addr_list[ipIdx] != 0) {
 		for(int ipIdx = 0; myhostent->h_addr_list[ipIdx] != NULL; ++ipIdx) {
-		   //sprintf(myhostaddr, "%s",inet_ntoa(*(struct in_addr *)myhostent->h_addr_list[ipIdx]));
-			//struct sockaddr_in SockAddr;
-			//memcpy(&(SockAddr.sin_addr),&myhostent->h_addr[ipIdx],myhostent->h_length);
-			//SockAddr.sin_family = myhostent->h_addrtype;
-			//Inet_NtoA(SockAddrToUint32((sockaddr *)&SockAddr), myhostaddr);
 			Ip::Inet_NtoA(SockAddrToUint32((struct in_addr *)myhostent->h_addr_list[ipIdx]), myhostaddr);
 
 		   //printf("ipIdx = %d [%s]\n",ipIdx,myhostaddr);
@@ -708,7 +709,7 @@ std::vector<std::string> Socket::getLocalIPAddressList() {
 	intfTypes.push_back("br-lan");
 	intfTypes.push_back("br-gest");
 
-	for(int intfIdx = 0; intfIdx < intfTypes.size(); intfIdx++) {
+	for(int intfIdx = 0; intfIdx < (int)intfTypes.size(); intfIdx++) {
 		string intfName = intfTypes[intfIdx];
 		for(int idx = 0; idx < 10; ++idx) {
 			PLATFORM_SOCKET fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -722,7 +723,7 @@ std::vector<std::string> Socket::getLocalIPAddressList() {
 
 			/* I want IP address attached to "eth0" */
 			char szBuf[100]="";
-			sprintf(szBuf,"%s%d",intfName.c_str(),idx);
+			snprintf(szBuf,100,"%s%d",intfName.c_str(),idx);
 			int maxIfNameLength = std::min((int)strlen(szBuf),IFNAMSIZ-1);
 
 			strncpy(ifr.ifr_name, szBuf, maxIfNameLength);
@@ -732,12 +733,13 @@ std::vector<std::string> Socket::getLocalIPAddressList() {
 
 			int result_ifaddrr = ioctl(fd, SIOCGIFADDR, &ifr);
 			ioctl(fd, SIOCGIFFLAGS, &ifrA);
-			close(fd);
+			if(fd >= 0) close(fd);
 
 			if(result_ifaddrr >= 0) {
 				struct sockaddr_in *pSockAddr = (struct sockaddr_in *)&ifr.ifr_addr;
 				if(pSockAddr != NULL) {
-					//sprintf(myhostaddr, "%s",inet_ntoa(pSockAddr->sin_addr));
+
+					char myhostaddr[101] = "";
 					Ip::Inet_NtoA(SockAddrToUint32(&pSockAddr->sin_addr), myhostaddr);
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] szBuf [%s], myhostaddr = [%s], ifr.ifr_flags = %d, ifrA.ifr_flags = %d, ifr.ifr_name [%s]\n",__FILE__,__FUNCTION__,__LINE__,szBuf,myhostaddr,ifr.ifr_flags,ifrA.ifr_flags,ifr.ifr_name);
 
@@ -785,13 +787,16 @@ bool Socket::isSocketValid(const PLATFORM_SOCKET *validateSocket) {
 }
 
 Socket::Socket(PLATFORM_SOCKET sock) {
-	dataSynchAccessorRead = new Mutex();
-	dataSynchAccessorWrite = new Mutex();
-	inSocketDestructorSynchAccessor = new Mutex();
+	dataSynchAccessorRead = new Mutex(CODE_AT_LINE);
+	dataSynchAccessorWrite = new Mutex(CODE_AT_LINE);
+	inSocketDestructorSynchAccessor = new Mutex(CODE_AT_LINE);
+	lastSocketError = 0;
 
 	MutexSafeWrapper safeMutexSocketDestructorFlag(inSocketDestructorSynchAccessor,CODE_AT_LINE);
 	inSocketDestructorSynchAccessor->setOwnerId(CODE_AT_LINE);
 	this->inSocketDestructor = false;
+	lastThreadedPing = 0;
+	lastDebugEvent = 0;
 	//safeMutexSocketDestructorFlag.ReleaseLock();
 
 	//this->pingThread = NULL;
@@ -799,16 +804,18 @@ Socket::Socket(PLATFORM_SOCKET sock) {
 	dataSynchAccessorRead->setOwnerId(CODE_AT_LINE);
 	dataSynchAccessorWrite->setOwnerId(CODE_AT_LINE);
 
-
-
 	this->sock= sock;
+	this->isSocketBlocking = true;
 	this->connectedIpAddress = "";
 }
 
 Socket::Socket() {
-	dataSynchAccessorRead = new Mutex();
-	dataSynchAccessorWrite = new Mutex();
-	inSocketDestructorSynchAccessor = new Mutex();
+	dataSynchAccessorRead = new Mutex(CODE_AT_LINE);
+	dataSynchAccessorWrite = new Mutex(CODE_AT_LINE);
+	inSocketDestructorSynchAccessor = new Mutex(CODE_AT_LINE);
+	lastSocketError = 0;
+	lastDebugEvent = 0;
+	lastThreadedPing = 0;
 
 	MutexSafeWrapper safeMutexSocketDestructorFlag(inSocketDestructorSynchAccessor,CODE_AT_LINE);
 	inSocketDestructorSynchAccessor->setOwnerId(CODE_AT_LINE);
@@ -825,6 +832,8 @@ Socket::Socket() {
 	if(isSocketValid() == false) {
 		throwException("Error creating socket");
 	}
+
+	this->isSocketBlocking = true;
 
 #ifdef __APPLE__
     int set = 1;
@@ -845,7 +854,7 @@ Socket::Socket() {
 		socklen_t optlen = sizeof(bufsize);
 
 		int ret = getsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char *)&bufsize, &optlen);
-		printf("Original setsockopt(SO_SNDBUF) = [%d] new will be [%d]\n",bufsize,Socket::DEFAULT_SOCKET_SENDBUF_SIZE);
+		printf("Original setsockopt(SO_SNDBUF) = [%d] new will be [%d] ret = %d\n",bufsize,Socket::DEFAULT_SOCKET_SENDBUF_SIZE,ret);
 
 		ret = setsockopt( sock, SOL_SOCKET, SO_SNDBUF, (char *) &Socket::DEFAULT_SOCKET_SENDBUF_SIZE, sizeof( int ) );
 		if (ret == -1) {
@@ -858,7 +867,7 @@ Socket::Socket() {
 		socklen_t optlen = sizeof(bufsize);
 
 		int ret = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char *)&bufsize, &optlen);
-		printf("Original setsockopt(SO_RCVBUF) = [%d] new will be [%d]\n",bufsize,Socket::DEFAULT_SOCKET_RECVBUF_SIZE);
+		printf("Original setsockopt(SO_RCVBUF) = [%d] new will be [%d] ret = %d\n",bufsize,Socket::DEFAULT_SOCKET_RECVBUF_SIZE,ret);
 
 		ret = setsockopt( sock, SOL_SOCKET, SO_RCVBUF, (char *) &Socket::DEFAULT_SOCKET_RECVBUF_SIZE, sizeof( int ) );
 		if (ret == -1) {
@@ -932,7 +941,7 @@ Socket::~Socket() {
 	for(time_t elapsed = time(NULL);
 		(dataSynchAccessorRead->getRefCount() > 0 ||
 		 dataSynchAccessorWrite->getRefCount() > 0) &&
-		 difftime(time(NULL),elapsed) <= 2;) {
+		 difftime((long int)time(NULL),elapsed) <= 2;) {
 		printf("Waiting in socket destructor\n");
 		//sleep(0);
 	}
@@ -952,6 +961,8 @@ Socket::~Socket() {
 }
 
 void Socket::disconnectSocket() {
+	//printf("Socket disconnecting sock = %d\n",sock);
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s] START closing socket = %d...\n",__FILE__,__FUNCTION__,sock);
 
     if(isSocketValid() == true) {
@@ -964,10 +975,10 @@ void Socket::disconnectSocket() {
         ::shutdown(sock,2);
 #ifndef WIN32
         ::close(sock);
-        sock = INVALID_SOCKET;
+        sock = -1;
 #else
         ::closesocket(sock);
-        sock = -1;
+        sock = INVALID_SOCKET;
 #endif
         }
         safeMutex.ReleaseLock();
@@ -982,8 +993,7 @@ bool Socket::hasDataToRead(std::map<PLATFORM_SOCKET,bool> &socketTriggeredList)
 {
     bool bResult = false;
 
-    if(socketTriggeredList.size() > 0)
-    {
+    if(socketTriggeredList.empty() == false) {
         /* Watch stdin (fd 0) to see when it has input. */
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -991,11 +1001,9 @@ bool Socket::hasDataToRead(std::map<PLATFORM_SOCKET,bool> &socketTriggeredList)
 		string socketDebugList = "";
         PLATFORM_SOCKET imaxsocket = 0;
         for(std::map<PLATFORM_SOCKET,bool>::iterator itermap = socketTriggeredList.begin();
-            itermap != socketTriggeredList.end(); ++itermap)
-        {
+            itermap != socketTriggeredList.end(); ++itermap) {
         	PLATFORM_SOCKET socket = itermap->first;
-            if(Socket::isSocketValid(&socket) == true)
-            {
+            if(Socket::isSocketValid(&socket) == true) {
                 FD_SET(socket, &rfds);
                 imaxsocket = max(socket,imaxsocket);
 
@@ -1006,8 +1014,7 @@ bool Socket::hasDataToRead(std::map<PLATFORM_SOCKET,bool> &socketTriggeredList)
             }
         }
 
-        if(imaxsocket > 0)
-        {
+        if(imaxsocket > 0) {
             /* Wait up to 0 seconds. */
             struct timeval tv;
             tv.tv_sec = 0;
@@ -1019,24 +1026,20 @@ bool Socket::hasDataToRead(std::map<PLATFORM_SOCKET,bool> &socketTriggeredList)
             	//MutexSafeWrapper safeMutex(&dataSynchAccessor);
             	retval = select((int)imaxsocket + 1, &rfds, NULL, NULL, &tv);
             }
-            if(retval < 0)
-            {
+            if(retval < 0) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s, socketDebugList [%s]\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str(),socketDebugList.c_str());
+				printf("In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str());
             }
-            else if(retval)
-            {
+            else if(retval) {
                 bResult = true;
 
                 for(std::map<PLATFORM_SOCKET,bool>::iterator itermap = socketTriggeredList.begin();
-                    itermap != socketTriggeredList.end(); ++itermap)
-                {
+                    itermap != socketTriggeredList.end(); ++itermap) {
                 	PLATFORM_SOCKET socket = itermap->first;
-                    if (FD_ISSET(socket, &rfds))
-                    {
+                    if (FD_ISSET(socket, &rfds)) {
                         itermap->second = true;
                     }
-                    else
-                    {
+                    else {
                         itermap->second = false;
                     }
                 }
@@ -1049,6 +1052,7 @@ bool Socket::hasDataToRead(std::map<PLATFORM_SOCKET,bool> &socketTriggeredList)
 
 bool Socket::hasDataToRead()
 {
+	MutexSafeWrapper safeMutex(dataSynchAccessorRead,CODE_AT_LINE);
     return Socket::hasDataToRead(sock) ;
 }
 
@@ -1074,7 +1078,11 @@ bool Socket::hasDataToRead(PLATFORM_SOCKET socket)
         	//MutexSafeWrapper safeMutex(&dataSynchAccessor);
         	retval = select((int)socket + 1, &rfds, NULL, NULL, &tv);
         }
-        if(retval)
+        if(retval < 0) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str());
+			printf("In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str());
+        }
+        else if(retval)
         {
             if (FD_ISSET(socket, &rfds))
             {
@@ -1086,13 +1094,12 @@ bool Socket::hasDataToRead(PLATFORM_SOCKET socket)
     return bResult;
 }
 
-bool Socket::hasDataToReadWithWait(int waitMilliseconds)
-{
-    return Socket::hasDataToReadWithWait(sock,waitMilliseconds) ;
+bool Socket::hasDataToReadWithWait(int waitMicroseconds) {
+	MutexSafeWrapper safeMutex(dataSynchAccessorRead,CODE_AT_LINE);
+    return Socket::hasDataToReadWithWait(sock,waitMicroseconds) ;
 }
 
-bool Socket::hasDataToReadWithWait(PLATFORM_SOCKET socket,int waitMilliseconds)
-{
+bool Socket::hasDataToReadWithWait(PLATFORM_SOCKET socket,int waitMicroseconds) {
     bool bResult = false;
 
     Chrono chono;
@@ -1108,13 +1115,18 @@ bool Socket::hasDataToReadWithWait(PLATFORM_SOCKET socket,int waitMilliseconds)
 
         /* Wait up to 0 seconds. */
         tv.tv_sec = 0;
-        tv.tv_usec = 1000 * waitMilliseconds;
+        tv.tv_usec = waitMicroseconds;
 
         int retval = 0;
         {
         	//MutexSafeWrapper safeMutex(&dataSynchAccessor);
         	retval = select((int)socket + 1, &rfds, NULL, NULL, &tv);
         }
+		if(retval < 0) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str());
+			printf("In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,retval,getLastSocketErrorFormattedText().c_str());
+		}
+
         if(retval)
         {
             if (FD_ISSET(socket, &rfds))
@@ -1148,7 +1160,7 @@ int Socket::getDataToRead(bool wantImmediateReply) {
     if(isSocketValid() == true)
     {
     	//int loopCount = 1;
-    	for(time_t elapsed = time(NULL); difftime(time(NULL),elapsed) < 1;) {
+    	for(time_t elapsed = time(NULL); difftime((long int)time(NULL),elapsed) < 1;) {
 			/* ioctl isn't posix, but the following seems to work on all modern
 			 * unixes */
 	#ifndef WIN32
@@ -1174,12 +1186,12 @@ int Socket::getDataToRead(bool wantImmediateReply) {
 				break;
 			}
 			else if(hasDataToRead() == true) {
-				//if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, (hasDataToRead() == true) err = %d, sock = %d, size = %lu, loopCount = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size,loopCount);
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, (hasDataToRead() == true) err = %d, sock = %d, size = %lu\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size);
+				//if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, (hasDataToRead() == true) err = %d, sock = %d, size = " MG_SIZE_T_SPECIFIER ", loopCount = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size,loopCount);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, (hasDataToRead() == true) err = %d, sock = %d, size = " MG_SIZE_T_SPECIFIER "\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size);
 			}
 			else {
-				//if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, err = %d, sock = %d, size = %lu, loopCount = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size,loopCount);
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, err = %d, sock = %d, size = %lu\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size);
+				//if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, err = %d, sock = %d, size = " MG_SIZE_T_SPECIFIER ", loopCount = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size,loopCount);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING PEEKING SOCKET DATA, err = %d, sock = %d, size = " MG_SIZE_T_SPECIFIER "\n",__FILE__,__FUNCTION__,__LINE__,err,sock,size);
 				break;
 			}
 
@@ -1227,20 +1239,26 @@ int Socket::send(const void *data, int dataSize) {
 
 	int lastSocketError = getLastSocketError();
 	if(bytesSent < 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] ERROR WRITING SOCKET DATA, err = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,bytesSent,getLastSocketErrorFormattedText(&lastSocketError).c_str());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] ERROR WRITING SOCKET DATA, err = %d error = %s dataSize = %d\n",__FILE__,__FUNCTION__,__LINE__,bytesSent,getLastSocketErrorFormattedText(&lastSocketError).c_str(),dataSize);
 	}
 	else if(bytesSent < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN && isConnected() == true) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #1 EAGAIN during send, trying again...\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #1 EAGAIN during send, trying again... dataSize = %d\n",__FILE__,__FUNCTION__,__LINE__,dataSize);
 
 		int attemptCount = 0;
 	    time_t tStartTimer = time(NULL);
 	    while((bytesSent < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN) &&
-	    		(difftime(time(NULL),tStartTimer) <= MAX_SEND_WAIT_SECONDS)) {
+	    		(difftime((long int)time(NULL),tStartTimer) <= MAX_SEND_WAIT_SECONDS)) {
 	    	attemptCount++;
 	    	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d\n",__FILE__,__FUNCTION__,__LINE__,attemptCount);
 
+	    	MutexSafeWrapper safeMutex(dataSynchAccessorWrite,CODE_AT_LINE);
             if(isConnected() == true) {
-            	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d, sock = %d, dataSize = %d, data = %p\n",__FILE__,__FUNCTION__,__LINE__,attemptCount,sock,dataSize,data);
+            	struct timeval timeVal;
+            	timeVal.tv_sec = 1;
+            	timeVal.tv_usec = 0;
+            	bool canWrite = isWritable(&timeVal);
+
+            	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d, sock = %d, dataSize = %d, data = %p, canWrite = %d\n",__FILE__,__FUNCTION__,__LINE__,attemptCount,sock,dataSize,data,canWrite);
 
 //	        	MutexSafeWrapper safeMutexSocketDestructorFlag(&inSocketDestructorSynchAccessor,CODE_AT_LINE);
 //	        	if(this->inSocketDestructor == true) {
@@ -1250,7 +1268,7 @@ int Socket::send(const void *data, int dataSize) {
 //	        	inSocketDestructorSynchAccessor->setOwnerId(CODE_AT_LINE);
 //	        	safeMutexSocketDestructorFlag.ReleaseLock();
 
-	        	MutexSafeWrapper safeMutex(dataSynchAccessorWrite,CODE_AT_LINE);
+
 #ifdef __APPLE__
                 bytesSent = ::send(sock, (const char *)data, dataSize, SO_NOSIGPIPE);
 #else
@@ -1261,12 +1279,14 @@ int Socket::send(const void *data, int dataSize) {
                     break;
                 }
 
-                safeMutex.ReleaseLock();
+                //safeMutex.ReleaseLock();
 
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #2 EAGAIN during send, trying again returned: %d\n",__FILE__,__FUNCTION__,__LINE__,bytesSent);
 	        }
 	        else {
                 int iErr = getLastSocketError();
+
+                safeMutex.ReleaseLock();
                 disconnectSocket();
 
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s] DISCONNECTED SOCKET error while sending socket data, bytesSent = %d, error = %s\n",__FILE__,__FUNCTION__,bytesSent,getLastSocketErrorFormattedText(&iErr).c_str());
@@ -1288,12 +1308,18 @@ int Socket::send(const void *data, int dataSize) {
 	    time_t tStartTimer = time(NULL);
 	    while(((bytesSent > 0 && totalBytesSent < dataSize) ||
 	    		(bytesSent < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN)) &&
-	    		(difftime(time(NULL),tStartTimer) <= MAX_SEND_WAIT_SECONDS)) {
+	    		(difftime((long int)time(NULL),tStartTimer) <= MAX_SEND_WAIT_SECONDS)) {
 	    	attemptCount++;
 	    	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d, totalBytesSent = %d\n",__FILE__,__FUNCTION__,__LINE__,attemptCount,totalBytesSent);
 
+	    	MutexSafeWrapper safeMutex(dataSynchAccessorWrite,CODE_AT_LINE);
             if(isConnected() == true) {
-            	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d, sock = %d, dataSize = %d, data = %p\n",__FILE__,__FUNCTION__,__LINE__,attemptCount,sock,dataSize,data);
+            	struct timeval timeVal;
+            	timeVal.tv_sec = 1;
+            	timeVal.tv_usec = 0;
+            	bool canWrite = isWritable(&timeVal);
+
+            	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] attemptCount = %d, sock = %d, dataSize = %d, data = %p, canWrite = %d\n",__FILE__,__FUNCTION__,__LINE__,attemptCount,sock,dataSize,data,canWrite);
 
 //	        	MutexSafeWrapper safeMutexSocketDestructorFlag(&inSocketDestructorSynchAccessor,CODE_AT_LINE);
 //	        	if(this->inSocketDestructor == true) {
@@ -1303,7 +1329,7 @@ int Socket::send(const void *data, int dataSize) {
 //	        	inSocketDestructorSynchAccessor->setOwnerId(CODE_AT_LINE);
 //	        	safeMutexSocketDestructorFlag.ReleaseLock();
 
-                MutexSafeWrapper safeMutex(dataSynchAccessorWrite,CODE_AT_LINE);
+
 	        	const char *sendBuf = (const char *)data;
 #ifdef __APPLE__
 			    bytesSent = ::send(sock, &sendBuf[totalBytesSent], dataSize - totalBytesSent, SO_NOSIGPIPE);
@@ -1319,12 +1345,12 @@ int Socket::send(const void *data, int dataSize) {
                     break;
                 }
 
-			    safeMutex.ReleaseLock();
-
 			    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] retry send returned: %d\n",__FILE__,__FUNCTION__,__LINE__,bytesSent);
 	        }
 	        else {
                 int iErr = getLastSocketError();
+
+                safeMutex.ReleaseLock();
                 disconnectSocket();
 
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTED SOCKET error while sending socket data, bytesSent = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,bytesSent,getLastSocketErrorFormattedText(&iErr).c_str());
@@ -1356,8 +1382,6 @@ int Socket::send(const void *data, int dataSize) {
 }
 
 int Socket::receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet) {
-	const int MAX_RECV_WAIT_SECONDS = 3;
-
 	ssize_t bytesReceived = 0;
 
 	if(isSocketValid() == true)	{
@@ -1382,9 +1406,10 @@ int Socket::receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet) {
 	else if(bytesReceived < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN)	{
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #1 EAGAIN during receive, trying again...\n",__FILE__,__FUNCTION__,__LINE__);
 
+		const int MAX_RECV_WAIT_SECONDS = 3;
 	    time_t tStartTimer = time(NULL);
 	    while((bytesReceived < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN) &&
-	    		(difftime(time(NULL),tStartTimer) <= MAX_RECV_WAIT_SECONDS)) {
+	    		(difftime((long int)time(NULL),tStartTimer) <= MAX_RECV_WAIT_SECONDS)) {
 	        if(isConnected() == false) {
                 int iErr = getLastSocketError();
                 disconnectSocket();
@@ -1392,7 +1417,7 @@ int Socket::receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet) {
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTED SOCKET error while receiving socket data, bytesSent = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,bytesReceived,getLastSocketErrorFormattedText(&iErr).c_str());
 	            break;
 	        }
-	        else if(Socket::isReadable() == true) {
+	        else if(Socket::isReadable(true) == true) {
 //	        	MutexSafeWrapper safeMutexSocketDestructorFlag(&inSocketDestructorSynchAccessor,CODE_AT_LINE);
 //	        	if(this->inSocketDestructor == true) {
 //	        		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] this->inSocketDestructor == true\n",__FILE__,__FUNCTION__,__LINE__);
@@ -1418,17 +1443,21 @@ int Socket::receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet) {
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTED SOCKET error while receiving socket data, bytesReceived = %d, error = %s, dataSize = %d, tryReceiveUntilDataSizeMet = %d\n",__FILE__,__FUNCTION__,__LINE__,bytesReceived,getLastSocketErrorFormattedText(&iErr).c_str(),dataSize,tryReceiveUntilDataSizeMet);
 	}
 	else if(tryReceiveUntilDataSizeMet == true && bytesReceived < dataSize) {
-		int newBufferSize = (dataSize - bytesReceived);
+		int newBufferSize = (dataSize - (int)bytesReceived);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING, attempting to receive MORE data, bytesReceived = %d, dataSize = %d, newBufferSize = %d\n",__FILE__,__FUNCTION__,__LINE__,bytesReceived,dataSize,newBufferSize);
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nIn [%s::%s Line: %d] WARNING, attempting to receive MORE data, bytesReceived = %d, dataSize = %d, newBufferSize = %d\n",__FILE__,__FUNCTION__,__LINE__,(int)bytesReceived,dataSize,newBufferSize,newBufferSize);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nIn [%s::%s Line: %d] WARNING, attempting to receive MORE data, bytesReceived = %d, dataSize = %d, newBufferSize = %d\n",__FILE__,__FUNCTION__,__LINE__,(int)bytesReceived,dataSize,newBufferSize);
 
 		char *dataAsCharPointer = reinterpret_cast<char *>(data);
 		int additionalBytes = receive(&dataAsCharPointer[bytesReceived], newBufferSize, tryReceiveUntilDataSizeMet);
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] WARNING, additionalBytes = %d\n",__FILE__,__FUNCTION__,__LINE__,additionalBytes);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nIn [%s::%s Line: %d] WARNING, additionalBytes = %d\n",__FILE__,__FUNCTION__,__LINE__,additionalBytes);
+
 		if(additionalBytes > 0) {
 			bytesReceived += additionalBytes;
 		}
 		else {
-			//throw runtime_error("additionalBytes == " + intToStr(additionalBytes));
+			//throw megaglest_runtime_error("additionalBytes == " + intToStr(additionalBytes));
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] additionalBytes == %d\n",__FILE__,__FUNCTION__,__LINE__,additionalBytes);
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nIn [%s::%s Line: %d] additionalBytes == %d\n",__FILE__,__FUNCTION__,__LINE__,additionalBytes);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugError).enabled) SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] additionalBytes == %d\n",__FILE__,__FUNCTION__,__LINE__,additionalBytes);
@@ -1442,12 +1471,41 @@ int Socket::receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet) {
 	return static_cast<int>(bytesReceived);
 }
 
-int Socket::peek(void *data, int dataSize,bool mustGetData) {
+SafeSocketBlockToggleWrapper::SafeSocketBlockToggleWrapper(Socket *socket, bool toggle) {
+	this->socket = socket;
+
+	if(this->socket != NULL) {
+		this->originallyBlocked = socket->getBlock();
+		this->newBlocked = toggle;
+
+		if(this->originallyBlocked != this->newBlocked) {
+			socket->setBlock(this->newBlocked);
+		}
+	}
+	else {
+		this->originallyBlocked = false;
+		this->newBlocked = false;
+	}
+}
+
+void SafeSocketBlockToggleWrapper::Restore() {
+	if(this->socket != NULL) {
+		if(this->originallyBlocked != this->newBlocked) {
+			socket->setBlock(this->originallyBlocked);
+			this->newBlocked = this->originallyBlocked;
+		}
+	}
+}
+
+SafeSocketBlockToggleWrapper::~SafeSocketBlockToggleWrapper() {
+	Restore();
+}
+
+int Socket::peek(void *data, int dataSize,bool mustGetData,int *pLastSocketError) {
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) chrono.start();
 
-    const int MAX_PEEK_WAIT_SECONDS = 3;
-
+    int lastSocketError = 0;
 	int err = 0;
 	if(isSocketValid() == true) {
 		//if(chrono.getMillis() > 1) printf("In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
@@ -1465,7 +1523,24 @@ int Socket::peek(void *data, int dataSize,bool mustGetData) {
 
 		//if(chrono.getMillis() > 1) printf("In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
 		if(isSocketValid() == true)	{
+//			Chrono recvTimer(true);
+			SafeSocketBlockToggleWrapper safeUnblock(this, false);
+			errno = 0;
 			err = recv(sock, reinterpret_cast<char*>(data), dataSize, MSG_PEEK);
+			lastSocketError = getLastSocketError();
+			if(pLastSocketError != NULL) {
+				*pLastSocketError = lastSocketError;
+			}
+			safeUnblock.Restore();
+
+//			if(recvTimer.getMillis() > 1000 || (err <= 0 && lastSocketError != 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN)) {
+//				printf("#1 PEEK err = %d lastSocketError = %d ms: %lld\n",err,lastSocketError,(long long int)recvTimer.getMillis());
+
+			//if(err != dataSize) {
+			//	printf("#1 PEEK err = %d lastSocketError = %d\n",err,lastSocketError);
+			//}
+
+//			}
 		}
 	    safeMutex.ReleaseLock();
 
@@ -1473,9 +1548,11 @@ int Socket::peek(void *data, int dataSize,bool mustGetData) {
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) if(chrono.getMillis() > 1) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
 	}
+	else {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] SOCKET appears to be invalid [%d]\n",__FILE__,__FUNCTION__,__LINE__,sock);
+	}
 	//if(chrono.getMillis() > 1) printf("In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
 
-	int lastSocketError = getLastSocketError();
 	if(err < 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] ERROR PEEKING SOCKET DATA error while sending socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,err,getLastSocketErrorFormattedText().c_str());
 		disconnectSocket();
@@ -1485,9 +1562,11 @@ int Socket::peek(void *data, int dataSize,bool mustGetData) {
 
 		//printf("Peek #2 err = %d\n",err);
 
+		const int MAX_PEEK_WAIT_SECONDS = 3;
 	    time_t tStartTimer = time(NULL);
 	    while((err < 0 && lastSocketError == PLATFORM_SOCKET_TRY_AGAIN) &&
-	    		(difftime(time(NULL),tStartTimer) <= MAX_PEEK_WAIT_SECONDS)) {
+	    		isSocketValid() == true &&
+	    		(difftime((long int)time(NULL),tStartTimer) <= MAX_PEEK_WAIT_SECONDS)) {
 /*
 	        if(isConnected() == false) {
                 int iErr = getLastSocketError();
@@ -1495,7 +1574,7 @@ int Socket::peek(void *data, int dataSize,bool mustGetData) {
 	            break;
 	        }
 */
-	        if(Socket::isReadable() == true) {
+	        if(Socket::isReadable(true) == true) {
 
 //	        	MutexSafeWrapper safeMutexSocketDestructorFlag(&inSocketDestructorSynchAccessor,CODE_AT_LINE);
 //	        	if(this->inSocketDestructor == true) {
@@ -1507,36 +1586,82 @@ int Socket::peek(void *data, int dataSize,bool mustGetData) {
 
 	        	//MutexSafeWrapper safeMutex(&dataSynchAccessor,CODE_AT_LINE + "_" + intToStr(sock) + "_" + intToStr(dataSize));
 	        	MutexSafeWrapper safeMutex(dataSynchAccessorRead,CODE_AT_LINE);
+
+//	        	Chrono recvTimer(true);
+	        	SafeSocketBlockToggleWrapper safeUnblock(this, false);
+	        	errno = 0;
                 err = recv(sock, reinterpret_cast<char*>(data), dataSize, MSG_PEEK);
 				lastSocketError = getLastSocketError();
+				if(pLastSocketError != NULL) {
+					*pLastSocketError = lastSocketError;
+				}
+				safeUnblock.Restore();
+
+//                if(recvTimer.getMillis() > 1000 || (err <= 0 && lastSocketError != 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN)) {
+//    				printf("#2 PEEK err = %d lastSocketError = %d ms: %lld\n",err,lastSocketError,(long long int)recvTimer.getMillis());
+//    			}
+
+				//printf("Socket peek delayed checking for sock = %d err = %d\n",sock,err);
+
                 safeMutex.ReleaseLock();
 
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) if(chrono.getMillis() > 1) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
                 if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #2 EAGAIN during peek, trying again returned: %d\n",__FILE__,__FUNCTION__,__LINE__,err);
 	        }
+	        else {
+	        	//printf("Socket peek delayed [NOT READABLE] checking for sock = %d err = %d\n",sock,err);
+	        }
 	    }
 
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) if(chrono.getMillis() > 1) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
 	}
+	else {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] #2 SOCKET appears to be invalid [%d] lastSocketError [%d] err [%d] mustGetData [%d]\n",__FILE__,__FUNCTION__,__LINE__,sock,lastSocketError,err,mustGetData);
+	}
 
 	//if(chrono.getMillis() > 1) printf("In [%s::%s Line: %d] action running for msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis());
 
-	if(err <= 0) {
+	if(err < 0 || (err == 0 && dataSize != 0) ||
+		((err == 0 || err == -1) && dataSize == 0 && lastSocketError != 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN)) {
+		//printf("** #1 Socket peek error for sock = %d err = %d lastSocketError = %d\n",sock,err,lastSocketError);
+
+		int iErr = lastSocketError;
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTING SOCKET for socket [%d], err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,socket,err,getLastSocketErrorFormattedText(&iErr).c_str());
 		//printf("Peek #3 err = %d\n",err);
-		lastSocketError = getLastSocketError();
+		//lastSocketError = getLastSocketError();
 		if(mustGetData == true || lastSocketError != PLATFORM_SOCKET_TRY_AGAIN) {
+			//printf("** #2 Socket peek error for sock = %d err = %d lastSocketError = %d mustGetData = %d\n",sock,err,lastSocketError,mustGetData);
+
 			int iErr = lastSocketError;
 			disconnectSocket();
 
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTED SOCKET error while peeking socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,err,getLastSocketErrorFormattedText(&iErr).c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] DISCONNECTED SOCKET error while peeking socket data for socket [%d], err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,socket,err,getLastSocketErrorFormattedText(&iErr).c_str());
 		}
 	}
 
 	return static_cast<int>(err);
 }
 
+bool Socket::getBlock() {
+	bool blocking = true;
+
+	// don't waste time if the socket is invalid
+	if(isSocketValid(&sock) == false) {
+		return blocking;
+	}
+
+//#ifndef WIN32
+//	int currentFlags = fcntl(sock, F_GETFL);
+//	blocking = !((currentFlags & O_NONBLOCK) == O_NONBLOCK);
+//#else
+	blocking = this->isSocketBlocking;
+//#endif
+	return blocking;
+}
+
 void Socket::setBlock(bool block){
 	setBlock(block,this->sock);
+	this->isSocketBlocking = block;
 }
 
 void Socket::setBlock(bool block, PLATFORM_SOCKET socket) {
@@ -1566,7 +1691,7 @@ void Socket::setBlock(bool block, PLATFORM_SOCKET socket) {
 	}
 }
 
-bool Socket::isReadable() {
+bool Socket::isReadable(bool lockMutex) {
     if(isSocketValid() == false) return false;
 
     struct timeval tv;
@@ -1575,6 +1700,13 @@ bool Socket::isReadable() {
 
 	fd_set set;
 	FD_ZERO(&set);
+
+	MutexSafeWrapper safeMutex(NULL,CODE_AT_LINE);
+	if(lockMutex == true) {
+		safeMutex.setMutex(dataSynchAccessorRead,CODE_AT_LINE);
+	}
+
+	if(isSocketValid() == false) return false;
 	FD_SET(sock, &set);
 
 	int i = 0;
@@ -1592,6 +1724,7 @@ bool Socket::isReadable() {
 	}
 	if(i < 0) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s] error while selecting socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,i,getLastSocketErrorFormattedText().c_str());
+		printf("In [%s::%s] Line: %d, ERROR SELECTING SOCKET DATA retval = %d error = %s\n",__FILE__,__FUNCTION__,__LINE__,i,getLastSocketErrorFormattedText().c_str());
 	}
 
 	bool result = (i == 1);
@@ -1602,16 +1735,27 @@ bool Socket::isReadable() {
 	return result;
 }
 
-bool Socket::isWritable() {
+bool Socket::isWritable(struct timeval *timeVal, bool lockMutex) {
     if(isSocketValid() == false) return false;
 
 	struct timeval tv;
-	tv.tv_sec= 0;
-	//tv.tv_usec= 1;
-	tv.tv_usec= 0;
+	if(timeVal != NULL) {
+		tv = *timeVal;
+	}
+	else {
+		tv.tv_sec= 0;
+		//tv.tv_usec= 1;
+		tv.tv_usec= 0;
+	}
 
 	fd_set set;
 	FD_ZERO(&set);
+
+	MutexSafeWrapper safeMutex(NULL,CODE_AT_LINE);
+	if(lockMutex == true) {
+		safeMutex.setMutex(dataSynchAccessorWrite,CODE_AT_LINE);
+	}
+	if(isSocketValid() == false) return false;
 	FD_SET(sock, &set);
 
 	int i = 0;
@@ -1630,13 +1774,17 @@ bool Socket::isWritable() {
 	bool result = false;
 	if(i < 0 ) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] error while selecting socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,i,getLastSocketErrorFormattedText().c_str());
+
 		SystemFlags::OutputDebug(SystemFlags::debugError,"SOCKET DISCONNECTED In [%s::%s Line: %d] error while selecting socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,i,getLastSocketErrorFormattedText().c_str());
 	}
 	else if(i == 0) {
 		//SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] TIMEOUT while selecting socket data, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,i,getLastSocketErrorFormattedText().c_str());
 		// Assume we are still connected, write buffer could be very busy
 		result = true;
-		SystemFlags::OutputDebug(SystemFlags::debugError,"SOCKET WRITE TIMEOUT In [%s::%s Line: %d] i = %d sock = %d\n",__FILE__,__FUNCTION__,__LINE__,i,sock);
+		if(difftime(time(NULL),lastSocketError) > 1) {
+			lastSocketError = time(NULL);
+			SystemFlags::OutputDebug(SystemFlags::debugError,"SOCKET WRITE TIMEOUT In [%s::%s Line: %d] i = %d sock = %d [%s]\n",__FILE__,__FUNCTION__,__LINE__,i,sock,ipAddress.c_str());
+		}
 	}
 	else {
 		result = true;
@@ -1657,18 +1805,25 @@ bool Socket::isConnected() {
 //	inSocketDestructorSynchAccessor->setOwnerId(CODE_AT_LINE);
 
 	//if the socket is not writable then it is not conencted
-	if(isWritable() == false) {
+	if(isWritable(NULL,true) == false) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] ERROR isWritable failed.\n",__FILE__,__FUNCTION__,__LINE__);
 		return false;
 	}
 	//if the socket is readable it is connected if we can read a byte from it
-	if(isReadable()) {
+	if(isReadable(true)) {
 		char tmp=0;
-		int err = peek(&tmp, 1, false);
+		int peekDataBytes=1;
+		int lastSocketError=0;
+		//int err = peek(&tmp, 1, false, &lastSocketError);
+		int err = peek(&tmp, peekDataBytes, false, &lastSocketError);
 		//if(err <= 0 && err != PLATFORM_SOCKET_TRY_AGAIN) {
-		if(err <= 0) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] ERROR Peek failed, err = %d for socket: %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,err,sock,getLastSocketErrorFormattedText().c_str());
-			if(SystemFlags::VERBOSE_MODE_ENABLED) SystemFlags::OutputDebug(SystemFlags::debugError,"SOCKET DISCONNECTED In [%s::%s Line: %d] ERROR Peek failed, err = %d for socket: %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,err,sock,getLastSocketErrorFormattedText().c_str());
+		//if(err <= 0 && lastSocketError != 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN) {
+		if((err < 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN) || (err == 0 && peekDataBytes != 0) ||
+			((err == 0 || err == -1) && peekDataBytes == 0 && lastSocketError != 0 && lastSocketError != PLATFORM_SOCKET_TRY_AGAIN)) {
+
+			//printf("IsConnected socket has disconnected sock = %d err = %d lastSocketError = %d\n",sock,err,lastSocketError);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"[%s::%s Line: %d] ERROR Peek failed, err = %d for socket: %d, error = %s, lastSocketError = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,getLastSocketErrorFormattedText().c_str(),lastSocketError);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) SystemFlags::OutputDebug(SystemFlags::debugError,"SOCKET DISCONNECTED In [%s::%s Line: %d] ERROR Peek failed, err = %d for socket: %d, error = %s, lastSocketError = %d\n",__FILE__,__FUNCTION__,__LINE__,err,sock,getLastSocketErrorFormattedText().c_str(),lastSocketError);
 			return false;
 		}
 	}
@@ -1698,13 +1853,13 @@ string Socket::getIp() {
 	unsigned char* address;
 
 	if(info==NULL){
-		throw runtime_error("Error getting host by name");
+		throw megaglest_runtime_error("Error getting host by name");
 	}
 
 	address= reinterpret_cast<unsigned char*>(info->h_addr_list[0]);
 
 	if(address==NULL){
-		throw runtime_error("Error getting host ip");
+		throw megaglest_runtime_error("Error getting host ip");
 	}
 
 	return
@@ -1716,7 +1871,7 @@ string Socket::getIp() {
 
 void Socket::throwException(string str){
 	string msg = str + " " + getLastSocketErrorFormattedText();
-	throw runtime_error(msg);
+	throw megaglest_runtime_error(msg);
 }
 
 // ===============================================
@@ -1758,8 +1913,9 @@ void ClientSocket::startBroadCastClientThread(DiscoveredServersInterface *cb) {
 
 	ClientSocket::stopBroadCastClientThread();
 
+	static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 	broadCastClientThread = new BroadCastClientSocketThread(cb);
-	broadCastClientThread->setUniqueID(string(__FILE__) + string("_") + string(__FUNCTION__));
+	broadCastClientThread->setUniqueID(mutexOwnerId);
 	broadCastClientThread->start();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -1841,7 +1997,7 @@ void ClientSocket::connect(const Ip &ip, int port)
 
                   errno = 0;
                   if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] Apparent recovery for connection sock = %d, err = %d\n",__FILE__,__FUNCTION__,__LINE__,sock,err);
-                  if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Apparent recovery for connection sock = %d, err = %d\n",__FILE__,__FUNCTION__,__LINE__,sock,err);
+                  if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Apparent recovery for connection sock = " PLATFORM_SOCKET_FORMAT_TYPE ", err = %d\n",__FILE__,__FUNCTION__,__LINE__,sock,err);
 
                   break;
                }
@@ -1857,18 +2013,18 @@ void ClientSocket::connect(const Ip &ip, int port)
 
         if(err < 0) {
         	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] Before END sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
-        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Before END sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
+        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Before END sock = " PLATFORM_SOCKET_FORMAT_TYPE ", err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
             disconnectSocket();
         }
         else {
         	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] Valid recovery for connection sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
-        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Valid recovery for connection sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
+        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Valid recovery for connection sock = " PLATFORM_SOCKET_FORMAT_TYPE ", err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,err,getLastSocketErrorFormattedText().c_str());
         	connectedIpAddress = ip.getString();
         }
 	}
 	else {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Connected to host [%s] on port = %d sock = %d err = %d", ip.getString().c_str(),port,sock,err);
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Connected to host [%s] on port = %d sock = %d err = %d", ip.getString().c_str(),port,sock,err);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Connected to host [%s] on port = %d sock = " PLATFORM_SOCKET_FORMAT_TYPE " err = %d", ip.getString().c_str(),port,sock,err);
 		connectedIpAddress = ip.getString();
 	}
 }
@@ -1883,6 +2039,7 @@ BroadCastClientSocketThread::BroadCastClientSocketThread(DiscoveredServersInterf
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	discoveredServersCB = cb;
+	uniqueID = "BroadCastClientSocketThread";
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -1905,7 +2062,6 @@ void BroadCastClientSocketThread::execute() {
     struct sockaddr_in bcaddr;  // The broadcast address for the receiver.
     PLATFORM_SOCKET bcfd;                // The file descriptor used for the broadcast.
     //bool one = true;            // Parameter for "setscokopt".
-    char buff[10024]="";            // Buffers the data to be broadcasted.
     socklen_t alen=0;
 
     port = htons( Socket::getBroadCastPort() );
@@ -1913,7 +2069,7 @@ void BroadCastClientSocketThread::execute() {
     // Prepare to receive the broadcast.
     bcfd = socket(AF_INET, SOCK_DGRAM, 0);
     if( bcfd <= 0 )	{
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"socket failed: %s\n", getLastSocketErrorFormattedText().c_str());
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"socket failed: %s\n", Socket::getLastSocketErrorFormattedText().c_str());
 	}
     else {
 		// Create the address we are receiving on.
@@ -1924,23 +2080,24 @@ void BroadCastClientSocketThread::execute() {
 
 		int val = 1;
 #ifndef WIN32
-		setsockopt(bcfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+		int opt_result = setsockopt(bcfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 #else
-		setsockopt(bcfd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
+		int opt_result = setsockopt(bcfd, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
 #endif
 		if(::bind( bcfd,  (struct sockaddr *)&bcaddr, sizeof(bcaddr) ) < 0 )	{
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"bind failed: %s\n", getLastSocketErrorFormattedText().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"bind failed: %s opt_result = %d\n", Socket::getLastSocketErrorFormattedText().c_str(),opt_result);
 		}
 		else {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] opt_result = %d\n",__FILE__,__FUNCTION__,__LINE__,opt_result);
 
 			Socket::setBlock(false, bcfd);
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 			try	{
+				char buff[10024]="";  // Buffers the data to be broadcasted.
 				// Keep getting packets forever.
-				for( time_t elapsed = time(NULL); difftime(time(NULL),elapsed) <= 5; ) {
+				for( time_t elapsed = time(NULL); difftime((long int)time(NULL),elapsed) <= 5; ) {
 					alen = sizeof(struct sockaddr);
 					int nb=0;// The number of bytes read.
 					bool gotData = (nb = recvfrom(bcfd, buff, 10024, 0, (struct sockaddr *) &bcSender, &alen)) > 0;
@@ -1948,7 +2105,7 @@ void BroadCastClientSocketThread::execute() {
 					//printf("Broadcasting client nb = %d buff [%s] gotData = %d\n",nb,buff,gotData);
 
 					if(gotData == false) {
-						if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"recvfrom failed: %s\n", getLastSocketErrorFormattedText().c_str());
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"recvfrom failed: %s\n", Socket::getLastSocketErrorFormattedText().c_str());
 					}
 					else {
 						//string fromIP = inet_ntoa(bcSender.sin_addr);
@@ -1959,8 +2116,17 @@ void BroadCastClientSocketThread::execute() {
 						string fromIP = szHostFrom;
 						if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"broadcast message received: [%s] from: [%s]\n", buff,fromIP.c_str() );
 
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Client got broadcast from server: [%s] data [%s]\n",fromIP.c_str(),buff);
+
+						int serverGamePort = Socket::getBroadCastPort();
+						vector<string> paramPartPortsTokens;
+						Tokenize(buff,paramPartPortsTokens,":");
+						if(paramPartPortsTokens.size() >= 3 && paramPartPortsTokens[2].length() > 0) {
+							serverGamePort = strToInt(paramPartPortsTokens[2]);
+						}
+
 						if(std::find(foundServers.begin(),foundServers.end(),fromIP) == foundServers.end()) {
-							foundServers.push_back(fromIP);
+							foundServers.push_back(fromIP + ":" + intToStr(serverGamePort));
 						}
 
 						// For now break as soon as we find a server
@@ -1987,16 +2153,15 @@ void BroadCastClientSocketThread::execute() {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] unknown error\n",__FILE__,__FUNCTION__,__LINE__);
 			}
 		}
+    }
 
 #ifndef WIN32
-        ::close(bcfd);
-        bcfd = INVALID_SOCKET;
+    if(bcfd >= 0) ::close(bcfd);
+    bcfd = -1;
 #else
-        ::closesocket(bcfd);
-        bcfd = -1;
+    if(bcfd != INVALID_SOCKET) ::closesocket(bcfd);
+    bcfd = INVALID_SOCKET;
 #endif
-
-    }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -2013,17 +2178,19 @@ void BroadCastClientSocketThread::execute() {
 //	class ServerSocket
 // ===============================================
 
-ServerSocket::ServerSocket() : Socket() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+ServerSocket::ServerSocket(bool basicMode) : Socket() {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] basicMode = %d\n",__FILE__,__FUNCTION__,__LINE__,basicMode);
 
+	this->basicMode = basicMode;
+	this->bindSpecificAddress = "";
 	//printf("SERVER SOCKET CONSTRUCTOR\n");
-	//MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
-	//ServerSocket::upnpdiscoverThread = NULL;
-	//safeMutexUPNP.ReleaseLock();
 
+	boundPort = 0;
 	portBound = false;
 	broadCastThread = NULL;
-	UPNP_Tools::enabledUPNP = false;
+	if(this->basicMode == false) {
+		UPNP_Tools::enabledUPNP = false;
+	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -2035,29 +2202,28 @@ ServerSocket::~ServerSocket() {
 
 	stopBroadCastThread();
 
-	//printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
-	//printf("SERVER SOCKET DESTRUCTOR\n");
-	MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
-    if(ServerSocket::upnpdiscoverThread != NULL) {
-        SDL_WaitThread(ServerSocket::upnpdiscoverThread, NULL);
-        ServerSocket::upnpdiscoverThread = NULL;
-    }
-    safeMutexUPNP.ReleaseLock();
-    //printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
+	if(this->basicMode == false) {
+		MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
+		if(ServerSocket::upnpdiscoverThread != NULL) {
 
-    //printf("In [%s::%s] Line: %d UPNP_Tools::enabledUPNP = %d\n",__FILE__,__FUNCTION__,__LINE__,UPNP_Tools::enabledUPNP);
-	if (UPNP_Tools::enabledUPNP) {
-        UPNP_Tools::NETremRedirects(ServerSocket::externalPort);
-        //UPNP_Tools::enabledUPNP = false;
+			ServerSocket::cancelUpnpdiscoverThread = true;
+			SDL_WaitThread(ServerSocket::upnpdiscoverThread, NULL);
+			ServerSocket::upnpdiscoverThread = NULL;
+			ServerSocket::cancelUpnpdiscoverThread = false;
+		}
+		safeMutexUPNP.ReleaseLock();
+		if (UPNP_Tools::enabledUPNP) {
+			UPNP_Tools::NETremRedirects(this->getExternalPort());
+		}
+
+		MutexSafeWrapper safeMutexUPNP1(&UPNP_Tools::mutexUPNP,CODE_AT_LINE);
+		if(urls.controlURL && urls.ipcondescURL && urls.controlURL_CIF) {
+			FreeUPNPUrls(&urls);
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		safeMutexUPNP1.ReleaseLock();
 	}
-
-	MutexSafeWrapper safeMutexUPNP1(&UPNP_Tools::mutexUPNP,CODE_AT_LINE);
-	if(urls.controlURL && urls.ipcondescURL && urls.controlURL_CIF) {
-		FreeUPNPUrls(&urls);
-	}
-
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	safeMutexUPNP1.ReleaseLock();
 }
 
 void ServerSocket::stopBroadCastThread() {
@@ -2096,11 +2262,12 @@ void ServerSocket::startBroadCastThread() {
 
 	stopBroadCastThread();
 
-	broadCastThread = new BroadCastSocketThread();
+	broadCastThread = new BroadCastSocketThread(this->boundPort);
 
 	//printf("Start broadcast thread [%p]\n",broadCastThread);
 
-	broadCastThread->setUniqueID(string(__FILE__) + string("_") + string(__FUNCTION__));
+	static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
+	broadCastThread->setUniqueID(mutexOwnerId);
 	broadCastThread->start();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -2143,26 +2310,31 @@ void ServerSocket::bind(int port) {
 	//sockaddr structure
 	sockaddr_in addr;
 	addr.sin_family= AF_INET;
-	addr.sin_addr.s_addr= INADDR_ANY;
+	if(this->bindSpecificAddress != "") {
+		addr.sin_addr.s_addr= inet_addr(this->bindSpecificAddress.c_str());
+	}
+	else {
+		addr.sin_addr.s_addr= INADDR_ANY;
+	}
 	addr.sin_port= htons(port);
+	addr.sin_zero[0] = 0;
 
 	int val = 1;
 
 #ifndef WIN32
-	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+	int opt_result = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 #else
-	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
+	int opt_result = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
 #endif
 
 	int err= ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-	if(err < 0)
-	{
-	    char szBuf[1024]="";
-	    sprintf(szBuf, "In [%s::%s] Error binding socket sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,sock,err,getLastSocketErrorFormattedText().c_str());
+	if(err < 0) {
+	    char szBuf[8096]="";
+	    snprintf(szBuf, 8096,"In [%s::%s] Error binding socket sock = " PLATFORM_SOCKET_FORMAT_TYPE ", address [%s] port = %d err = %d, error = %s opt_result = %d\n",__FILE__,__FUNCTION__,sock,this->bindSpecificAddress.c_str(),port,err,getLastSocketErrorFormattedText().c_str(),opt_result);
 	    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"%s",szBuf);
 
-	    sprintf(szBuf, "Error binding socket sock = %d, err = %d, error = %s\n",sock,err,getLastSocketErrorFormattedText().c_str());
-	    throw runtime_error(szBuf);
+	    snprintf(szBuf, 8096,"Error binding socket sock = " PLATFORM_SOCKET_FORMAT_TYPE ", address [%s] port = %d err = %d, error = %s\n",sock,this->bindSpecificAddress.c_str(),port,err,getLastSocketErrorFormattedText().c_str());
+	    throw megaglest_runtime_error(szBuf);
 	}
 	portBound = true;
 
@@ -2194,8 +2366,8 @@ void ServerSocket::listen(int connectionQueueSize) {
 
 		int err= ::listen(sock, connectionQueueSize);
 		if(err < 0) {
-			char szBuf[1024]="";
-			sprintf(szBuf, "In [%s::%s] Error listening socket sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,sock,err,getLastSocketErrorFormattedText().c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf, 8096,"In [%s::%s] Error listening socket sock = " PLATFORM_SOCKET_FORMAT_TYPE ", err = %d, error = %s\n",__FILE__,__FUNCTION__,sock,err,getLastSocketErrorFormattedText().c_str());
 			throwException(szBuf);
 		}
 	}
@@ -2204,16 +2376,18 @@ void ServerSocket::listen(int connectionQueueSize) {
 		disconnectSocket();
 	}
 
-	if(connectionQueueSize > 0) {
-		if(isBroadCastThreadRunning() == false) {
-			startBroadCastThread();
+	if(this->basicMode == false) {
+		if(connectionQueueSize > 0) {
+			if(isBroadCastThreadRunning() == false) {
+				startBroadCastThread();
+			}
+			else {
+				resumeBroadcast();
+			}
 		}
 		else {
-			resumeBroadcast();
+			pauseBroadcast();
 		}
-	}
-	else {
-		pauseBroadcast();
 	}
 }
 
@@ -2227,50 +2401,67 @@ Socket *ServerSocket::accept(bool errorOnFail) {
 		}
 	}
 
-	struct sockaddr_in cli_addr;
-	socklen_t clilen = sizeof(cli_addr);
+	PLATFORM_SOCKET newSock=0;
 	char client_host[100]="";
-	MutexSafeWrapper safeMutex(dataSynchAccessorRead,CODE_AT_LINE);
-	PLATFORM_SOCKET newSock= ::accept(sock, (struct sockaddr *) &cli_addr, &clilen);
-	safeMutex.ReleaseLock();
+	//const int max_attempts = 100;
+	//for(int attempt = 0; attempt < max_attempts; ++attempt) {
+		struct sockaddr_in cli_addr;
+		socklen_t clilen = sizeof(cli_addr);
+		client_host[0]='\0';
+		MutexSafeWrapper safeMutex(dataSynchAccessorRead,CODE_AT_LINE);
+		newSock= ::accept(sock, (struct sockaddr *) &cli_addr, &clilen);
+		safeMutex.ReleaseLock();
 
-	if(isSocketValid(&newSock) == false) {
-	    char szBuf[1024]="";
-	    sprintf(szBuf, "In [%s::%s Line: %d] Error accepting socket connection sock = %d, err = %d, error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,newSock,getLastSocketErrorFormattedText().c_str());
-	    if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] %s\n",__FILE__,__FUNCTION__,__LINE__,szBuf);
+		if(isSocketValid(&newSock) == false) {
+			char szBuf[8096]="";
+			snprintf(szBuf, 8096,"In [%s::%s Line: %d] Error accepting socket connection sock = " PLATFORM_SOCKET_FORMAT_TYPE ", err = " PLATFORM_SOCKET_FORMAT_TYPE ", error = %s\n",__FILE__,__FUNCTION__,__LINE__,sock,newSock,getLastSocketErrorFormattedText().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] %s\n",__FILE__,__FUNCTION__,__LINE__,szBuf);
 
-		int lastSocketError = getLastSocketError();
-		if(lastSocketError == PLATFORM_SOCKET_TRY_AGAIN) {
-			return NULL;
-		}
-		if(errorOnFail == true) {
-			throwException(szBuf);
+			int lastSocketError = getLastSocketError();
+			if(lastSocketError == PLATFORM_SOCKET_TRY_AGAIN) {
+				//if(attempt+1 >= max_attempts) {
+				//	return NULL;
+				//}
+				//else {
+					sleep(0);
+				//}
+			}
+			if(errorOnFail == true) {
+				throwException(szBuf);
+			}
+			else {
+	#ifndef WIN32
+			::close(newSock);
+			newSock = -1;
+	#else
+			::closesocket(newSock);
+			newSock = INVALID_SOCKET;
+	#endif
+
+				return NULL;
+			}
+
 		}
 		else {
+			Ip::Inet_NtoA(SockAddrToUint32((struct sockaddr *)&cli_addr), client_host);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] got connection, newSock = %d client_host [%s]\n",__FILE__,__FUNCTION__,__LINE__,newSock,client_host);
+		}
+		if(isIPAddressBlocked((client_host[0] != '\0' ? client_host : "")) == true) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] BLOCKING connection, newSock = %d client_host [%s]\n",__FILE__,__FUNCTION__,__LINE__,newSock,client_host);
+
+	#ifndef WIN32
+			::close(newSock);
+			newSock = -1;
+	#else
+			::closesocket(newSock);
+			newSock = INVALID_SOCKET;
+	#endif
+
 			return NULL;
 		}
 
-	}
-	else {
-		Ip::Inet_NtoA(SockAddrToUint32((struct sockaddr *)&cli_addr), client_host);
-		//printf("client_host [%s]\n",client_host);
-		//sprintf(client_host, "%s",inet_ntoa(cli_addr.sin_addr));
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] got connection, newSock = %d client_host [%s]\n",__FILE__,__FUNCTION__,__LINE__,newSock,client_host);
-	}
-	if(isIPAddressBlocked((client_host[0] != '\0' ? client_host : "")) == true) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] BLOCKING connection, newSock = %d client_host [%s]\n",__FILE__,__FUNCTION__,__LINE__,newSock,client_host);
-
-#ifndef WIN32
-        ::close(newSock);
-        newSock = INVALID_SOCKET;
-#else
-        ::closesocket(newSock);
-        newSock = -1;
-#endif
-
-		return NULL;
-	}
-
+		//break;
+	//}
 	Socket *result = new Socket(newSock);
 	result->setIpAddress((client_host[0] != '\0' ? client_host : ""));
 	return result;
@@ -2279,12 +2470,12 @@ Socket *ServerSocket::accept(bool errorOnFail) {
 void ServerSocket::NETdiscoverUPnPDevices() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] UPNP - Start\n",__FILE__,__FUNCTION__,__LINE__);
 
-	//printf("SERVER SOCKET NETdiscoverUPnPDevices - START\n");
-	//printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
 	MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
 	if(ServerSocket::upnpdiscoverThread != NULL) {
+		ServerSocket::cancelUpnpdiscoverThread = true;
 		SDL_WaitThread(ServerSocket::upnpdiscoverThread, NULL);
 		ServerSocket::upnpdiscoverThread = NULL;
+		ServerSocket::cancelUpnpdiscoverThread = false;
 	}
 
     // WATCH OUT! Because the thread takes void * as a parameter we MUST cast to the pointer type
@@ -2353,7 +2544,6 @@ int UPNP_Tools::upnp_init(void *param) {
 	int result				= -1;
 	struct UPNPDev *devlist = NULL;
 	struct UPNPDev *dev     = NULL;
-	char *descXML           = NULL;
 	int descXMLsize         = 0;
 	char buf[255]           = "";
 	// Callers MUST pass in NULL or a UPNPInitInterface *
@@ -2365,7 +2555,7 @@ int UPNP_Tools::upnp_init(void *param) {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] isUPNP = %d callback = %p\n",__FILE__,__FUNCTION__,__LINE__,UPNP_Tools::isUPNP,callback);
 
-	if(UPNP_Tools::isUPNP) {
+	if(UPNP_Tools::isUPNP == true) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Searching for UPnP devices for automatic port forwarding...\n");
 
 		int upnp_delay = 5000;
@@ -2387,6 +2577,14 @@ int UPNP_Tools::upnp_init(void *param) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"UPnP device search finished devlist = %p.\n",devlist);
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("UPnP device search finished devlist = %p.\n",devlist);
 
+		if(ServerSocket::cancelUpnpdiscoverThread == true) {
+			if(devlist != NULL) {
+				freeUPNPDevlist(devlist);
+			}
+			devlist = NULL;
+			return result;
+		}
+
 		if (devlist) {
 			dev = devlist;
 			while (dev) {
@@ -2397,7 +2595,7 @@ int UPNP_Tools::upnp_init(void *param) {
 			}
 
 			dev = devlist;
-			while (dev) {
+			while (dev && dev->st) {
 				if (strstr(dev->st, "InternetGatewayDevice")) {
 					break;
 				}
@@ -2412,22 +2610,39 @@ int UPNP_Tools::upnp_init(void *param) {
 				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("UPnP device found: %s %s\n", dev->descURL, dev->st);
 
 				//printf("UPnP device found: [%s] [%s] lanaddr [%s]\n", dev->descURL, dev->st,lanaddr);
-				descXML = (char *)miniwget_getaddr(dev->descURL, &descXMLsize, lanaddr, (sizeof(lanaddr) / sizeof(lanaddr[0])));
+#if (defined(MINIUPNPC_API_VERSION)  && MINIUPNPC_API_VERSION >= 9) || (!defined(MINIUPNPC_VERSION_PRE1_7) && !defined(MINIUPNPC_VERSION_PRE1_6))
+				char *descXML = (char *)miniwget_getaddr(dev->descURL, &descXMLsize, lanaddr, (sizeof(lanaddr) / sizeof(lanaddr[0])),0);
+#else
+				char *descXML = (char *)miniwget_getaddr(dev->descURL, &descXMLsize, lanaddr, (sizeof(lanaddr) / sizeof(lanaddr[0])));
+#endif
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"LAN address: %s\n", lanaddr);
 
 				if (descXML) {
 					parserootdesc (descXML, descXMLsize, &data);
 					free (descXML); descXML = 0;
+
+#if (defined(MINIUPNPC_API_VERSION)  && MINIUPNPC_API_VERSION >= 9) || (!defined(MINIUPNPC_VERSION_PRE1_7) && !defined(MINIUPNPC_VERSION_PRE1_6))
+					GetUPNPUrls (&urls, &data, dev->descURL,0);
+#else
 					GetUPNPUrls (&urls, &data, dev->descURL);
+#endif
 				}
-				sprintf(buf, "UPnP device found: %s %s LAN address %s", dev->descURL, dev->st, lanaddr);
+				snprintf(buf, 255,"UPnP device found: %s %s LAN address %s", dev->descURL, dev->st, lanaddr);
 
 				freeUPNPDevlist(devlist);
 				devlist = NULL;
 			}
 
+			if(ServerSocket::cancelUpnpdiscoverThread == true) {
+				if(devlist != NULL) {
+					freeUPNPDevlist(devlist);
+				}
+				devlist = NULL;
+				return result;
+			}
+
 			if (!urls.controlURL || urls.controlURL[0] == '\0')	{
-				sprintf(buf, "controlURL not available, UPnP disabled");
+				snprintf(buf, 255,"controlURL not available, UPnP disabled");
 				if(callback) {
 					safeMutexUPNP.ReleaseLock();
 				    callback->UPNPInitStatus(false);
@@ -2456,9 +2671,17 @@ int UPNP_Tools::upnp_init(void *param) {
 		}
 
 		if(result == -1) {
-			sprintf(buf, "UPnP device not found.");
+			snprintf(buf, 255,"UPnP device not found.");
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"No UPnP devices found.\n");
+
+			if(ServerSocket::cancelUpnpdiscoverThread == true) {
+				if(devlist != NULL) {
+					freeUPNPDevlist(devlist);
+				}
+				devlist = NULL;
+				return result;
+			}
 
 			if(callback) {
 				safeMutexUPNP.ReleaseLock();
@@ -2468,8 +2691,16 @@ int UPNP_Tools::upnp_init(void *param) {
 		}
 	}
 	else {
-		sprintf(buf, "UPnP detection routine disabled by user.");
+		snprintf(buf, 255,"UPnP detection routine disabled by user.");
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"UPnP detection routine disabled by user.\n");
+
+		if(ServerSocket::cancelUpnpdiscoverThread == true) {
+			if(devlist != NULL) {
+				freeUPNPDevlist(devlist);
+			}
+			devlist = NULL;
+			return result;
+		}
 
         if(callback) {
         	safeMutexUPNP.ReleaseLock();
@@ -2485,23 +2716,19 @@ int UPNP_Tools::upnp_init(void *param) {
 
 bool UPNP_Tools::upnp_add_redirect(int ports[2],bool mutexLock) {
 	bool result				= true;
-	char externalIP[16]     = "";
-	char ext_port_str[16]   = "";
-	char int_port_str[16]   = "";
-	int r                   = 0;
 
 	//printf("SERVER SOCKET upnp_add_redirect - START\n");
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] upnp_add_redir(%d : %d)\n",__FILE__,__FUNCTION__,__LINE__,ports[0],ports[1]);
 
 	if(mutexLock) {
-		//printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
 		MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
 		if(ServerSocket::upnpdiscoverThread != NULL) {
+			ServerSocket::cancelUpnpdiscoverThread = true;
 			SDL_WaitThread(ServerSocket::upnpdiscoverThread, NULL);
 			ServerSocket::upnpdiscoverThread = NULL;
+			ServerSocket::cancelUpnpdiscoverThread = false;
 		}
 		safeMutexUPNP.ReleaseLock();
-		//printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
 	}
 
 	MutexSafeWrapper safeMutexUPNP(&UPNP_Tools::mutexUPNP,CODE_AT_LINE);
@@ -2509,23 +2736,27 @@ bool UPNP_Tools::upnp_add_redirect(int ports[2],bool mutexLock) {
 		result = false;
 	}
 	else {
+		char externalIP[16] = "";
 #ifndef MINIUPNPC_VERSION_PRE1_5
 		UPNP_GetExternalIPAddress(urls.controlURL, data.first.servicetype, externalIP);
 #else
 		UPNP_GetExternalIPAddress(urls.controlURL, data.servicetype, externalIP);
 #endif
 
+		char ext_port_str[16]   = "";
+		char int_port_str[16]   = "";
 		sprintf(ext_port_str, "%d", ports[0]);
 		sprintf(int_port_str, "%d", ports[1]);
 
+		//int r                   = 0;
 #ifndef MINIUPNPC_VERSION_PRE1_5
 	#ifndef MINIUPNPC_VERSION_PRE1_6
-		r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0, NULL);
+		int r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0, NULL);
 	#else
-		r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0);
+		int r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0);
 	#endif
 #else
-		r = UPNP_AddPortMapping(urls.controlURL, data.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0);
+		int r = UPNP_AddPortMapping(urls.controlURL, data.servicetype,ext_port_str, int_port_str, lanaddr, "MegaGlest - www.megaglest.org", "TCP", 0);
 #endif
 		if (r != UPNPCOMMAND_SUCCESS) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] AddPortMapping(%s, %s, %s) failed\n",__FILE__,__FUNCTION__,__LINE__,ext_port_str, int_port_str, lanaddr);
@@ -2542,18 +2773,14 @@ bool UPNP_Tools::upnp_add_redirect(int ports[2],bool mutexLock) {
 void UPNP_Tools::upnp_rem_redirect(int ext_port) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] upnp_rem_redir(%d)\n",__FILE__,__FUNCTION__,__LINE__,ext_port);
 
-	//printf("SERVER SOCKET upnp_rem_redirect - START\n");
-
-	//printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
 	MutexSafeWrapper safeMutexUPNP(&ServerSocket::mutexUpnpdiscoverThread,CODE_AT_LINE);
     if(ServerSocket::upnpdiscoverThread != NULL) {
+    	ServerSocket::cancelUpnpdiscoverThread = true;
         SDL_WaitThread(ServerSocket::upnpdiscoverThread, NULL);
         ServerSocket::upnpdiscoverThread = NULL;
+        ServerSocket::cancelUpnpdiscoverThread = false;
     }
     safeMutexUPNP.ReleaseLock();
-    //printf("In [%s::%s] Line: %d safeMutexUPNP\n",__FILE__,__FUNCTION__,__LINE__);
-
-	//printf("In [%s::%s] Line: %d ext_port = %d urls.controlURL = [%s]\n",__FILE__,__FUNCTION__,__LINE__,ext_port,urls.controlURL);
 
     MutexSafeWrapper safeMutexUPNP1(&UPNP_Tools::mutexUPNP,CODE_AT_LINE);
 	if (urls.controlURL && urls.controlURL[0] != '\0')	{
@@ -2583,7 +2810,7 @@ void UPNP_Tools::NETaddRedirects(std::vector<int> UPNPPortForwardList,bool mutex
 
     if(UPNPPortForwardList.size() % 2 != 0) {
         // We need groups of 2 ports.. one external and one internal for opening ports on UPNP router
-        throw runtime_error("UPNPPortForwardList.size() MUST BE divisable by 2");
+        throw megaglest_runtime_error("UPNPPortForwardList.size() MUST BE divisable by 2");
     }
 
     for(unsigned int clientIndex = 0; clientIndex < UPNPPortForwardList.size(); clientIndex += 2) {
@@ -2607,10 +2834,12 @@ void UPNP_Tools::NETremRedirects(int ext_port) {
 // Description:		To be forked in its own thread to send out a broadcast to the local subnet
 //					the current broadcast message is <myhostname:my.ip.address.dotted>
 //
-BroadCastSocketThread::BroadCastSocketThread() : BaseThread() {
+BroadCastSocketThread::BroadCastSocketThread(int boundPort) : BaseThread() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	mutexPauseBroadcast = new Mutex();
+	mutexPauseBroadcast = new Mutex(CODE_AT_LINE);
 	setPauseBroadcast(false);
+	this->boundPort = boundPort;
+	uniqueID = "BroadCastSocketThread";
 	//printf("new broadcast thread [%p]\n",this);
 }
 
@@ -2638,6 +2867,7 @@ bool BroadCastSocketThread::canShutdown(bool deleteSelfIfShutdownDelayed) {
 	bool ret = (getExecutingTask() == false);
 	if(ret == false && deleteSelfIfShutdownDelayed == true) {
 	    setDeleteSelfOnExecutionDone(deleteSelfIfShutdownDelayed);
+	    deleteSelfIfRequired();
 	    signalQuit();
 	}
 
@@ -2664,6 +2894,15 @@ void BroadCastSocketThread::execute() {
     //char subnetmask[MAX_NIC_COUNT][100];       // Subnet mask to broadcast to
     //struct hostent* myhostent=NULL;
 
+    for(unsigned int idx = 0; idx < (unsigned int)MAX_NIC_COUNT; idx++) {
+    	memset( &bcLocal[idx], 0, sizeof( struct sockaddr_in));
+
+#ifdef WIN32
+		bcfd[idx] = INVALID_SOCKET;
+#else
+		bcfd[idx] = -1;
+#endif
+    }
     /* get my host name */
     gethostname(myhostname,100);
     //struct hostent*myhostent = gethostbyname(myhostname);
@@ -2673,7 +2912,7 @@ void BroadCastSocketThread::execute() {
 
     // Subnet, IP Address
     std::vector<std::string> ipSubnetMaskList;
-	for(unsigned int idx = 0; idx < ipList.size() && idx < MAX_NIC_COUNT; idx++) {
+	for(unsigned int idx = 0; idx < (unsigned int)ipList.size() && idx < (unsigned int)MAX_NIC_COUNT; idx++) {
 		string broadCastAddress = getNetworkInterfaceBroadcastAddress(ipList[idx]);
 		//printf("idx = %d broadCastAddress [%s]\n",idx,broadCastAddress.c_str());
 
@@ -2686,7 +2925,7 @@ void BroadCastSocketThread::execute() {
 	port = htons( Socket::getBroadCastPort() );
 
 	//for(unsigned int idx = 0; idx < ipList.size() && idx < MAX_NIC_COUNT; idx++) {
-	for(unsigned int idx = 0; idx < ipSubnetMaskList.size(); idx++) {
+	for(unsigned int idx = 0; idx < (unsigned int)ipSubnetMaskList.size(); idx++) {
 		// Create the broadcast socket
 		memset( &bcLocal[idx], 0, sizeof( struct sockaddr_in));
 		bcLocal[idx].sin_family			= AF_INET;
@@ -2701,12 +2940,12 @@ void BroadCastSocketThread::execute() {
 		bcfd[idx] = socket( AF_INET, SOCK_DGRAM, 0 );
 
 		if( bcfd[idx] <= 0  ) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Unable to allocate broadcast socket [%s]: %s\n", ipSubnetMaskList[idx].c_str(), getLastSocketErrorFormattedText().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Unable to allocate broadcast socket [%s]: %s\n", ipSubnetMaskList[idx].c_str(), Socket::getLastSocketErrorFormattedText().c_str());
 			//exit(-1);
 		}
 		// Mark the socket for broadcast.
 		else if( setsockopt( bcfd[idx], SOL_SOCKET, SO_BROADCAST, (const char *) &one, sizeof( int ) ) < 0 ) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Could not set socket to broadcast [%s]: %s\n", ipSubnetMaskList[idx].c_str(), getLastSocketErrorFormattedText().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Could not set socket to broadcast [%s]: %s\n", ipSubnetMaskList[idx].c_str(), Socket::getLastSocketErrorFormattedText().c_str());
 			//exit(-1);
 		}
 		//}
@@ -2722,24 +2961,34 @@ void BroadCastSocketThread::execute() {
 			if( Socket::isSocketValid(&bcfd[idx]) == true ) {
 				try {
 					// Send this machine's host name and address in hostname:n.n.n.n format
-					sprintf(buff,"%s",myhostname);
+					snprintf(buff,1024,"%s",myhostname);
 					for(unsigned int idx1 = 0; idx1 < ipList.size(); idx1++) {
-						//sprintf(buff,"%s:%s",buff,ipList[idx1].c_str());
-						strcat(buff,":");
-						strcat(buff,ipList[idx1].c_str());
+//						strcat(buff,":");
+//						strcat(buff,ipList[idx1].c_str());
+//						strcat(buff,":");
+//						string port_string = intToStr(this->boundPort);
+//#ifdef WIN32
+//						strncat(buff,port_string.c_str(),min((int)port_string.length(),100));
+//#else
+//						strncat(buff,port_string.c_str(),std::min((int)port_string.length(),100));
+//#endif
+						string buffCopy = buff;
+						snprintf(buff,1024,"%s:%s:%d",buffCopy.c_str(),ipList[idx1].c_str(),this->boundPort);
 					}
 
-					if(difftime(time(NULL),elapsed) >= 1 && getQuitStatus() == false) {
+					if(difftime((long int)time(NULL),elapsed) >= 1 && getQuitStatus() == false) {
 						elapsed = time(NULL);
 
-						ssize_t send_res = 0;
 						bool pauseBroadCast = getPauseBroadcast();
 						if(pauseBroadCast == false) {
 							// Broadcast the packet to the subnet
 							//if( sendto( bcfd, buff, sizeof(buff) + 1, 0 , (struct sockaddr *)&bcaddr, sizeof(struct sockaddr_in) ) != sizeof(buff) + 1 )
-							send_res = sendto( bcfd[idx], buff, buffMaxSize, 0 , (struct sockaddr *)&bcLocal[idx], sizeof(struct sockaddr_in) );
+
+							if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Server is sending broadcast data [%s]\n",buff);
+
+							ssize_t send_res = sendto( bcfd[idx], buff, buffMaxSize, 0 , (struct sockaddr *)&bcLocal[idx], sizeof(struct sockaddr_in) );
 							if( send_res != buffMaxSize ) {
-								if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Sendto error: %s\n", getLastSocketErrorFormattedText().c_str());
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Sendto error: %s\n", Socket::getLastSocketErrorFormattedText().c_str());
 							}
 							else {
 								if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"Broadcasting on port [%d] the message: [%s]\n",Socket::getBroadCastPort(),buff);
@@ -2783,10 +3032,10 @@ void BroadCastSocketThread::execute() {
 		if( Socket::isSocketValid(&bcfd[idx]) == true ) {
 #ifndef WIN32
         ::close(bcfd[idx]);
-        bcfd[idx] = INVALID_SOCKET;
+        bcfd[idx] = -1;
 #else
         ::closesocket(bcfd[idx]);
-        bcfd[idx] = -1;
+        bcfd[idx] = INVALID_SOCKET;
 #endif
 		}
 	}

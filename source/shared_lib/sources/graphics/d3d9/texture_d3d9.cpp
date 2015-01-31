@@ -1,3 +1,10 @@
+// ==============================================================
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//	The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 #include "texture_d3d9.h"
 
 #include <stdexcept>
@@ -73,6 +80,7 @@ void fillPixels(uint8 *texturePixels, const Pixmap2D *pixmap){
 				break;
 			default:
 				assert(false);
+				break;
 			}
 		}
 	}
@@ -144,10 +152,10 @@ void TextureCubeD3d9::init(Filter textureFilter, int maxAnisotropy){
 			for(int i=0; i<6; ++i){	
 				const Pixmap2D *currentFace= pixmap.getFace(i);
 				if(currentFace->getW()!=l || currentFace->getH()!=l){
-					throw runtime_error("Can't create Direct3D cube texture: dimensions don't agree");
+					throw megaglest_runtime_error("Can't create Direct3D cube texture: dimensions don't agree");
 				}
 				if(currentFace->getComponents()!=components){
-					throw runtime_error("Can't create Direct3D cube texture: components don't agree");
+					throw megaglest_runtime_error("Can't create Direct3D cube texture: components don't agree");
 				}
 			}
 		}

@@ -25,16 +25,19 @@
 
 namespace Glest{ namespace Game{
 
-using namespace	Shared::Xml;
+using namespace	::Shared::Xml;
 
 // =====================================================
 // 	class MenuStateScenario
 // =====================================================
 
-MenuStateScenario::MenuStateScenario(Program *program, MainMenu *mainMenu, const vector<string> &dirList, string autoloadScenarioName):
+MenuStateScenario::MenuStateScenario(Program *program, MainMenu *mainMenu,
+		bool isTutorialMode, const vector<string> &dirList, string autoloadScenarioName) :
     MenuState(program, mainMenu, "scenario")
 {
 	containerName = "Scenario";
+	this->isTutorialMode = isTutorialMode;
+
 	enableScenarioTexturePreview = Config::getInstance().getBool("EnableScenarioTexturePreview","true");
 	scenarioLogoTexture=NULL;
 	previewLoadDelayTimer=time(NULL);
@@ -42,9 +45,21 @@ MenuStateScenario::MenuStateScenario(Program *program, MainMenu *mainMenu, const
 
 	Lang &lang= Lang::getInstance();
 	NetworkManager &networkManager= NetworkManager::getInstance();
+    try {
+        networkManager.init(nrServer);
+    }
+	catch(const std::exception &ex) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] Error detected:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
+
+        mainMessageBoxState=1;
+        showMessageBox( "Error: " + string(ex.what()), "Error detected", false);
+	}
 
 	mainMessageBox.registerGraphicComponent(containerName,"mainMessageBox");
-	mainMessageBox.init(lang.get("Ok"));
+	mainMessageBox.init(lang.getString("Ok"));
 	mainMessageBox.setEnabled(false);
 	mainMessageBoxState=0;
 
@@ -53,30 +68,42 @@ MenuStateScenario::MenuStateScenario(Program *program, MainMenu *mainMenu, const
 
 	this->dirList = dirList;
 
-	int startY=100;
-	int startX=350;
+	int buttonStartY=50;
+	int buttonStartX=70;
+
+	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
+    buttonReturn.init(buttonStartX, buttonStartY, 125);
+	buttonReturn.setText(lang.getString("Return"));
+
+    buttonPlayNow.registerGraphicComponent(containerName,"buttonPlayNow");
+	buttonPlayNow.init(buttonStartX+150, buttonStartY, 125);
+	buttonPlayNow.setText(lang.getString("PlayNow"));
+
+	int startY=700;
+	int startX=50;
+
+    labelScenario.registerGraphicComponent(containerName,"labelScenario");
+	labelScenario.init(startX, startY);
+
+	listBoxScenario.registerGraphicComponent(containerName,"listBoxScenario");
+    listBoxScenario.init(startX, startY-30, 290);
+
+	labelScenarioName.registerGraphicComponent(containerName,"labelScenarioName");
+	labelScenarioName.init(startX, startY-80);
+	labelScenarioName.setFont(CoreData::getInstance().getMenuFontBig());
+	labelScenarioName.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 
 	labelInfo.registerGraphicComponent(containerName,"labelInfo");
-    labelInfo.init(startX, startY+130);
+    labelInfo.init(startX, startY-110);
 	labelInfo.setFont(CoreData::getInstance().getMenuFontNormal());
 	labelInfo.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
-	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
-    buttonReturn.init(startX, startY, 125);
-
-    buttonPlayNow.registerGraphicComponent(containerName,"buttonPlayNow");
-	buttonPlayNow.init(startX+175, startY, 125);
-
-	listBoxScenario.registerGraphicComponent(containerName,"listBoxScenario");
-    listBoxScenario.init(startX, startY+160, 190);
-
-    labelScenario.registerGraphicComponent(containerName,"labelScenario");
-	labelScenario.init(startX, startY+190);
-
-	buttonReturn.setText(lang.get("Return"));
-	buttonPlayNow.setText(lang.get("PlayNow"));
-
-    labelScenario.setText(lang.get("Scenario"));
+	if(this->isTutorialMode == true) {
+		labelScenario.setText(lang.getString("Tutorial"));
+	}
+	else {
+		labelScenario.setText(lang.getString("Scenario"));
+	}
 
     //scenario listbox
 	findDirs(dirList, results);
@@ -84,29 +111,60 @@ MenuStateScenario::MenuStateScenario(Program *program, MainMenu *mainMenu, const
     //printf("scenarioFiles[0] [%s]\n",scenarioFiles[0].c_str());
 
 	if(results.empty() == true) {
-        throw runtime_error("There are no scenarios found to load");
+        //throw megaglest_runtime_error("There are no scenarios found to load");
+        mainMessageBoxState=1;
+        if(this->isTutorialMode == true) {
+        	showMessageBox( "Error: There are no tutorials found to load", "Error detected", false);
+        }
+        else {
+        	showMessageBox( "Error: There are no scenarios found to load", "Error detected", false);
+        }
 	}
-	for(int i= 0; i<results.size(); ++i){
-		results[i] = formatString(results[i]);
+
+	std::map<string,string> scenarioErrors;
+	for(int i= 0; i < (int)results.size(); ++i){
+			results[i] = formatString(results[i]);
 	}
     listBoxScenario.setItems(results);
 
     try {
-        loadScenarioInfo(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]), &scenarioInfo );
-        labelInfo.setText(scenarioInfo.desc);
+    	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] listBoxScenario.getSelectedItemIndex() = %d scenarioFiles.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,listBoxScenario.getSelectedItemIndex(),(int)scenarioFiles.size());
+
+    	if(listBoxScenario.getItemCount() > 0 && listBoxScenario.getSelectedItemIndex() >= 0 && listBoxScenario.getSelectedItemIndex() < (int)scenarioFiles.size()) {
+    		string scenarioPath = Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]);
+    		//printf("scenarioPath [%s]\n",scenarioPath.c_str());
+
+    		loadScenarioInfo(scenarioPath, &scenarioInfo );
+    		labelInfo.setText(scenarioInfo.desc);
+    		if(scenarioInfo.namei18n != "") {
+    			labelScenarioName.setText(scenarioInfo.namei18n);
+    		}
+    		else {
+    			labelScenarioName.setText(listBoxScenario.getSelectedItem());
+    		}
+    	}
 
         GraphicComponent::applyAllCustomProperties(containerName);
-
-        networkManager.init(nrServer);
     }
 	catch(const std::exception &ex) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"In [%s::%s %d] Error detected:\n%s\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] Error detected:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
 
         mainMessageBoxState=1;
         showMessageBox( "Error: " + string(ex.what()), "Error detected", false);
+	}
+
+	if(scenarioErrors.empty() == false) {
+        mainMessageBoxState=1;
+
+        string errorMsg = "";
+        for(std::map<string,string>::iterator iterMap = scenarioErrors.begin();
+        		iterMap != scenarioErrors.end(); ++iterMap) {
+        	errorMsg += "scenario: " + iterMap->first + " error text: " + iterMap->second.substr(0,400) + "\n";
+        }
+        showMessageBox( "Error loading scenario(s): " + errorMsg, "Error detected", false);
 	}
 }
 
@@ -114,14 +172,17 @@ void MenuStateScenario::reloadUI() {
 	Lang &lang= Lang::getInstance();
 
 	console.resetFonts();
-	mainMessageBox.init(lang.get("Ok"));
+	mainMessageBox.init(lang.getString("Ok"));
 	labelInfo.setFont(CoreData::getInstance().getMenuFontNormal());
 	labelInfo.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
-	buttonReturn.setText(lang.get("Return"));
-	buttonPlayNow.setText(lang.get("PlayNow"));
+	labelScenarioName.setFont(CoreData::getInstance().getMenuFontNormal());
+	labelScenarioName.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
-    labelScenario.setText(lang.get("Scenario"));
+	buttonReturn.setText(lang.getString("Return"));
+	buttonPlayNow.setText(lang.getString("PlayNow"));
+
+    labelScenario.setText(lang.getString("Scenario"));
 
 	GraphicComponent::reloadFontsForRegisterGraphicComponents(containerName);
 }
@@ -131,7 +192,7 @@ MenuStateScenario::~MenuStateScenario() {
 }
 
 void MenuStateScenario::cleanupPreviewTexture() {
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] scenarioLogoTexture [%p]\n",__FILE__,__FUNCTION__,__LINE__,scenarioLogoTexture);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] scenarioLogoTexture [%p]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,scenarioLogoTexture);
 
 	if(scenarioLogoTexture != NULL) {
 		Renderer::getInstance().endTexture(rsGlobal, scenarioLogoTexture, false);
@@ -142,34 +203,61 @@ void MenuStateScenario::cleanupPreviewTexture() {
 void MenuStateScenario::mouseClick(int x, int y, MouseButton mouseButton) {
 	CoreData &coreData= CoreData::getInstance();
 	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+	string advanceToItemStartingWith = "";
 
 	if(mainMessageBox.getEnabled()){
-		int button= 1;
-		if(mainMessageBox.mouseClick(x, y, button))
-		{
+		int button= 0;
+		if(mainMessageBox.mouseClick(x, y, button)) {
 			soundRenderer.playFx(coreData.getClickSoundA());
-			if(button==1) {
+			if(button==0) {
 				mainMessageBox.setEnabled(false);
+
+				if(scenarioFiles.empty() == true && mainMessageBoxState ==1) {
+					mainMenu->setState(new MenuStateNewGame(program, mainMenu));
+					return;
+				}
 			}
 		}
+		return;
 	}
-	else if(buttonReturn.mouseClick(x,y)){
+    else {
+    	if(::Shared::Platform::Window::isKeyStateModPressed(KMOD_SHIFT) == true) {
+    		const wchar_t lastKey = ::Shared::Platform::Window::extractLastKeyPressed();
+//        		xxx:
+//        		string hehe=lastKey;
+//        		printf("lastKey = %d [%c] '%s'\n",lastKey,lastKey,hehe);
+    		advanceToItemStartingWith =  lastKey;
+    	}
+    }
+
+	if(buttonReturn.mouseClick(x,y)){
 		soundRenderer.playFx(coreData.getClickSoundA());
 		mainMenu->setState(new MenuStateNewGame(program, mainMenu));
+		return;
     }
 	else if(buttonPlayNow.mouseClick(x,y)){
 		soundRenderer.playFx(coreData.getClickSoundC());
 		launchGame();
 		return;
 	}
-    else if(listBoxScenario.mouseClick(x, y)){
+    else if(listBoxScenario.mouseClick(x, y,advanceToItemStartingWith)){
         try {
-            loadScenarioInfo(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]), &scenarioInfo);
-            labelInfo.setText(scenarioInfo.desc);
+        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] listBoxScenario.getSelectedItemIndex() = %d scenarioFiles.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,listBoxScenario.getSelectedItemIndex(),(int)scenarioFiles.size());
+
+        	if(listBoxScenario.getItemCount() > 0 && listBoxScenario.getSelectedItemIndex() >= 0 && listBoxScenario.getSelectedItemIndex() < (int)scenarioFiles.size()) {
+        		loadScenarioInfo(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]), &scenarioInfo);
+        		labelInfo.setText(scenarioInfo.desc);
+        		if(scenarioInfo.namei18n != "") {
+        			labelScenarioName.setText(scenarioInfo.namei18n);
+        		}
+        		else {
+        			labelScenarioName.setText(listBoxScenario.getSelectedItem());
+        		}
+        	}
         }
         catch(const std::exception &ex) {
-            char szBuf[4096]="";
-            sprintf(szBuf,"In [%s::%s %d] Error detected:\n%s\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+            char szBuf[8096]="";
+            snprintf(szBuf,8096,"In [%s::%s %d] Error detected:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
             SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
             if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
 
@@ -196,7 +284,7 @@ void MenuStateScenario::render(){
 	Renderer &renderer= Renderer::getInstance();
 
 	if(scenarioLogoTexture != NULL) {
-		renderer.renderTextureQuad(300,350,400,300,scenarioLogoTexture,1.0f);
+		renderer.renderTextureQuad(450,200,533,400,scenarioLogoTexture,1.0f);
 		//renderer.renderBackground(scenarioLogoTexture);
 	}
 
@@ -205,6 +293,8 @@ void MenuStateScenario::render(){
 	}
 	else {
 		renderer.renderLabel(&labelInfo);
+		renderer.renderLabel(&labelScenarioName);
+
 		renderer.renderLabel(&labelScenario);
 		renderer.renderListBox(&listBoxScenario);
 
@@ -218,24 +308,68 @@ void MenuStateScenario::render(){
 void MenuStateScenario::update() {
 	if(Config::getInstance().getBool("AutoTest")) {
 		AutoTest::getInstance().updateScenario(this);
+		return;
 	}
 	if(this->autoloadScenarioName != "") {
-		listBoxScenario.setSelectedItem(formatString(this->autoloadScenarioName),false);
+		string scenarioPath = Scenario::getScenarioPath(dirList, this->autoloadScenarioName);
 
-		if(listBoxScenario.getSelectedItem() != formatString(this->autoloadScenarioName)) {
+		//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("[%s:%s] Line: %d this->autoloadScenarioName [%s] scenarioPath [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->autoloadScenarioName.c_str(),scenarioPath.c_str());
+		printf("[%s:%s] Line: %d this->autoloadScenarioName [%s] scenarioPath [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->autoloadScenarioName.c_str(),scenarioPath.c_str());
+
+		loadScenarioInfo(scenarioPath, &scenarioInfo );
+		//if(scenarioInfo.namei18n != "") {
+		//	this->autoloadScenarioName = scenarioInfo.namei18n;
+		//}
+		//else {
+		this->autoloadScenarioName = formatString(this->autoloadScenarioName);
+		//}
+
+		//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("[%s:%s] Line: %d this->autoloadScenarioName [%s] scenarioPath [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->autoloadScenarioName.c_str(),scenarioPath.c_str());
+		printf("[%s:%s] Line: %d this->autoloadScenarioName [%s] scenarioPath [%s] file [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,this->autoloadScenarioName.c_str(),scenarioPath.c_str(),scenarioInfo.file.c_str());
+
+		listBoxScenario.setSelectedItem(this->autoloadScenarioName,false);
+
+		if(listBoxScenario.getSelectedItem() != this->autoloadScenarioName) {
 			mainMessageBoxState=1;
-			showMessageBox( "Could not find scenario name: " + formatString(this->autoloadScenarioName), "Scenario Missing", false);
+			showMessageBox( "Could not find scenario name: " + this->autoloadScenarioName, "Scenario Missing", false);
 			this->autoloadScenarioName = "";
 		}
 		else {
-			loadScenarioInfo(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]), &scenarioInfo);
-			labelInfo.setText(scenarioInfo.desc);
+			try {
+				this->autoloadScenarioName = "";
+				if(listBoxScenario.getItemCount() > 0 && listBoxScenario.getSelectedItemIndex() >= 0 &&
+					listBoxScenario.getSelectedItemIndex() < (int)scenarioFiles.size()) {
 
-			SoundRenderer &soundRenderer= SoundRenderer::getInstance();
-			CoreData &coreData= CoreData::getInstance();
-			soundRenderer.playFx(coreData.getClickSoundC());
-			launchGame();
-			return;
+					printf("[%s:%s] Line: %d scenarioFiles[listBoxScenario.getSelectedItemIndex()] [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,scenarioFiles[listBoxScenario.getSelectedItemIndex()].c_str());
+
+					loadScenarioInfo(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]), &scenarioInfo);
+
+					printf("[%s:%s] Line: %d scenarioInfo.file [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,scenarioInfo.file.c_str());
+
+					labelInfo.setText(scenarioInfo.desc);
+	        		if(scenarioInfo.namei18n != "") {
+	        			labelScenarioName.setText(scenarioInfo.namei18n);
+	        		}
+	        		else {
+	        			labelScenarioName.setText(listBoxScenario.getSelectedItem());
+	        		}
+
+					SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+					CoreData &coreData= CoreData::getInstance();
+					soundRenderer.playFx(coreData.getClickSoundC());
+					launchGame();
+					return;
+				}
+			}
+			catch(const std::exception &ex) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"In [%s::%s %d] Error detected:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
+				SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
+
+				mainMessageBoxState=1;
+				showMessageBox( "Error: " + string(ex.what()), "Error detected", false);
+			}
 		}
 	}
 
@@ -250,9 +384,28 @@ void MenuStateScenario::update() {
 }
 
 void MenuStateScenario::launchGame() {
-	GameSettings gameSettings;
-    loadGameSettings(&scenarioInfo, &gameSettings);
-	program->setState(new Game(program, &gameSettings, false));
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] scenarioInfo.file [%s] [%s][%s][%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,scenarioInfo.file.c_str(),scenarioInfo.tilesetName.c_str(),scenarioInfo.mapName.c_str(),scenarioInfo.techTreeName.c_str());
+
+	if(scenarioInfo.file != "" && scenarioInfo.tilesetName != "" && scenarioInfo.mapName != "" && scenarioInfo.techTreeName != "") {
+		GameSettings gameSettings;
+		loadGameSettings(&scenarioInfo, &gameSettings);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] gameSettings.getScenarioDir() [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,gameSettings.getScenarioDir().c_str());
+
+		const vector<string> pathTechList = Config::getInstance().getPathListForType(ptTechs,gameSettings.getScenarioDir());
+		if(TechTree::exists(gameSettings.getTech(), pathTechList) == false) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"Line ref: %d Error: cannot find techtree [%s]\n",__LINE__,scenarioInfo.techTreeName.c_str());
+			SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+
+	        mainMessageBoxState=1;
+	        showMessageBox( szBuf, "Error detected", false);
+
+			return;
+		}
+		program->setState(new Game(program, &gameSettings, false));
+		return;
+	}
 }
 
 void MenuStateScenario::setScenario(int i) {
@@ -261,113 +414,11 @@ void MenuStateScenario::setScenario(int i) {
 }
 
 void MenuStateScenario::loadScenarioInfo(string file, ScenarioInfo *scenarioInfo) {
-//    Lang &lang= Lang::getInstance();
-//
-//    XmlTree xmlTree;
-//	xmlTree.load(file,Properties::getTagReplacementValues());
-//
-//    const XmlNode *scenarioNode= xmlTree.getRootNode();
-//	const XmlNode *difficultyNode= scenarioNode->getChild("difficulty");
-//	scenarioInfo->difficulty = difficultyNode->getAttribute("value")->getIntValue();
-//	if( scenarioInfo->difficulty < dVeryEasy || scenarioInfo->difficulty > dInsane ) {
-//		char szBuf[4096]="";
-//		sprintf(szBuf,"Invalid difficulty value specified in scenario: %d must be between %d and %d",scenarioInfo->difficulty,dVeryEasy,dInsane);
-//		throw std::runtime_error(szBuf);
-//	}
-//
-//	const XmlNode *playersNode= scenarioNode->getChild("players");
-//
-//    for(int i= 0; i < GameConstants::maxPlayers; ++i) {
-//    	XmlNode* playerNode=NULL;
-//    	string factionTypeName="";
-//    	ControlType factionControl;
-//
-//    	if(playersNode->hasChildAtIndex("player",i)){
-//        	playerNode = playersNode->getChild("player", i);
-//        	factionControl = strToControllerType( playerNode->getAttribute("control")->getValue() );
-//
-//        	if(playerNode->getAttribute("resource_multiplier",false)!=NULL) {
-//        		// if a multiplier exists use it
-//				scenarioInfo->resourceMultipliers[i]=playerNode->getAttribute("resource_multiplier")->getFloatValue();
-//			}
-//			else {
-//				// if no multiplier exists use defaults
-//				scenarioInfo->resourceMultipliers[i]=GameConstants::normalMultiplier;
-//				if(factionControl==ctCpuEasy) {
-//					scenarioInfo->resourceMultipliers[i]=GameConstants::easyMultiplier;
-//				}
-//				if(factionControl==ctCpuUltra) {
-//					scenarioInfo->resourceMultipliers[i]=GameConstants::ultraMultiplier;
-//				}
-//				else if(factionControl==ctCpuMega) {
-//					scenarioInfo->resourceMultipliers[i]=GameConstants::megaMultiplier;
-//				}
-//			}
-//
-//    	}
-//        else {
-//        	factionControl=ctClosed;
-//        }
-//
-//        scenarioInfo->factionControls[i] = factionControl;
-//
-//        if(factionControl != ctClosed){
-//            int teamIndex = playerNode->getAttribute("team")->getIntValue();
-//
-//            if( teamIndex < 1 || teamIndex > GameConstants::maxPlayers ) {
-//        		char szBuf[4096]="";
-//        		sprintf(szBuf,"Invalid team value specified in scenario: %d must be between %d and %d",teamIndex,1,GameConstants::maxPlayers);
-//        		throw std::runtime_error(szBuf);
-//            }
-//
-//            scenarioInfo->teams[i]= playerNode->getAttribute("team")->getIntValue();
-//            scenarioInfo->factionTypeNames[i]= playerNode->getAttribute("faction")->getValue();
-//        }
-//
-//        scenarioInfo->mapName = scenarioNode->getChild("map")->getAttribute("value")->getValue();
-//        scenarioInfo->tilesetName = scenarioNode->getChild("tileset")->getAttribute("value")->getValue();
-//        scenarioInfo->techTreeName = scenarioNode->getChild("tech-tree")->getAttribute("value")->getValue();
-//        scenarioInfo->defaultUnits = scenarioNode->getChild("default-units")->getAttribute("value")->getBoolValue();
-//        scenarioInfo->defaultResources = scenarioNode->getChild("default-resources")->getAttribute("value")->getBoolValue();
-//        scenarioInfo->defaultVictoryConditions = scenarioNode->getChild("default-victory-conditions")->getAttribute("value")->getBoolValue();
-//    }
-//
-//	//add player info
-//    scenarioInfo->desc= lang.get("Player") + ": ";
-//	for(int i=0; i<GameConstants::maxPlayers; ++i) {
-//		if(scenarioInfo->factionControls[i] == ctHuman) {
-//			scenarioInfo->desc+= formatString(scenarioInfo->factionTypeNames[i]);
-//			break;
-//		}
-//	}
-//
-//	//add misc info
-//	string difficultyString = "Difficulty" + intToStr(scenarioInfo->difficulty);
-//
-//	scenarioInfo->desc+= "\n";
-//    scenarioInfo->desc+= lang.get("Difficulty") + ": " + lang.get(difficultyString) +"\n";
-//    scenarioInfo->desc+= lang.get("Map") + ": " + formatString(scenarioInfo->mapName) + "\n";
-//    scenarioInfo->desc+= lang.get("Tileset") + ": " + formatString(scenarioInfo->tilesetName) + "\n";
-//	scenarioInfo->desc+= lang.get("TechTree") + ": " + formatString(scenarioInfo->techTreeName) + "\n";
-//
-//	if(scenarioNode->hasChild("fog-of-war") == true) {
-//		if(scenarioNode->getChild("fog-of-war")->getAttribute("value")->getValue() == "explored") {
-//			scenarioInfo->fogOfWar 				= true;
-//			scenarioInfo->fogOfWar_exploredFlag = true;
-//		}
-//		else {
-//			scenarioInfo->fogOfWar = scenarioNode->getChild("fog-of-war")->getAttribute("value")->getBoolValue();
-//			scenarioInfo->fogOfWar_exploredFlag = false;
-//		}
-//		//printf("\nFOG OF WAR is set to [%d]\n",scenarioInfo->fogOfWar);
-//	}
-//	else {
-//		scenarioInfo->fogOfWar 				= true;
-//		scenarioInfo->fogOfWar_exploredFlag = false;
-//	}
-	//scenarioLogoTexture = NULL;
+	bool isTutorial = Scenario::isGameTutorial(file);
 
-	Scenario::loadScenarioInfo(file, scenarioInfo);
+	//printf("[%s:%s] Line: %d file [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,file.c_str());
+
+	Scenario::loadScenarioInfo(file, scenarioInfo, isTutorial);
 
 	cleanupPreviewTexture();
 	previewLoadDelayTimer=time(NULL);
@@ -376,83 +427,43 @@ void MenuStateScenario::loadScenarioInfo(string file, ScenarioInfo *scenarioInfo
 
 void MenuStateScenario::loadScenarioPreviewTexture(){
 	if(enableScenarioTexturePreview == true) {
-		GameSettings gameSettings;
-		loadGameSettings(&scenarioInfo, &gameSettings);
+		//if(listBoxScenario.getSelectedItemIndex() >= 0) {
+		if(listBoxScenario.getItemCount() > 0 && listBoxScenario.getSelectedItemIndex() >= 0 && listBoxScenario.getSelectedItemIndex() < (int)scenarioFiles.size()) {
+			GameSettings gameSettings;
+			loadGameSettings(&scenarioInfo, &gameSettings);
 
-		string scenarioLogo 	= "";
-		bool loadingImageUsed 	= false;
+			string scenarioLogo 	= "";
+			bool loadingImageUsed 	= false;
 
-		Game::extractScenarioLogoFile(&gameSettings, scenarioLogo, loadingImageUsed);
+			Game::extractScenarioLogoFile(&gameSettings, scenarioLogo, loadingImageUsed);
 
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] scenarioLogo [%s]\n",__FILE__,__FUNCTION__,__LINE__,scenarioLogo.c_str());
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] scenarioLogo [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,scenarioLogo.c_str());
 
-		if(scenarioLogo != "") {
-			cleanupPreviewTexture();
-			scenarioLogoTexture = Renderer::findFactionLogoTexture(scenarioLogo);
-		}
-		else {
-			cleanupPreviewTexture();
-			scenarioLogoTexture = NULL;
+			if(scenarioLogo != "") {
+				cleanupPreviewTexture();
+				scenarioLogoTexture = Renderer::findTexture(scenarioLogo);
+			}
+			else {
+				cleanupPreviewTexture();
+				scenarioLogoTexture = NULL;
+			}
 		}
 	}
 }
 
 void MenuStateScenario::loadGameSettings(const ScenarioInfo *scenarioInfo, GameSettings *gameSettings){
 	if(listBoxScenario.getSelectedItemIndex() < 0) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"listBoxScenario.getSelectedItemIndex() < 0, = %d",listBoxScenario.getSelectedItemIndex());
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"listBoxScenario.getSelectedItemIndex() < 0, = %d",listBoxScenario.getSelectedItemIndex());
+		throw megaglest_runtime_error(szBuf);
 	}
-	else if(listBoxScenario.getSelectedItemIndex() >= scenarioFiles.size()) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"listBoxScenario.getSelectedItemIndex() >= scenarioFiles.size(), = [%d][%d]",listBoxScenario.getSelectedItemIndex(),(int)scenarioFiles.size());
-		throw runtime_error(szBuf);
+	else if(listBoxScenario.getSelectedItemIndex() >= (int)scenarioFiles.size()) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"listBoxScenario.getSelectedItemIndex() >= scenarioFiles.size(), = [%d][%d]",listBoxScenario.getSelectedItemIndex(),(int)scenarioFiles.size());
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	Scenario::loadGameSettings(dirList,scenarioInfo, gameSettings, formatString(scenarioFiles[listBoxScenario.getSelectedItemIndex()]));
-
-//	int factionCount= 0;
-//
-//	//printf("\n\n\n$$$$$$$$$$$$$ [%s]\n\n\n",scenarioFiles[listBoxScenario.getSelectedItemIndex()].c_str());
-//
-//	gameSettings->setDescription(formatString(scenarioFiles[listBoxScenario.getSelectedItemIndex()]));
-//	gameSettings->setMap(scenarioInfo->mapName);
-//    gameSettings->setTileset(scenarioInfo->tilesetName);
-//    gameSettings->setTech(scenarioInfo->techTreeName);
-//	gameSettings->setScenario(scenarioFiles[listBoxScenario.getSelectedItemIndex()]);
-//	gameSettings->setScenarioDir(Scenario::getScenarioPath(dirList, scenarioFiles[listBoxScenario.getSelectedItemIndex()]));
-//	gameSettings->setDefaultUnits(scenarioInfo->defaultUnits);
-//	gameSettings->setDefaultResources(scenarioInfo->defaultResources);
-//	gameSettings->setDefaultVictoryConditions(scenarioInfo->defaultVictoryConditions);
-//
-//    for(int i=0; i<GameConstants::maxPlayers; ++i){
-//        ControlType ct= static_cast<ControlType>(scenarioInfo->factionControls[i]);
-//		if(ct!=ctClosed){
-//			if(ct==ctHuman){
-//				gameSettings->setThisFactionIndex(factionCount);
-//			}
-//			gameSettings->setFactionControl(factionCount, ct);
-//			gameSettings->setResourceMultiplierIndex(factionCount, (scenarioInfo->resourceMultipliers[i]-0.5f)/0.1f);
-//            gameSettings->setTeam(factionCount, scenarioInfo->teams[i]-1);
-//			gameSettings->setStartLocationIndex(factionCount, i);
-//            gameSettings->setFactionTypeName(factionCount, scenarioInfo->factionTypeNames[i]);
-//			factionCount++;
-//		}
-//    }
-//
-//	gameSettings->setFactionCount(factionCount);
-//	gameSettings->setFogOfWar(scenarioInfo->fogOfWar);
-//	uint32 valueFlags1 = gameSettings->getFlagTypes1();
-//	if(scenarioInfo->fogOfWar == false || scenarioInfo->fogOfWar_exploredFlag) {
-//        valueFlags1 |= ft1_show_map_resources;
-//        gameSettings->setFlagTypes1(valueFlags1);
-//	}
-//	else {
-//        valueFlags1 &= ~ft1_show_map_resources;
-//        gameSettings->setFlagTypes1(valueFlags1);
-//	}
-//
-//	gameSettings->setPathFinderType(static_cast<PathFinderType>(Config::getInstance().getInt("ScenarioPathFinderType",intToStr(pfBasic).c_str())));
 }
 
 void MenuStateScenario::showMessageBox(const string &text, const string &header, bool toggle){
@@ -472,11 +483,8 @@ void MenuStateScenario::showMessageBox(const string &text, const string &header,
 
 void MenuStateScenario::keyDown(SDL_KeyboardEvent key) {
 	Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
-	//if(key == configKeys.getCharKey("SaveGUILayout")) {
 	if(isKeyPressed(configKeys.getSDLKey("SaveGUILayout"),key) == true) {
 		GraphicComponent::saveAllCustomProperties(containerName);
-		//Lang &lang= Lang::getInstance();
-		//console.addLine(lang.get("GUILayoutSaved") + " [" + (saved ? lang.get("Yes") : lang.get("No"))+ "]");
 	}
 }
 

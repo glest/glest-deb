@@ -10,12 +10,11 @@
 // ==============================================================
 
 #include "shader_manager.h"
-
 #include <stdexcept>
-
 #include "graphics_interface.h"
 #include "graphics_factory.h"
 #include "util.h"
+#include "platform_util.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -27,7 +26,10 @@ namespace Shared{ namespace Graphics{
 // =====================================================
 
 ShaderManager::ShaderManager() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 }
 
 ShaderManager::~ShaderManager(){
@@ -37,13 +39,13 @@ void ShaderManager::init(){
 	for(unsigned int i=0; i<shaders.size(); ++i){
 		shaders[i]->init();
 		if(!shaders[i]->compile(logString)){
-			throw runtime_error("Can't compile shader\n");
+			throw megaglest_runtime_error("Can't compile shader\n");
 		}
 	}	
 	for(unsigned int i=0; i<shaderPrograms.size(); ++i){
 		shaderPrograms[i]->init();
 		if(!shaderPrograms[i]->link(logString)){
-			throw runtime_error("Can't link shader\n");
+			throw megaglest_runtime_error("Can't link shader\n");
 		}
 	}	
 }

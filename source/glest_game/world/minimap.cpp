@@ -34,7 +34,11 @@ const float Minimap::exploredAlpha= 0.5f;
 Minimap::Minimap() {
 	fowPixmap0= NULL;
 	fowPixmap1= NULL;
-	fogOfWar= true;//Config::getInstance().getBool("FogOfWar");
+	fowPixmap1_default=NULL;
+	fowPixmap0Copy = NULL;
+	fowPixmap1Copy = NULL;
+	fowPixmap1Copy_default = NULL;
+	fogOfWar= true;
 	gameSettings= NULL;
 	tex=NULL;
 	fowTex=NULL;
@@ -58,24 +62,28 @@ void Minimap::init(int w, int h, const World *world, bool fogOfWar) {
 	float f= 0.f;
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
-		fowPixmap0= new Pixmap2D(potW, potH, 1);
-		fowPixmap1= new Pixmap2D(potW, potH, 1);
+		fowPixmap0 = new Pixmap2D(potW, potH, 1);
+		fowPixmap0Copy = new Pixmap2D(potW, potH, 1);
+		fowPixmap1 = new Pixmap2D(potW, potH, 1);
+		fowPixmap1_default = new Pixmap2D(potW, potH, 1);
+		fowPixmap1Copy = new Pixmap2D(potW, potH, 1);
+		fowPixmap1Copy_default = new Pixmap2D(potW, potH, 1);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-		fowPixmap0->setPixels(&f);
+		fowPixmap0->setPixels(&f,1);
 		if((this->gameSettings->getFlagTypes1() & ft1_show_map_resources) == ft1_show_map_resources) {
 			f = 0.f;
-			fowPixmap1->setPixels(&f);
+			fowPixmap1->setPixels(&f,1);
 			f = 0.5f;
 			for (int y=1; y < scaledH - 1; ++y) {
 				for (int x=1; x < scaledW - 1; ++x) {
-					fowPixmap1->setPixel(x, y, &f);
+					fowPixmap1->setPixel(x, y, &f,1);
 				}
 			}
 		}
 		else {
-			fowPixmap1->setPixels(&f);
+			fowPixmap1->setPixels(&f,1);
 		}
 	}
 
@@ -91,7 +99,7 @@ void Minimap::init(int w, int h, const World *world, bool fogOfWar) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] scaledW = %d, scaledH = %d, potW = %d, potH = %d\n",__FILE__,__FUNCTION__,__LINE__,scaledW,scaledH,potW,potH);
 
 		fowTex->getPixmap()->init(potW, potH, 1);
-		fowTex->getPixmap()->setPixels(&f);
+		fowTex->getPixmap()->setPixels(&f,1);
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -109,27 +117,81 @@ void Minimap::init(int w, int h, const World *world, bool fogOfWar) {
 }
 
 Minimap::~Minimap() {
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingMiniMap","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingMiniMap","",true), true);
 	delete fowPixmap0;
 	fowPixmap0=NULL;
+	delete fowPixmap0Copy;
+	fowPixmap0Copy = NULL;
 	delete fowPixmap1;
 	fowPixmap1=NULL;
+	delete fowPixmap1_default;
+	fowPixmap1_default = NULL;
+	delete fowPixmap1Copy;
+	fowPixmap1Copy=NULL;
+	delete fowPixmap1Copy_default;
+	fowPixmap1Copy_default = NULL;
 }
 
 // ==================== set ====================
 
-void Minimap::incFowTextureAlphaSurface(const Vec2i &sPos, float alpha) {
+void Minimap::incFowTextureAlphaSurface(const Vec2i sPos, float alpha,
+		bool isIncrementalUpdate) {
 	if(fowPixmap1) {
-		assert(sPos.x<fowPixmap1->getW() && sPos.y<fowPixmap1->getH());
+		assert(sPos.x < fowPixmap1->getW() && sPos.y < fowPixmap1->getH());
 
-		if(fowPixmap1->getPixelf(sPos.x, sPos.y)<alpha){
+		if(fowPixmap1->getPixelf(sPos.x, sPos.y) < alpha){
 			fowPixmap1->setPixel(sPos.x, sPos.y, alpha);
+		}
+
+		if(fowPixmap1Copy != NULL && isIncrementalUpdate == true) {
+			if(fowPixmap1Copy->getPixelf(sPos.x, sPos.y) < alpha){
+				fowPixmap1Copy->setPixel(sPos.x, sPos.y, alpha);
+			}
 		}
 	}
 }
 
+void Minimap::copyFowTexAlphaSurface() {
+	if(fowPixmap1_default != NULL && fowPixmap1 != NULL) {
+		fowPixmap1_default->copy(fowPixmap1);
+	}
+	if(fowPixmap1Copy_default != NULL && fowPixmap1Copy != NULL) {
+		fowPixmap1Copy_default->copy(fowPixmap1Copy);
+	}
+}
+void Minimap::restoreFowTexAlphaSurface() {
+	if(fowPixmap1 != NULL && fowPixmap1_default != NULL) {
+		fowPixmap1->copy(fowPixmap1_default);
+	}
+	if(fowPixmap1Copy != NULL && fowPixmap1Copy_default != NULL) {
+		fowPixmap1Copy->copy(fowPixmap1Copy_default);
+	}
+}
+
+void Minimap::setFogOfWar(bool value) {
+	fogOfWar = value;
+	resetFowTex();
+}
+
+void Minimap::copyFowTex() {
+	if(fowPixmap0Copy != NULL && fowPixmap0 != NULL) {
+		fowPixmap0Copy->copy(fowPixmap0);
+	}
+	if(fowPixmap1Copy != NULL && fowPixmap1 != NULL) {
+		fowPixmap1Copy->copy(fowPixmap1);
+	}
+}
+void Minimap::restoreFowTex() {
+	if(fowPixmap0 != NULL && fowPixmap0Copy != NULL) {
+		fowPixmap0->copy(fowPixmap0Copy);
+	}
+	if(fowPixmap1 != NULL && fowPixmap1Copy != NULL) {
+		fowPixmap1->copy(fowPixmap1Copy);
+	}
+}
+
 void Minimap::resetFowTex() {
-	if(fowTex) {
+	if(fowTex && fowPixmap0 && fowPixmap1) {
 		Pixmap2D *tmpPixmap= fowPixmap0;
 		fowPixmap0= fowPixmap1;
 		fowPixmap1= tmpPixmap;
@@ -137,33 +199,42 @@ void Minimap::resetFowTex() {
 		// Could turn off ONLY fog of war by setting below to false
 		bool overridefogOfWarValue = fogOfWar;
 
-		for(int i=0; i<fowTex->getPixmap()->getW(); ++i){
-			for(int j=0; j<fowTex->getPixmap()->getH(); ++j){
+		for(int indexPixelWidth = 0;
+				indexPixelWidth < fowTex->getPixmap()->getW();
+				++indexPixelWidth){
+			for(int indexPixelHeight = 0;
+					indexPixelHeight < fowTex->getPixmap()->getH();
+					++indexPixelHeight){
 				if ((fogOfWar == false && overridefogOfWarValue == false) &&
 					(gameSettings->getFlagTypes1() & ft1_show_map_resources) != ft1_show_map_resources) {
-					float p0 = fowPixmap0->getPixelf(i, j);
-					float p1 = fowPixmap1->getPixelf(i, j);
+					//printf("Line: %d\n",__LINE__);
+
+					float p0 = fowPixmap0->getPixelf(indexPixelWidth, indexPixelHeight);
+					float p1 = fowPixmap1->getPixelf(indexPixelWidth, indexPixelHeight);
 					if (p0 > p1) {
-						fowPixmap1->setPixel(i, j, p0);
+						fowPixmap1->setPixel(indexPixelWidth, indexPixelHeight, p0);
 					}
 					else {
-						fowPixmap1->setPixel(i, j, p1);
+						fowPixmap1->setPixel(indexPixelWidth, indexPixelHeight, p1);
 					}
 				}
 				else if((fogOfWar && overridefogOfWarValue) ||
 					(gameSettings->getFlagTypes1() & ft1_show_map_resources) != ft1_show_map_resources) {
-					float p0= fowPixmap0->getPixelf(i, j);
-					float p1= fowPixmap1->getPixelf(i, j);
+					//printf("Line: %d\n",__LINE__);
 
-					if(p1>exploredAlpha){
-						fowPixmap1->setPixel(i, j, exploredAlpha);
+					float p0= fowPixmap0->getPixelf(indexPixelWidth, indexPixelHeight);
+					float p1= fowPixmap1->getPixelf(indexPixelWidth, indexPixelHeight);
+
+					if(p1 > exploredAlpha) {
+						fowPixmap1->setPixel(indexPixelWidth, indexPixelHeight, exploredAlpha);
 					}
-					if(p0>p1){
-						fowPixmap1->setPixel(i, j, p0);
+					if(p0 > p1) {
+						fowPixmap1->setPixel(indexPixelWidth, indexPixelHeight, p0);
 					}
 				}
-				else{
-					fowPixmap1->setPixel(i, j, 1.f);
+				else {
+					//printf("Line: %d\n",__LINE__);
+					fowPixmap1->setPixel(indexPixelWidth, indexPixelHeight, 1.f);
 				}
 			}
 		}
@@ -171,13 +242,18 @@ void Minimap::resetFowTex() {
 }
 
 void Minimap::updateFowTex(float t) {
-	if(fowPixmap0 && fowTex) {
-		for(int i=0; i<fowPixmap0->getW(); ++i){
-			for(int j=0; j<fowPixmap0->getH(); ++j){
-				float p1= fowPixmap1->getPixelf(i, j);
-				if(p1!=fowTex->getPixmap()->getPixelf(i, j)){
-					float p0= fowPixmap0->getPixelf(i, j);
-					fowTex->getPixmap()->setPixel(i, j, p0+(t*(p1-p0)));
+	if(fowTex && fowPixmap0 && fowPixmap1) {
+		for(int indexPixelWidth = 0;
+				indexPixelWidth < fowPixmap0->getW();
+				++indexPixelWidth){
+			for(int indexPixelHeight = 0;
+					indexPixelHeight < fowPixmap0->getH();
+					++indexPixelHeight){
+				float p1 = fowPixmap1->getPixelf(indexPixelWidth, indexPixelHeight);
+				float p2 = fowTex->getPixmap()->getPixelf(indexPixelWidth, indexPixelHeight);
+				if(p1 != p2) {
+					float p0 = fowPixmap0->getPixelf(indexPixelWidth, indexPixelHeight);
+					fowTex->getPixmap()->setPixel(indexPixelWidth, indexPixelHeight, p0+(t*(p1-p0)));
 				}
 			}
 		}
@@ -192,7 +268,7 @@ void Minimap::computeTexture(const World *world) {
 	const Map *map= world->getMap();
 
 	if(tex) {
-		tex->getPixmap()->setPixels(Vec4f(1.f, 1.f, 1.f, 0.1f).ptr());
+		tex->getPixmap()->setPixels(Vec4f(1.f, 1.f, 1.f, 0.1f).ptr(),tex->getPixmap()->getComponents());
 
 		for(int j=0; j<tex->getPixmap()->getH(); ++j){
 			for(int i=0; i<tex->getPixmap()->getW(); ++i){
@@ -216,6 +292,35 @@ void Minimap::computeTexture(const World *world) {
 				}
 				tex->getPixmap()->setPixel(i, j, color);
 			}
+		}
+	}
+}
+
+void Minimap::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *minimapNode = rootNode->addChild("Minimap");
+
+	if(fowPixmap1 != NULL) {
+		for(std::size_t index = 0; index < fowPixmap1->getPixelByteCount(); ++index) {
+			if(fowPixmap1->getPixels()[index] != 0) {
+				XmlNode *fowPixmap1Node = minimapNode->addChild("fowPixmap1");
+				fowPixmap1Node->addAttribute("index",intToStr(index), mapTagReplacements);
+				fowPixmap1Node->addAttribute("pixel",intToStr(fowPixmap1->getPixels()[index]), mapTagReplacements);
+			}
+		}
+	}
+}
+
+void Minimap::loadGame(const XmlNode *rootNode) {
+	const XmlNode *minimapNode = rootNode->getChild("Minimap");
+
+	if(minimapNode->hasChild("fowPixmap1") == true) {
+		vector<XmlNode *> fowPixmap1NodeList = minimapNode->getChildList("fowPixmap1");
+		for(unsigned int i = 0; i < fowPixmap1NodeList.size(); ++i) {
+			XmlNode *fowPixmap1Node = fowPixmap1NodeList[i];
+
+			int pixelIndex = fowPixmap1Node->getAttribute("index")->getIntValue();
+			fowPixmap1->getPixels()[pixelIndex] = fowPixmap1Node->getAttribute("pixel")->getIntValue();
 		}
 	}
 }

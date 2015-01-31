@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_MENUSTATEJOINGAME_H_
 #define _GLEST_GAME_MENUSTATEJOINGAME_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "properties.h"
 #include "main_menu.h"
 #include "chat_manager.h"
@@ -66,7 +71,8 @@ private:
 	bool autoConnectToServer;
 
 public:
-	MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool connect= false, Ip serverIp= Ip());
+	MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool connect= false, Ip serverIp= Ip(),int portNumberOverride=-1);
+	MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool *autoFindHost);
 	virtual ~MenuStateJoinGame();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
@@ -81,7 +87,9 @@ public:
     void reloadUI();
 
 private:
-	void connectToServer();
+
+    void CommonInit(bool connect, Ip serverIp,int portNumberOverride);
+	bool connectToServer();
 	virtual void DiscoveredServers(std::vector<string> serverList);
 };
 }}//end namespace

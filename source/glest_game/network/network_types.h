@@ -12,9 +12,13 @@
 #ifndef _GLEST_GAME_NETWORKTYPES_H_
 #define _GLEST_GAME_NETWORKTYPES_H_
 
-#include <string>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
-#include "types.h"
+#include <string>
+#include "data_types.h"
 #include "vec.h"
 #include "command.h"
 #include "leak_dumper.h"
@@ -31,11 +35,11 @@ using Shared::Graphics::Vec2i;
 namespace Glest{ namespace Game{
 
 class World;
-
 // =====================================================
 //	class NetworkString
 // =====================================================
 
+#pragma pack(push, 1)
 template<int S>
 class NetworkString{
 private:
@@ -57,8 +61,10 @@ public:
 		buffer[maxBufferSize-1] = '\0';
 	}
 
+	char *getBuffer() { return &buffer[0]; }
 	string getString() const { return (buffer[0] != '\0' ? buffer : ""); }
 };
+#pragma pack(pop)
 
 // =====================================================
 //	class NetworkCommand
@@ -70,7 +76,9 @@ enum NetworkCommandType {
 	nctSetMeetingPoint,
 	nctSwitchTeam,
 	nctSwitchTeamVote,
-	nctPauseResume
+	nctPauseResume,
+	nctPlayerStatusChange,
+	nctDisconnectNetworkPlayer
 	//nctNetworkCommand
 };
 
@@ -80,7 +88,39 @@ enum NetworkCommandType {
 
 #pragma pack(push, 1)
 class NetworkCommand {
-private:
+
+public:
+	NetworkCommand() {
+		networkCommandType=0;
+		unitId=0;
+		unitTypeId=0;
+		commandTypeId=0;
+		positionX=0;
+		positionY=0;
+		targetId=0;
+		wantQueue=0;
+		fromFactionIndex=0;
+		unitFactionUnitCount=0;
+		unitFactionIndex=0;
+		commandStateType=0;
+		commandStateValue=0;
+		unitCommandGroupId=0;
+	}
+
+	NetworkCommand(
+		World *world,
+		int networkCommandType,
+		int unitId,
+		int commandTypeId= -1,
+		const Vec2i &pos= Vec2i(0),
+		int unitTypeId= -1,
+		int targetId= -1,
+		int facing= -1,
+		bool wantQueue = false,
+		CommandStateType commandStateType = cst_None,
+		int commandTypeStateValue = -1,
+		int unitCommandGroupId = -1);
+
 	int16 networkCommandType;
 	int32 unitId;
 	int16 unitTypeId;
@@ -95,22 +135,6 @@ private:
 	int8 commandStateType;
 	int32 commandStateValue;
 	int32 unitCommandGroupId;
-
-public:
-	NetworkCommand(){};
-	NetworkCommand(
-		World *world,
-		int networkCommandType,
-		int unitId,
-		int commandTypeId= -1,
-		const Vec2i &pos= Vec2i(0),
-		int unitTypeId= -1,
-		int targetId= -1,
-		int facing= -1,
-		bool wantQueue = false,
-		CommandStateType commandStateType = cst_None,
-		int commandTypeStateValue = -1,
-		int unitCommandGroupId = -1);
 
 	NetworkCommandType getNetworkCommandType() const	{return static_cast<NetworkCommandType>(networkCommandType);}
 	int getUnitId() const								{return unitId;}
@@ -130,6 +154,12 @@ public:
 
     void preprocessNetworkCommand(World *world);
 	string toString() const;
+
+	void toEndian();
+	void fromEndian();
+
+	XmlNode * saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 #pragma pack(pop)
 

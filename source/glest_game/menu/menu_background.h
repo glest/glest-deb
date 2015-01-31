@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_MENUBACKGROUND_H_
 #define _GLEST_GAME_MENUBACKGROUND_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "particle.h"
 #include "camera.h"
 #include "vec.h"
@@ -74,8 +79,11 @@ private:
 	float fade;
 	Vec3f aboutPosition;
 
+	RainParticleSystem *rps;
+
 public:
 	MenuBackground();
+	~MenuBackground();
 
 	bool getWater() const						{return water;}
 	float getWaterHeight() const				{return waterHeight;}
@@ -99,6 +107,8 @@ public:
 
 private:
 	Vec2f computeRaindropPos();
+	void createRainParticleSystem();
+	void cleanup();
 };
 
 }} //end namespace

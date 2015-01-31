@@ -24,6 +24,9 @@
 //#include "glm.h"
 //#include "md5util.h"
 //#include "Mathlib.h"
+
+#include "video_player.h"
+
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -90,6 +93,14 @@ Intro::Intro(Program *program):
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	CoreData &coreData= CoreData::getInstance();
+	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false &&
+		(::Shared::Graphics::VideoPlayer::hasBackEndVideoPlayer() == false ||
+		CoreData::getInstance().hasIntroVideoFilename() == false)) {
+		soundRenderer.playMusic(CoreData::getInstance().getIntroMusic());
+	}
+
 	const Metrics &metrics= Metrics::getInstance();
 	int w= metrics.getVirtualW();
 	int h= metrics.getVirtualH();
@@ -97,6 +108,7 @@ Intro::Intro(Program *program):
 	mouseX = 0;
 	mouseY = 0;
 	mouse2d = 0;
+	exitAfterIntroVideo = false;
 
 	Renderer &renderer= Renderer::getInstance();
 	//renderer.init3dListMenu(NULL);
@@ -194,25 +206,23 @@ Intro::Intro(Program *program):
 		string introPath = getGameCustomCoreDataPath(data_path, "") + "data/core/menu/main_model/intro*.g3d";
 		vector<string> introModels;
 		findAll(introPath, introModels, false, false);
-		for(int i = 0; i < introModels.size(); ++i) {
+		for(int i = 0; i < (int)introModels.size(); ++i) {
 			string logo = introModels[i];
-			Model *model= renderer.newModel(rsMenu);
-			if(model) {
-				model->load(getGameCustomCoreDataPath(data_path, "") + "data/core/menu/main_model/" + logo);
-				models.push_back(model);
+			Model *model= renderer.newModel(rsMenu, getGameCustomCoreDataPath(data_path, "") + "data/core/menu/main_model/" + logo);
+            if(model) {
+                models.push_back(model);
 				//printf("#1 Intro model [%s]\n",model->getFileName().c_str());
 			}
 		}
 
-		if(models.size() == 0) {
+		if(models.empty() == true) {
 			introPath = data_path + "data/core/menu/main_model/intro*.g3d";
 			//vector<string> introModels;
 			findAll(introPath, introModels, false, false);
-			for(int i = 0; i < introModels.size(); ++i) {
+			for(int i = 0; i < (int)introModels.size(); ++i) {
 				string logo = introModels[i];
-				Model *model= renderer.newModel(rsMenu);
-				if(model) {
-					model->load(data_path + "data/core/menu/main_model/" + logo);
+				Model *model= renderer.newModel(rsMenu, data_path + "data/core/menu/main_model/" + logo);
+                if(model) {
 					models.push_back(model);
 					//printf("#2 Intro model [%s]\n",model->getFileName().c_str());
 				}
@@ -222,23 +232,22 @@ Intro::Intro(Program *program):
 		if(showIntroModelsRandom == true) {
 			std::vector<Model *> modelList;
 
-			unsigned int seed = time(NULL);
-			srand(seed);
+			//unsigned int seed = time(NULL);
+			Chrono seed(true);
+			srand((unsigned int)seed.getCurTicks());
 			int failedLookups=0;
 			std::map<int,bool> usedIndex;
 			for(;modelList.size() < models.size();) {
 				int index = rand() % models.size();
 				if(usedIndex.find(index) != usedIndex.end()) {
 					failedLookups++;
-					seed = time(NULL) / failedLookups;
-					srand(seed);
+					srand((unsigned int)seed.getCurTicks() / failedLookups);
 					continue;
 				}
 				//printf("picIndex = %d list count = %d\n",picIndex,coreData.getMiscTextureList().size());
 				modelList.push_back(models[index]);
 				usedIndex[index]=true;
-				seed = time(NULL) / modelList.size();
-				srand(seed);
+				srand((unsigned int)seed.getCurTicks() / (unsigned int)modelList.size());
 			}
 			models = modelList;
 		}
@@ -248,7 +257,7 @@ Intro::Intro(Program *program):
 	int appear= Intro::appearTime;
 	int disappear= Intro::showTime+Intro::appearTime+(Intro::disapearTime * 2);
 
-	const int maxIntroLines = 100;
+	const unsigned int maxIntroLines = 100;
 	Lang &lang= Lang::getInstance();
 	for(unsigned int i = 1; i < maxIntroLines; ++i) {
 		string introTagName 		= "IntroText" + intToStr(i);
@@ -259,14 +268,14 @@ Intro::Intro(Program *program):
 			string lineText = "";
 
 			if(lang.hasString(introTagName,"",true) == true) {
-				lineText = lang.get(introTagName,"",true);
+				lineText = lang.getString(introTagName,"",true);
 			}
 
 			string showStartTime = "IntroStartMilliseconds" + intToStr(i);
 
 			int displayTime = appear;
 			if(lang.hasString(showStartTime,"",true) == true) {
-				displayTime = strToInt(lang.get(showStartTime,"",true));
+				displayTime = strToInt(lang.getString(showStartTime,"",true));
 			}
 			else {
 				if(i == 1) {
@@ -287,7 +296,7 @@ Intro::Intro(Program *program):
 				string introTagTextureWidthName 	= "IntroTextureWidth" + intToStr(i);
 				string introTagTextureHeightName 	= "IntroTextureHeight" + intToStr(i);
 
-				lineText = lang.get(introTagTextureName,"",true);
+				lineText = lang.getString(introTagTextureName,"",true);
 				Texture2D *logoTexture= renderer.newTexture2D(rsGlobal);
 				if(logoTexture) {
 					logoTexture->setMipmap(false);
@@ -302,7 +311,7 @@ Intro::Intro(Program *program):
 					textureWidth = logoTexture->getTextureWidth();
 				}
 				if(lang.hasString(introTagTextureWidthName,"",true) == true) {
-					textureWidth = strToInt(lang.get(introTagTextureWidthName,"",true));
+					textureWidth = strToInt(lang.getString(introTagTextureWidthName,"",true));
 				}
 
 				int textureHeight = 128;
@@ -310,7 +319,7 @@ Intro::Intro(Program *program):
 					textureHeight = logoTexture->getTextureHeight();
 				}
 				if(lang.hasString(introTagTextureHeightName,"",true) == true) {
-					textureHeight = strToInt(lang.get(introTagTextureHeightName,"",true));
+					textureHeight = strToInt(lang.getString(introTagTextureHeightName,"",true));
 				}
 
 				texts.push_back(new Text(logoTexture, Vec2i(w/2-(textureWidth/2), h/2-(textureHeight/2)), Vec2i(textureWidth, textureHeight), displayTime));
@@ -323,7 +332,7 @@ Intro::Intro(Program *program):
 
 				int textX = -1;
 				if(lang.hasString(introTagTextXName,"",true) == true) {
-					string value = lang.get(introTagTextXName,"",true);
+					string value = lang.getString(introTagTextXName,"",true);
 					if(value.length() > 0 &&
 							(value[0] == '+' || value[0] == '-')) {
 						textX = w/2 + strToInt(value);
@@ -335,7 +344,7 @@ Intro::Intro(Program *program):
 
 				int textY = -1;
 				if(lang.hasString(introTagTextYName,"",true) == true) {
-					string value = lang.get(introTagTextYName,"",true);
+					string value = lang.getString(introTagTextYName,"",true);
 					if(value.length() > 0 &&
 							(value[0] == '+' || value[0] == '-')) {
 						textY = h/2 + strToInt(value);
@@ -349,7 +358,7 @@ Intro::Intro(Program *program):
 				Font3D *font3d = coreData.getMenuFontVeryBig3D();
 
 				if(lang.hasString(introTagTextFontTypeName,"",true) == true) {
-					string value =lang.get(introTagTextFontTypeName,"",true);
+					string value =lang.getString(introTagTextFontTypeName,"",true);
 					if(value == "displaynormal") {
 						font = coreData.getDisplayFont();
 						font3d = coreData.getDisplayFont3D();
@@ -385,7 +394,7 @@ Intro::Intro(Program *program):
 	}
 	modelShowTime = disappear *(displayItemNumber);
 	if(lang.hasString("IntroModelStartMilliseconds","",true) == true) {
-		modelShowTime = strToInt(lang.get("IntroModelStartMilliseconds","",true));
+		modelShowTime = strToInt(lang.getString("IntroModelStartMilliseconds","",true));
 	}
 	else {
 		modelShowTime = disappear *(displayItemNumber);
@@ -413,29 +422,40 @@ Intro::Intro(Program *program):
 
 		std::vector<Texture2D *> intoTexList;
 		if(showIntroPicsRandom == true) {
-			unsigned int seed = time(NULL);
-			srand(seed);
+			//unsigned int seed = time(NULL);
+			Chrono seed(true);
+			srand((unsigned int)seed.getCurTicks());
 			int failedLookups=0;
 			std::map<int,bool> usedIndex;
-			for(;intoTexList.size() < showIntroPics;) {
+			for(;(int)intoTexList.size() < showIntroPics;) {
 				int picIndex = rand() % coreData.getMiscTextureList().size();
 				if(usedIndex.find(picIndex) != usedIndex.end()) {
 					failedLookups++;
-					seed = time(NULL) / failedLookups;
-					srand(seed);
-					continue;
+					srand((unsigned int)seed.getCurTicks() / failedLookups);
+
+					if(failedLookups > 10000) {
+						for(unsigned int i = 0;
+								i < coreData.getMiscTextureList().size(); ++i) {
+							if(usedIndex.find(i) == usedIndex.end()) {
+								picIndex = i;
+								break;
+							}
+						}
+					}
+					else {
+						continue;
+					}
 				}
 				//printf("picIndex = %d list count = %d\n",picIndex,coreData.getMiscTextureList().size());
 				intoTexList.push_back(coreData.getMiscTextureList()[picIndex]);
 				usedIndex[picIndex]=true;
-				seed = time(NULL) / intoTexList.size();
-				srand(seed);
+				srand((unsigned int)seed.getCurTicks() / (unsigned int)intoTexList.size());
 			}
 		}
 		else {
 			for(unsigned int i = 0;
-					i < coreData.getMiscTextureList().size() &&
-					i < showIntroPics; ++i) {
+					i < (unsigned int)coreData.getMiscTextureList().size() &&
+					i < (unsigned int)showIntroPics; ++i) {
 				Texture2D *tex = coreData.getMiscTextureList()[i];
 				intoTexList.push_back(tex);
 			}
@@ -473,22 +493,48 @@ Intro::Intro(Program *program):
 
 			int textureStartTime = disappear * displayItemNumber;
 			if(lang.hasString("IntroTextureStartMilliseconds","",true) == true) {
-				textureStartTime = strToInt(lang.get("IntroTextureStartMilliseconds","",true));
+				textureStartTime = strToInt(lang.getString("IntroTextureStartMilliseconds","",true));
 			}
 
 			texts.push_back(new Text(tex, texPlacement, Vec2i(tex->getTextureWidth(), tex->getTextureHeight()), textureStartTime +(showMiscTime*(i+1))));
 		}
 	}
 
-	//test = NULL;
-	//Shared::Graphics::md5::initMD5OpenGL(data_path + "data/core/shaders/");
-	//md5Test = Shared::Graphics::md5::getMD5ObjectFromLoaderScript("/home/softcoder/Code/megaglest/trunk/mk/linux/mydata/test/mv1/mv1.loader");
-
-	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+		renderer.swapBuffers();
+	}
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	soundRenderer.playMusic(CoreData::getInstance().getIntroMusic());
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false &&
+		::Shared::Graphics::VideoPlayer::hasBackEndVideoPlayer() == true &&
+		CoreData::getInstance().hasIntroVideoFilename() == true) {
+		string introVideoFile = CoreData::getInstance().getIntroVideoFilename();
+		string introVideoFileFallback = CoreData::getInstance().getIntroVideoFilenameFallback();
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Intro Video [%s] [%s]\n",introVideoFile.c_str(),introVideoFileFallback.c_str());
+
+		Context *c= GraphicsInterface::getInstance().getCurrentContext();
+		SDL_Surface *screen = static_cast<ContextGl*>(c)->getPlatformContextGlPtr()->getScreen();
+
+		string vlcPluginsPath = Config::getInstance().getString("VideoPlayerPluginsPath","");
+		//printf("screen->w = %d screen->h = %d screen->format->BitsPerPixel = %d\n",screen->w,screen->h,screen->format->BitsPerPixel);
+		::Shared::Graphics::VideoPlayer player(
+				&Renderer::getInstance(),
+				introVideoFile,
+				introVideoFileFallback,
+				screen,
+				0,0,
+				screen->w,
+				screen->h,
+				screen->format->BitsPerPixel,
+				false,
+				vlcPluginsPath,
+				SystemFlags::VERBOSE_MODE_ENABLED);
+		player.PlayVideo();
+		exitAfterIntroVideo = true;
+		return;
+	}
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -505,6 +551,11 @@ Intro::~Intro() {
 }
 
 void Intro::update() {
+	if(exitAfterIntroVideo == true) {
+		mouseUpLeft(0, 0);
+		//cleanup();
+		return;
+	}
 	timer++;
 	if(timer > introTime * GameConstants::updateFps / 1000){
 	    SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -517,8 +568,7 @@ void Intro::update() {
 	    SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		AutoTest::getInstance().updateIntro(program);
-
-		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		return;
 	}
 
 	mouse2d= (mouse2d+1) % Renderer::maxMouse2dAnim;
@@ -568,7 +618,7 @@ void Intro::renderModelBackground() {
 	if(models.empty() == false) {
 		int difTime= 1000 * timer / GameConstants::updateFps - modelShowTime;
 		int totalModelShowTime = Intro::introTime - modelShowTime;
-		int individualModelShowTime = totalModelShowTime / models.size();
+		int individualModelShowTime = totalModelShowTime / (int)models.size();
 
 		//printf("difTime = %d individualModelShowTime = %d modelIndex = %d\n",difTime,individualModelShowTime,modelIndex);
 
@@ -576,7 +626,7 @@ void Intro::renderModelBackground() {
 		if(difTime > 0) {
 			if(difTime > ((modelIndex+1) * individualModelShowTime)) {
 				//int oldmodelIndex = modelIndex;
-				if(modelIndex+1 < models.size()) {
+				if(modelIndex + 1 < (int)models.size()) {
 					modelIndex++;
 
 					//position
@@ -614,7 +664,6 @@ void Intro::render() {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
-	int difTime=0;
 
 	canRender();
 	incrementFps();
@@ -625,66 +674,15 @@ void Intro::render() {
 	renderer.clearZBuffer();
 	renderer.loadCameraMatrix(&camera);
 
-//	const Vec3f &position= camera.getConstPosition();
-//	Quaternion orientation= camera.getOrientation().conjugate();
-//	Shared::Graphics::md5::Matrix4x4f modelViewMatrix;
-//	float *mtx = orientation.toMatrix4().ptr();
-//	for(unsigned int i = 0; i < 16; ++i) {
-//		modelViewMatrix._m[i] = mtx[i];
-//	}
-
 	renderModelBackground();
 	renderer.renderParticleManager(rsMenu);
 
-	//printf("animTimer.deltaTime () = %f anim = %f animTimer.deltaTime() / 25.0 = %f\n",animTimer.deltaTime (),anim,animTimer.deltaTime() / 25.0);
-	//double anim = animTimer.deltaTime();
-	//Shared::Graphics::md5::renderMD5Object(md5Test, animTimer.deltaTime() / 30.0, &modelViewMatrix);
-
-//	if(test == NULL) {
-//		glClearColor (0.0, 0.0, 0.0, 0.0);
-//		glEnable(GL_DEPTH_TEST);
-//		glShadeModel (GL_SMOOTH);
-//
-//		test = glmReadOBJ("/home/softcoder/Code/megaglest/trunk/mk/linux/r_stack_fall.obj");
-//		glmUnitize(test);
-//		glmFacetNormals(test);
-//		glmVertexNormals(test, 90.0);
-//
-//		int h = 900;
-//		int w = 1680;
-//		glViewport (0, 0, (GLsizei) w, (GLsizei) h);
-//		glMatrixMode (GL_PROJECTION);
-//		glLoadIdentity ();
-//		gluPerspective(60.0, (GLfloat) w/(GLfloat) h, 1.0, 20.0);
-//		glMatrixMode (GL_MODELVIEW);
-//	}
-//	if(test != NULL) {
-//
-//		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-//		glLoadIdentity();
-//		glTranslatef(0,0,-5);
-//
-//		glPushMatrix();
-//		// I added these to be able to rotate the whole scene so you can see the box and textures
-//		glRotatef(90,1,0,0);
-//		glRotatef(0,0,1,0);
-//		glRotatef(0,0,0,1);
-//		glmDraw(test, GLM_SMOOTH| GLM_TEXTURE);
-//		//glmDraw(test, GLM_SMOOTH| GLM_TEXTURE|GLM_COLOR);
-//		//glmDraw(test, GLM_FLAT);
-//		glPopMatrix();
-//
-//		renderer.swapBuffers();
-//		return;
-//		//printf("Rendering test");
-//	}
-
 	renderer.reset2d();
 
-	for(int i = 0; i < texts.size(); ++i) {
+	for(int i = 0; i < (int)texts.size(); ++i) {
 		Text *text= texts[i];
 
-		difTime= 1000 * timer / GameConstants::updateFps - text->getTime();
+		int difTime= 1000 * timer / GameConstants::updateFps - text->getTime();
 
 		if(difTime > 0 && difTime < appearTime + showTime + disapearTime) {
 			float alpha= 1.f;
@@ -804,7 +802,9 @@ void Intro::mouseUpLeft(int x, int y) {
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	soundRenderer.playMusic(CoreData::getInstance().getMenuMusic());
+	if(CoreData::getInstance().hasMainMenuVideoFilename() == false) {
+		soundRenderer.playMusic(CoreData::getInstance().getMenuMusic());
+	}
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 

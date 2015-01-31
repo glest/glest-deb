@@ -78,7 +78,7 @@ int pot(int x) {
 	return val;
 }
 
-const uint64 MIN_BYTES_TO_COMPRESS = 12;
+const std::size_t MIN_BYTES_TO_COMPRESS = 12;
 
 static std::string getSupportCompressedTextureFormatString(int format) {
 	std::string result = intToStr(format) + "[" + intToHex(format) + "]";
@@ -328,7 +328,7 @@ GLint toCompressionFormatGl(GLint format) {
 	}
 
 	static std::vector<int> supportedCompressionFormats = getSupportCompressedTextureFormats();
-	if(supportedCompressionFormats.size() <= 0) {
+	if(supportedCompressionFormats.empty() == true) {
 		return format;
 	}
 
@@ -486,7 +486,7 @@ bool TextureGl::supports_FBO_RBO() {
 
 void TextureGl::setup_FBO_RBO() {
 	if(getTextureWidth() < 0 || getTextureHeight() < 0) {
-		throw runtime_error("getTextureWidth() < 0 || getTextureHeight() < 0");
+		throw megaglest_runtime_error("getTextureWidth() < 0 || getTextureHeight() < 0");
 	}
 
 	// Need some work to get extensions properly working in Windows (use Glew lib)
@@ -631,7 +631,7 @@ TextureGl::~TextureGl() {
 // =====================================================
 //	class Texture1DGl
 // =====================================================
-Texture1DGl::Texture1DGl() : TextureGl(), Texture1D() {}
+Texture1DGl::Texture1DGl() : Texture1D(), TextureGl() {}
 
 Texture1DGl::~Texture1DGl() {
 	end();
@@ -689,11 +689,11 @@ void Texture1DGl::init(Filter filter, int maxAnisotropy) {
 			//
 
 			if(error != 0) {
-				//throw runtime_error("Error building texture 1D mipmaps");
+				//throw megaglest_runtime_error("Error building texture 1D mipmaps");
 				const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-				char szBuf[1024]="";
-				sprintf(szBuf,"Error building texture 1D mipmaps, returned: %d [%s] for [%s] w = %d, glCompressionFormat = %d",error,errorString,pixmap.getPath().c_str(),pixmap.getW(),glCompressionFormat);
-				throw runtime_error(szBuf);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error building texture 1D mipmaps, returned: %d [%s] for [%s] w = %d, glCompressionFormat = %d",error,errorString,pixmap.getPath().c_str(),pixmap.getW(),glCompressionFormat);
+				throw megaglest_runtime_error(szBuf);
 			}
 		}
 		else {
@@ -722,11 +722,11 @@ void Texture1DGl::init(Filter filter, int maxAnisotropy) {
 			//
 
 			if(error != GL_NO_ERROR) {
-				//throw runtime_error("Error creating texture 1D");
+				//throw megaglest_runtime_error("Error creating texture 1D");
 				const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-				char szBuf[1024]="";
-				sprintf(szBuf,"Error creating texture 1D, returned: %d [%s] (%X) [%s] w = %d, glCompressionFormat = %d",error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),glCompressionFormat);
-				throw runtime_error(szBuf);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error creating texture 1D, returned: %d [%s] (%X) [%s] w = %d, glCompressionFormat = %d",error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),glCompressionFormat);
+				throw megaglest_runtime_error(szBuf);
 			}
 		}
 		inited= true;
@@ -753,7 +753,7 @@ void Texture1DGl::end(bool deletePixelBuffer) {
 //	class Texture2DGl
 // =====================================================
 
-Texture2DGl::Texture2DGl() : TextureGl(), Texture2D() {}
+Texture2DGl::Texture2DGl() : Texture2D(), TextureGl() {}
 
 Texture2DGl::~Texture2DGl() {
 	end();
@@ -763,6 +763,7 @@ void Texture2DGl::init(Filter filter, int maxAnisotropy) {
 	assertGl();
 
 	if(inited == false) {
+		assertGl();
 		//params
 		GLint wrap= toWrapModeGl(wrapMode);
 		GLint glFormat= toFormatGl(format, pixmap.getComponents());
@@ -772,6 +773,7 @@ void Texture2DGl::init(Filter filter, int maxAnisotropy) {
 			glCompressionFormat = glInternalFormat;
 		}
 
+		assertGl();
 		//pixel init var
 		const uint8* pixels= pixmapInit? pixmap.getPixels(): NULL;
 
@@ -793,7 +795,7 @@ void Texture2DGl::init(Filter filter, int maxAnisotropy) {
 		}
 
 		if(mipmap) {
-			GLuint glFilter= filter==fTrilinear? GL_LINEAR_MIPMAP_LINEAR: GL_LINEAR_MIPMAP_NEAREST;
+			GLuint glFilter= (filter == fTrilinear ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR_MIPMAP_NEAREST);
 
 			//build mipmaps
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, glFilter);
@@ -858,11 +860,11 @@ void Texture2DGl::init(Filter filter, int maxAnisotropy) {
 			//
 
 			if(error != GL_NO_ERROR) {
-				//throw runtime_error("Error building texture 2D mipmaps");
+				//throw megaglest_runtime_error("Error building texture 2D mipmaps");
 				const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-				char szBuf[1024]="";
-				sprintf(szBuf,"Error building texture 2D mipmaps [%s], returned: %d [%s] for [%s] w = %d, h = %d, glCompressionFormat = %d",this->path.c_str(),error,errorString,(pixmap.getPath() != "" ? pixmap.getPath().c_str() : this->path.c_str()),pixmap.getW(),pixmap.getH(),glCompressionFormat);
-				throw runtime_error(szBuf);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error building texture 2D mipmaps [%s], returned: %d [%s] for [%s] w = %d, h = %d, glCompressionFormat = %d",this->path.c_str(),error,errorString,(pixmap.getPath() != "" ? pixmap.getPath().c_str() : this->path.c_str()),pixmap.getW(),pixmap.getH(),glCompressionFormat);
+				throw megaglest_runtime_error(szBuf);
 			}
 		}
 		else {
@@ -925,13 +927,13 @@ void Texture2DGl::init(Filter filter, int maxAnisotropy) {
 
 			//
 
-			//throw runtime_error("TEST!");
+			//throw megaglest_runtime_error("TEST!");
 
 			if(error != GL_NO_ERROR) {
 				const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-				char szBuf[1024]="";
-				sprintf(szBuf,"Error creating texture 2D [%s], returned: %d [%s] (%X) [%s] w = %d, h = %d, glInternalFormat = %d, glFormat = %d, glCompressionFormat = %d",this->path.c_str(),error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),pixmap.getH(),glInternalFormat,glFormat,glCompressionFormat);
-				throw runtime_error(szBuf);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error creating texture 2D path [%s], returned: %d [%s] (%X) [%s] w = %d, h = %d, glInternalFormat = %d, glFormat = %d, glCompressionFormat = %d",this->path.c_str(),error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),pixmap.getH(),glInternalFormat,glFormat,glCompressionFormat);
+				throw megaglest_runtime_error(szBuf);
 			}
 		}
 		inited= true;
@@ -959,7 +961,7 @@ void Texture2DGl::end(bool deletePixelBuffer) {
 //	class Texture3DGl
 // =====================================================
 
-Texture3DGl::Texture3DGl() : TextureGl(), Texture3D() {}
+Texture3DGl::Texture3DGl() : Texture3D(), TextureGl() {}
 
 Texture3DGl::~Texture3DGl() {
 	end();
@@ -1037,11 +1039,11 @@ void Texture3DGl::init(Filter filter, int maxAnisotropy) {
 		//
 
 		if(error != GL_NO_ERROR) {
-			//throw runtime_error("Error creating texture 3D");
+			//throw megaglest_runtime_error("Error creating texture 3D");
 			const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-			char szBuf[1024]="";
-			sprintf(szBuf,"Error creating texture 3D, returned: %d [%s] (%X) [%s] w = %d, h = %d, d = %d, glCompressionFormat = %d",error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),pixmap.getH(),pixmap.getD(),glCompressionFormat);
-			throw runtime_error(szBuf);
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"Error creating texture 3D, returned: %d [%s] (%X) [%s] w = %d, h = %d, d = %d, glCompressionFormat = %d",error,errorString,error,pixmap.getPath().c_str(),pixmap.getW(),pixmap.getH(),pixmap.getD(),glCompressionFormat);
+			throw megaglest_runtime_error(szBuf);
 		}
 		inited= true;
 
@@ -1068,7 +1070,7 @@ void Texture3DGl::end(bool deletePixelBuffer) {
 //	class TextureCubeGl
 // =====================================================
 
-TextureCubeGl::TextureCubeGl() : TextureGl(), TextureCube() {}
+TextureCubeGl::TextureCubeGl() : TextureCube(), TextureGl() {}
 
 TextureCubeGl::~TextureCubeGl() {
 	end();
@@ -1178,11 +1180,11 @@ void TextureCubeGl::init(Filter filter, int maxAnisotropy) {
 				//
 
 				if(error != GL_NO_ERROR) {
-					//throw runtime_error("Error building texture cube mipmaps");
+					//throw megaglest_runtime_error("Error building texture cube mipmaps");
 					const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-					char szBuf[1024]="";
-					sprintf(szBuf,"Error building texture cube mipmaps, returned: %d [%s] for [%s] w = %d, h = %d, glCompressionFormat = %d",error,errorString,currentPixmap->getPath().c_str(),currentPixmap->getW(),currentPixmap->getH(),glCompressionFormat);
-					throw runtime_error(szBuf);
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"Error building texture cube mipmaps, returned: %d [%s] for [%s] w = %d, h = %d, glCompressionFormat = %d",error,errorString,currentPixmap->getPath().c_str(),currentPixmap->getW(),currentPixmap->getH(),glCompressionFormat);
+					throw megaglest_runtime_error(szBuf);
 				}
 			}
 			else {
@@ -1231,11 +1233,11 @@ void TextureCubeGl::init(Filter filter, int maxAnisotropy) {
 				//
 
 				if(error != GL_NO_ERROR) {
-					//throw runtime_error("Error creating texture cube");
+					//throw megaglest_runtime_error("Error creating texture cube");
 					const char *errorString= reinterpret_cast<const char*>(gluErrorString(error));
-					char szBuf[1024]="";
-					sprintf(szBuf,"Error creating texture cube, returned: %d [%s] (%X) [%s] w = %d, h = %d, glCompressionFormat = %d",error,errorString,error,currentPixmap->getPath().c_str(),currentPixmap->getW(),currentPixmap->getH(),glCompressionFormat);
-					throw runtime_error(szBuf);
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"Error creating texture cube, returned: %d [%s] (%X) [%s] w = %d, h = %d, glCompressionFormat = %d",error,errorString,error,currentPixmap->getPath().c_str(),currentPixmap->getW(),currentPixmap->getH(),glCompressionFormat);
+					throw megaglest_runtime_error(szBuf);
 				}
 			}
 
@@ -1261,7 +1263,7 @@ void TextureCubeGl::end(bool deletePixelBuffer) {
 	}
 }
 
-void TextureGl::OutputTextureDebugInfo(Texture::Format format, int components,const string path,uint64 rawSize,GLenum texType) {
+void TextureGl::OutputTextureDebugInfo(Texture::Format format, int components,const string path,std::size_t rawSize,GLenum texType) {
 	if(Texture::useTextureCompression == true) {
 		GLint glFormat= toFormatGl(format, components);
 

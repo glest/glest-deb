@@ -12,10 +12,17 @@
 #ifndef _GLEST_GAME_DAMAGEMULTIPLIER_H_
 #define _GLEST_GAME_DAMAGEMULTIPLIER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
+#include "xml_parser.h"
 #include "leak_dumper.h"
 
 using std::string;
+using Shared::Xml::XmlNode;
 
 namespace Glest{ namespace Game{
 
@@ -23,7 +30,7 @@ namespace Glest{ namespace Game{
 // 	class AttackType  
 // ===============================
 
-class AttackType{
+class AttackType {
 private:
 	string name;
 	int id;
@@ -33,10 +40,12 @@ public:
 		id = -1;
 	}
 	int getId() const					{return id;}
-	const string &getName() const		{return name;}
+	string getName(bool translatedValue=false) const;
 
 	void setName(const string &name)	{this->name= name;}
 	void setId(int id)					{this->id= id;}
+
+	void saveGame(XmlNode *rootNode);
 };
 
 // ===============================
@@ -53,10 +62,12 @@ public:
 		id = -1;
 	}
 	int getId() const					{return id;}
-	const string &getName() const		{return name;}
+	string getName(bool translatedValue=false) const;
 
 	void setName(const string &name)	{this->name= name;}
 	void setId(int id)					{this->id= id;}
+
+	void saveGame(XmlNode *rootNode);
 };
 
 // =====================================================
@@ -66,9 +77,9 @@ public:
 /// armor types and vice-versa
 // =====================================================
 
-class DamageMultiplierTable{
+class DamageMultiplierTable {
 private:
-	float *values;
+	double *values;
 	int attackTypeCount;
 	int armorTypeCount;
 
@@ -77,8 +88,10 @@ public:
 	~DamageMultiplierTable();
 
 	void init(int attackTypeCount, int armorTypeCount);
-	float getDamageMultiplier(const AttackType *att, const ArmorType *art) const; 
-	void setDamageMultiplier(const AttackType *att, const ArmorType *art, float value);
+	double getDamageMultiplier(const AttackType *att, const ArmorType *art) const;
+	void setDamageMultiplier(const AttackType *att, const ArmorType *art, double value);
+
+	void saveGame(XmlNode *rootNode);
 };
 
 }}//end namespace

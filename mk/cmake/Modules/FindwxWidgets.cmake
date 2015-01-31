@@ -90,8 +90,6 @@
 #  License text for the above reference.)
 
 #
-# FIXME: check this and provide a correct sample usage...
-#        Remember to connect back to the upper text.
 # Sample usage with monolithic wx build:
 #
 #   FIND_PACKAGE(wxWidgets COMPONENTS mono)
@@ -117,7 +115,6 @@
 # Jan Woetzel (FindwxWindows.cmake),
 # Jorgen Bodde and Jerry Fath (FindwxWin.cmake).
 
-# TODO/ideas
 #
 # (1) Option/Setting to use all available wx libs
 # In contrast to expert developer who lists the
@@ -138,8 +135,6 @@
 # checking whether a minimal set was found.
 
 
-# FIXME: This and all the DBG_MSG calls should be removed after the
-# module stabilizes.
 # 
 # Helper macro to control the debugging output globally. There are
 # two versions for controlling how verbose your output should be.
@@ -257,7 +252,7 @@ IF(wxWidgets_FIND_STYLE STREQUAL "win32")
     DBG_MSG_V("m_ucd = ${_UCD}")
     DBG_MSG_V("m_dbg = ${_DBG}")
 
-    # FIXME: What if both regex libs are available. regex should be
+    # What if both regex libs are available. regex should be
     # found outside the loop and only wx${LIB}${_UCD}${_DBG}.
     # Find wxWidgets common libraries.
     FOREACH(LIB ${wxWidgets_COMMON_LIBRARIES} scintilla)
@@ -888,7 +883,7 @@ MARK_AS_ADVANCED(wxWidgets_wxrc_EXECUTABLE)
 # using this approach.
 #
 FUNCTION(WX_SPLIT_ARGUMENTS_ON _keyword _leftvar _rightvar)
-  # FIXME: Document that the input variables will be cleared.
+  # Document that the input variables will be cleared.
   #LIST(APPEND ${_leftvar}  "")
   #LIST(APPEND ${_rightvar} "")
   SET(${_leftvar}  "")
@@ -920,7 +915,6 @@ ENDFUNCTION(WX_SPLIT_ARGUMENTS_ON)
 #   <depends_path>
 #   )
 #
-# FIXME: Add documentation here...
 #
 FUNCTION(WX_GET_DEPENDENCIES_FROM_XML
     _depends

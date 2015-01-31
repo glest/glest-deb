@@ -15,6 +15,7 @@
 #include "leak_dumper.h"
 #include "thread.h"
 #include <string>
+#include <map>
 
 using namespace Shared::Platform;
 using namespace std;
@@ -28,18 +29,22 @@ namespace Shared { namespace PlatformCommon {
 class BaseThread : public Thread
 {
 protected:
-	Mutex mutexRunning;
-	Mutex mutexQuit;
-	Mutex mutexBeginExecution;
-	Mutex mutexDeleteSelfOnExecutionDone;
+	Mutex *mutexRunning;
+	Mutex *mutexQuit;
+	Mutex *mutexBeginExecution;
+	Mutex *mutexDeleteSelfOnExecutionDone;
 
-    Mutex mutexThreadObjectAccessor;
+    Mutex *mutexThreadObjectAccessor;
 
     bool threadOwnerValid;
-    Mutex mutexThreadOwnerValid;
+    Mutex *mutexThreadOwnerValid;
 
-	Mutex mutexExecutingTask;
+	Mutex *mutexExecutingTask;
 	bool executingTask;
+
+	void *ptr;
+	static Mutex mutexMasterThreadList;
+	static std::map<void *,int> masterThreadList;
 
 	bool quit;
 	bool running;
@@ -47,10 +52,14 @@ protected:
 	bool hasBeginExecution;
 	bool deleteSelfOnExecutionDone;
 
+	Mutex *mutexStarted;
+	bool started;
+
 	virtual void setQuitStatus(bool value);
 	void deleteSelfIfRequired();
 
 	void *genericData;
+
 
 public:
 	BaseThread();
@@ -60,6 +69,9 @@ public:
 	virtual void signalQuit();
 	virtual bool getQuitStatus();
 	virtual bool getRunningStatus();
+
+	virtual bool getStarted();
+	virtual void setStarted(bool value);
 
 	virtual bool getHasBeginExecution();
 	virtual void setHasBeginExecution(bool value);
@@ -84,12 +96,18 @@ public:
     bool getThreadOwnerValid();
     Mutex * getMutexThreadOwnerValid();
 
-    Mutex * getMutexThreadObjectAccessor() { return &mutexThreadObjectAccessor; }
+    Mutex * getMutexThreadObjectAccessor();
 
-    template <typename T>
-    T * getGenericData() { return genericData; }
-    template <typename T>
-    void setGenericData(T *value) { genericData = value; }
+	template <typename T>
+	T * getGenericData() { 
+		return genericData; 
+	}
+	template <typename T>
+	void setGenericData(T *value) { 
+		genericData = value; 
+	}
+
+    static bool isThreadDeleted(void *ptr);
 };
 
 class RunningStatusSafeWrapper {

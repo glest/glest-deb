@@ -20,7 +20,7 @@
 #include <stdexcept>
 #include <list>
 
-#include "types.h"
+#include "data_types.h"
 #include "checksum.h"
 #include <utility>
 #include <SDL.h>
@@ -82,6 +82,14 @@ const char vkDelete = -26;
 const char vkPrint = -27;
 const char vkPause = -29;
 
+class ShellCommandOutputCallbackInterface {
+public:
+	virtual ~ShellCommandOutputCallbackInterface() {}
+
+	virtual void * getShellCommandOutput_UserData(string cmd) = 0;
+    virtual void ShellCommandOutput_CallbackEvent(string cmd,char *output,void *userdata) = 0;
+};
+
 // =====================================================
 //	class PerformanceTimer
 // =====================================================
@@ -115,7 +123,7 @@ private:
 	Uint32 lastStartCount;
 	Uint32 lastTickCount;
 	int64  lastResult;
-	int lastMultiplier;
+	int64 lastMultiplier;
 	bool lastStopped;
 
 public:
@@ -127,11 +135,12 @@ public:
 	int64 getMillis();
 	int64 getSeconds();
 
+	bool isStarted() const;
     static int64 getCurTicks();
     static int64 getCurMillis();
 
 private:
-	int64 queryCounter(int multiplier);
+	int64 queryCounter(int64 multiplier);
 };
 
 // =====================================================
@@ -168,31 +177,39 @@ public:
 // =====================================================
 void Tokenize(const string& str,vector<string>& tokens,const string& delimiters = " ");
 bool isdir(const char *path);
+bool fileExists(const string &path);
+inline bool folderExists(const string &path) { return isdir(path.c_str()); }
+
 void findDirs(string path, vector<string> &results, bool errorOnNotFound,bool keepDuplicates);
 void findDirs(const vector<string> &paths, vector<string> &results, bool errorOnNotFound=false,bool keepDuplicates=false);
 void findAll(const vector<string> &paths, const string &fileFilter, vector<string> &results, bool cutExtension=false, bool errorOnNotFound=true,bool keepDuplicates=false);
 void findAll(const string &path, vector<string> &results, bool cutExtension=false, bool errorOnNotFound=true);
 vector<string> getFolderTreeContentsListRecursively(const string &path, const string &filterFileExt, bool includeFolders=false, vector<string> *recursiveMap=NULL);
 
+string getGameVersion();
+string getGameGITVersion();
+void setGameVersion(string version);
+void setGameGITVersion(string git);
+
 string getCRCCacheFilePath();
 void setCRCCacheFilePath(string path);
 
-std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(vector<string> paths, string pathSearchString, const string filterFileExt);
-void clearFolderTreeContentsCheckSum(vector<string> paths, string pathSearchString, const string filterFileExt);
-int32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string pathSearchString, const string filterFileExt, Checksum *recursiveChecksum,bool forceNoCache=false);
-time_t getFolderTreeContentsCheckSumRecursivelyLastGenerated(vector<string> paths, string pathSearchString, const string filterFileExt);
+std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(vector<string> paths, string pathSearchString, const string &filterFileExt);
+void clearFolderTreeContentsCheckSum(vector<string> paths, string pathSearchString, const string &filterFileExt);
+uint32 getFolderTreeContentsCheckSumRecursively(vector<string> paths, string pathSearchString, const string &filterFileExt, Checksum *recursiveChecksum,bool forceNoCache=false);
+time_t getFolderTreeContentsCheckSumRecursivelyLastGenerated(vector<string> paths, string pathSearchString, const string &filterFileExt);
 
-std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(const string &path, const string filterFileExt);
-void clearFolderTreeContentsCheckSum(const string &path, const string filterFileExt);
-int32 getFolderTreeContentsCheckSumRecursively(const string &path, const string &filterFileExt, Checksum *recursiveChecksum,bool forceNoCache=false);
+std::pair<string,string> getFolderTreeContentsCheckSumCacheKey(const string &path, const string &filterFileExt);
+void clearFolderTreeContentsCheckSum(const string &path, const string &filterFileExt);
+uint32 getFolderTreeContentsCheckSumRecursively(const string &path, const string &filterFileExt, Checksum *recursiveChecksum,bool forceNoCache=false);
 
-std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(vector<string> paths, string pathSearchString, const string filterFileExt);
-void clearFolderTreeContentsCheckSumList(vector<string> paths, string pathSearchString, const string filterFileExt);
-vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(vector<string> paths, string pathSearchString, const string filterFileExt, vector<std::pair<string,int32> > *recursiveMap);
+std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(vector<string> paths, string pathSearchString, const string &filterFileExt);
+void clearFolderTreeContentsCheckSumList(vector<string> paths, string pathSearchString, const string &filterFileExt);
+vector<std::pair<string,uint32> > getFolderTreeContentsCheckSumListRecursively(vector<string> paths, string pathSearchString, const string &filterFileExt, vector<std::pair<string,uint32> > *recursiveMap);
 
-std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(const string &path, const string filterFileExt);
-void clearFolderTreeContentsCheckSumList(const string &path, const string filterFileExt);
-vector<std::pair<string,int32> > getFolderTreeContentsCheckSumListRecursively(const string &path, const string &filterFileExt, vector<std::pair<string,int32> > *recursiveMap);
+std::pair<string,string> getFolderTreeContentsCheckSumListCacheKey(const string &path, const string &filterFileExt);
+void clearFolderTreeContentsCheckSumList(const string &path, const string &filterFileExt);
+vector<std::pair<string,uint32> > getFolderTreeContentsCheckSumListRecursively(const string &path, const string &filterFileExt, vector<std::pair<string,uint32> > *recursiveMap);
 
 void createDirectoryPaths(string  Path);
 string extractFileFromDirectoryPath(string filename);
@@ -202,7 +219,7 @@ string extractExtension(const string& filename);
 
 void getFullscreenVideoModes(vector<ModeInfo> *modeinfos,bool isFullscreen);
 void getFullscreenVideoInfo(int &colorBits,int &screenWidth,int &screenHeight,bool isFullscreen);
-bool changeVideoMode(int resH, int resW, int colorBits, int refreshFrequency);
+void changeVideoModeFullScreen(bool value);
 void restoreVideoMode(bool exitingApp=false);
 
 bool StartsWith(const std::string &str, const std::string &key);
@@ -213,10 +230,13 @@ void trimPathWithStartingSlash(string &path);
 void updatePathClimbingParts(string &path);
 string formatPath(string path);
 
+string replaceAllHTMLEntities(string& context);
 string replaceAll(string& context, const string& from, const string& to);
+vector<char> replaceAllBetweenTokens(vector<char>& context, const string &startToken, const string &endToken, const string &newText, bool removeTokens=true);
+string replaceAllBetweenTokens(string& context, const string &startToken, const string &endToken, const string &newText, bool removeTokens=true);
 bool removeFile(string file);
 bool renameFile(string oldFile, string newFile);
-void removeFolder(const string path);
+void removeFolder(const string &path);
 off_t getFileSize(string filename);
 bool searchAndReplaceTextInFile(string fileName, string findText, string replaceText, bool simulateOnly);
 void copyFileTo(string fromFileName, string toFileName);
@@ -232,7 +252,24 @@ bool isKeyDown(int virtualKey);
 //bool isKeyDown(SDLKey key);
 string getCommandLine();
 
+string getUserHome();
+
 #define SPACES " "
+
+inline string trim_at_delim (const string & s, const string &t)  {
+  string d (s);
+  string::size_type i(d.find(t));
+  //printf("Searching for [%s] in [%s] got " MG_SIZE_T_SPECIFIER "\n",t.c_str(),d.c_str(),i);
+
+  if (i == string::npos) {
+    return d;
+  }
+  else {
+	  d = d.erase (i) ;
+	  //printf("returning [%s]\n",d.c_str());
+	  return d;
+  }
+}
 
 inline string trim_right (const string & s, const string & t = SPACES)  {
   string d (s);
@@ -255,15 +292,24 @@ inline string trim (const string & s, const string & t = SPACES) {
 
 string getFullFileArchiveExtractCommand(string fileArchiveExtractCommand,
 		string fileArchiveExtractCommandParameters, string outputpath, string archivename);
-bool executeShellCommand(string cmd,int expectedResult=IGNORE_CMD_RESULT_VALUE);
+string getFullFileArchiveCompressCommand(string fileArchiveCompressCommand,
+		string fileArchiveCompressCommandParameters, string archivename, string archivefiles);
+
+bool executeShellCommand(string cmd,int expectedResult=IGNORE_CMD_RESULT_VALUE,ShellCommandOutputCallbackInterface *cb=NULL);
 string executable_path(string exeName,bool includeExeNameInPath=false);
 
+void saveDataToFile(string filename, string data);
+
 bool valid_utf8_file(const char* file_name);
+
+string getFileTextContents(string path);
+
+string safeCharPtrCopy(const char *ptr, int maxLength=-1);
 
 class ValueCheckerVault {
 
 protected:
-	std::map<const void *,int32> vaultList;
+	std::map<const void *,uint32> vaultList;
 
 	void addItemToVault(const void *ptr,int value);
 	void checkItemInVault(const void *ptr,int value) const;

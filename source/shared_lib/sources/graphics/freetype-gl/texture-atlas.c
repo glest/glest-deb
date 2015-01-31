@@ -42,10 +42,11 @@
 #include <string.h>
 #include <assert.h>
 #include <limits.h>
+#include <stdlib.h>
 #include "texture-atlas.h"
 
-#define max(a,b) (a)>(b)?(a):(b)
-#define min(a,b) (a)<(b)?(a):(b)
+//#define max(a,b) (a)>(b)?(a):(b)
+//#define min(a,b) (a)<(b)?(a):(b)
 
 typedef struct { int x, y, width; } Node;
 
@@ -253,7 +254,7 @@ texture_atlas_get_region( TextureAtlas *self,
 		if( y >= 0 )
 		{
             node = (Node *) vector_get( self->nodes, i );
-			if( ( y + height < best_height ) ||
+			if( ( y + (int)height < best_height ) ||
                 ( y + height == best_height && node->width < best_width) )
 			{
 				best_height = y + height;

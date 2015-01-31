@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_COMMAND_H_
 #define _GLEST_GAME_COMMAND_H_
 
-#include <cstdlib>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <cstdlib>
 #include "unit.h"
 #include "vec.h"
 #include "game_constants.h"
@@ -27,7 +31,8 @@ class CommandType;
 
 enum CommandStateType {
 	cst_None,
-	cst_linkedUnit
+	cst_linkedUnit,
+	cst_EmergencyReturnResource
 };
 
 // =====================================================
@@ -50,19 +55,21 @@ private:
 
 	int unitCommandGroupId;
 
+	Command();
 public:
     //constructor
     Command(const CommandType *ct, const Vec2i &pos=Vec2i(0)); 
     Command(const CommandType *ct, Unit *unit); 
     Command(const CommandType *ct, const Vec2i &pos, const UnitType *unitType, CardinalDir facing); 
 
+    virtual ~Command() {}
     //get
-	const CommandType *getCommandType() const	{return commandType;}
-	Vec2i getPos() const						{return pos;}
-	Vec2i getOriginalPos() const				{return originalPos;}
-	Unit* getUnit() const						{return unitRef.getUnit();}
-	const UnitType* getUnitType() const			{return unitType;}
-	CardinalDir getFacing() const				{return facing;}
+	inline const CommandType *getCommandType() const	{return commandType;}
+	inline Vec2i getPos() const						{return pos;}
+	inline Vec2i getOriginalPos() const				{return originalPos;}
+	inline Unit* getUnit() const						{return unitRef.getUnit();}
+	inline const UnitType* getUnitType() const			{return unitType;}
+	inline CardinalDir getFacing() const				{return facing;}
 	
 	//Priority: commands of higher priority will cancel commands of lower priority
 	virtual int getPriority();
@@ -75,17 +82,21 @@ public:
 
     void setUnit(Unit *unit);
 
-	void setStateType(CommandStateType value) 	{ stateType = value; }
-	CommandStateType getStateType() const		{ return stateType; }
+    inline void setStateType(CommandStateType value) 	{ stateType = value; }
+    inline CommandStateType getStateType() const		{ return stateType; }
 
-	void setStateValue(int value) 	{ stateValue = value; }
-	int getStateValue() const		{ return stateValue; }
+    inline void setStateValue(int value) 	{ stateValue = value; }
+    inline int getStateValue() const		{ return stateValue; }
 
+    inline void setUnitCommandGroupId(int value) 	{ unitCommandGroupId = value; }
+    inline int getUnitCommandGroupId() const		{ return unitCommandGroupId; }
 
-	void setUnitCommandGroupId(int value) 	{ unitCommandGroupId = value; }
-	int getUnitCommandGroupId() const		{ return unitCommandGroupId; }
+    std::string toString(bool translatedValue) const;
 
-    std::string toString() const;
+    void saveGame(XmlNode *rootNode, Faction *faction);
+    static Command * loadGame(const XmlNode *rootNode,const UnitType *ut,World *world);
+
+    Checksum getCRC();
 };   
 
 }}//end namespace
