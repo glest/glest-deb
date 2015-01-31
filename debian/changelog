@@ -4,15 +4,17 @@ megaglest (3.11.0+dfsg-1) experimental; urgency=medium
   * Remove prebuilt windows dll file with Files-Excluded mechanism.
   * Add get-orig-source target and repack the source tarball.
   * Move the package to Git.
-  * debian/control: Use Architecture: any. Try to build on all available
-    architectures again.
+  * debian/control:
+    - Use Architecture: any. Try to build on all available architectures again.
+    - Adjust the dependency on megaglest-data to >= 3.11.0.
   * Drop fix-cmake-build-type-none.patch. Merged upstream.
   * Drop wxWidgets-assertions.patch. Merged upstream.
   * Update clean file and clean only required files, not the complete mk/linux
-    directory.
+    directory. This prevents a FTBFS.
   * Update debian/copyright for new release.
   * Remove empty data directory and the ini files which are also provided by
     megaglest-data.
+  * Drop source/lintian-overrides. It is obsolete now.
 
  -- Markus Koschany <apo@gambaru.de>  Sat, 31 Jan 2015 17:51:32 +0100
 
