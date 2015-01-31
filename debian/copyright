@@ -2,6 +2,8 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: MegaGlest
 Upstream-Contact: Mark Vejvoda <mark_vejvoda@hotmail.com>
 Source: https://github.com/MegaGlest/megaglest-source
+Files-Excluded:
+ mk/windoze/Installer/plugins/AccessControl.dll
 
 Files: *
 Copyright: 2008-2011 Titus Tscharntke (info@titusgames.de)
