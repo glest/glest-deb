@@ -36,7 +36,7 @@ Vcs-Browser: http://anonscm.debian.org/cgit/pkg-games/megaglest.git
 Homepage: http://megaglest.org/
 
 Package: megaglest
-Architecture: any-amd64 any-i386 alpha arm64 armel armhf ia64 mipsel ppc64el sh4
+Architecture: any
 Depends:
  famfamfam-flag-png,
  fonts-liberation,
@@ -59,7 +59,7 @@ Description: 3D multi-player real time strategy game
 
 Package: megaglest-dbg
 Section: debug
-Architecture: any-amd64 any-i386 alpha arm64 armel armhf ia64 mipsel ppc64el sh4
+Architecture: any
 Depends: megaglest (= ${binary:Version}), ${misc:Depends}
 Description: debug files for MegaGlest
  This package contains debug information for the MegaGlest game.
