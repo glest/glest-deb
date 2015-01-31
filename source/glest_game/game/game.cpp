@@ -115,6 +115,7 @@ Game::Game() : ProgramState(NULL) {
 	renderFpsAvgTest=0;
 	renderExtraTeamColor=0;
 	photoModeEnabled=false;
+	healthbarMode=hbvUndefined;
 	visibleHUD=false;
 	timeDisplay=false;
 	withRainEffect=false;
@@ -190,11 +191,15 @@ void Game::resetMembers() {
 	GameConstants::updateFps= 40;
 	GameConstants::cameraFps= 100;
 	captureAvgTestStatus = false;
+	updateFpsAvgTest=0;
+	renderFpsAvgTest=0;
 	lastRenderLog2d		 = 0;
-	lastMasterServerGameStatsDump = 0;
-	totalRenderFps       = 0;
-	lastMaxUnitCalcTime  = 0;
-	renderExtraTeamColor = 0;
+	playerIndexDisconnect=0;
+	lastMasterServerGameStatsDump=0;
+	highlightCellTexture=NULL;
+	totalRenderFps       =0;
+	lastMaxUnitCalcTime  =0;
+	renderExtraTeamColor =0;
 
 	mouseMoved= false;
 	quitTriggeredIndicator = false;
@@ -235,6 +240,7 @@ void Game::resetMembers() {
 
 	scrollSpeed = Config::getInstance().getFloat("UiScrollSpeed","1.5");
 	photoModeEnabled = Config::getInstance().getBool("PhotoMode","false");
+	healthbarMode = Config::getInstance().getInt("HealthBarMode","0");
 	visibleHUD = Config::getInstance().getBool("VisibleHud","true");
 	timeDisplay = Config::getInstance().getBool("TimeDisplay","true");
 	withRainEffect = Config::getInstance().getBool("RainEffect","true");
@@ -269,6 +275,7 @@ void Game::resetMembers() {
 	this->speed= 1;
 	showFullConsole= false;
 	setMarker = false;
+	cameraDragAllowed=false;
 	camLeftButtonDown=false;
 	camRightButtonDown=false;
 	camUpButtonDown=false;
@@ -309,6 +316,11 @@ Game::Game(Program *program, const GameSettings *gameSettings,bool masterserverM
 	this->masterserverMode = masterserverMode;
 	videoPlayer = NULL;
 	playingStaticVideo = false;
+	highlightCellTexture = NULL;
+	playerIndexDisconnect=0;
+	updateFpsAvgTest=0;
+	renderFpsAvgTest=0;
+	cameraDragAllowed=false;
 
 	if(this->masterserverMode == true) {
 		printf("Starting a new game...\n");
@@ -328,6 +340,7 @@ void Game::endGame() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	quitGame();
+	sleep(0);
 
 	Object::setStateCallback(NULL);
 	thisGamePtr = NULL;
@@ -1242,7 +1255,8 @@ void Game::init(bool initForPreviewOnly) {
 		//message box
 		errorMessageBox.init(lang.getString("Ok"));
 		errorMessageBox.setEnabled(false);
-		errorMessageBox.setY(mainMessageBox.getY() - mainMessageBox.getH() - 10);
+		errorMessageBox.setY(20);
+
 
 		//init world, and place camera
 		commander.init(&world);
@@ -1594,10 +1608,10 @@ void Game::init(bool initForPreviewOnly) {
 		printf("New game has started...\n");
 	}
 
-	if(isFlagType1BitEnabled(gameSettings.getFlagTypes1(),ft1_network_synch_checks_verbose) == true) {
+	if(isFlagType1BitEnabled(ft1_network_synch_checks_verbose) == true) {
 		printf("*Note: Monitoring Network CRC VERBOSE synchronization...\n");
 	}
-	else if(isFlagType1BitEnabled(gameSettings.getFlagTypes1(),ft1_network_synch_checks) == true) {
+	else if(isFlagType1BitEnabled(ft1_network_synch_checks) == true) {
 		printf("*Note: Monitoring Network CRC NORMAL synchronization...\n");
 	}
 
@@ -1621,6 +1635,10 @@ void Game::init(bool initForPreviewOnly) {
 }
 
 // ==================== update ====================
+
+void Game::reInitGUI() {
+	gui.init(this);
+}
 
 void Game::setupPopupMenus(bool checkClientAdminOverrideOnly) {
 	Lang &lang= Lang::getInstance();
@@ -1731,8 +1749,8 @@ void Game::processNetworkSynchChecksIfRequired() {
 		if(settings != NULL) {
 			bool calculateNetworkCRC = false;
 
-			if(isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks) == true ||
-				isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks_verbose) == true) {
+			if(isFlagType1BitEnabled(ft1_network_synch_checks) == true ||
+				isFlagType1BitEnabled(ft1_network_synch_checks_verbose) == true) {
 				calculateNetworkCRC = true;
 			}
 
@@ -1747,10 +1765,10 @@ void Game::processNetworkSynchChecksIfRequired() {
 						netIntf->setNetworkPlayerFactionCRC(index,faction->getCRC().getSum());
 
 						if(settings != NULL) {
-							if(isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks_verbose) == true) {
+							if(isFlagType1BitEnabled(ft1_network_synch_checks_verbose) == true) {
 								faction->addCRC_DetailsForWorldFrame(world.getFrameCount(),role == nrServer);
 							}
-							else if(isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks) == true &&
+							else if(isFlagType1BitEnabled(ft1_network_synch_checks) == true &&
 									world.getFrameCount() % 20 == 0) {
 								faction->addCRC_DetailsForWorldFrame(world.getFrameCount(),role == nrServer);
 							}
@@ -2165,7 +2183,7 @@ void Game::update() {
 					}
 
 					if(currentCameraFollowUnit != NULL) {
-						Vec3f c=currentCameraFollowUnit->getCurrVector();
+						Vec3f c=currentCameraFollowUnit->getCurrMidHeightVector();
 						int rotation=currentCameraFollowUnit->getRotation();
 						float angle=rotation+180;
 
@@ -4105,8 +4123,7 @@ void Game::mouseDownLeft(int x, int y) {
 				if(setMarker) {
 					Vec2i targetPos;
 					Vec2i screenPos(x,y-60);
-					Renderer &renderer= Renderer::getInstance();
-					renderer.computePosition(screenPos, targetPos);
+					targetPos=getMouseCellPos();
 					//Vec2i surfaceCellPos = map->toSurfCoords(targetPos);
 
 
@@ -4120,8 +4137,7 @@ void Game::mouseDownLeft(int x, int y) {
 				if(originalIsMarkCellEnabled == true && isMarkCellEnabled == true) {
 					Vec2i targetPos;
 					Vec2i screenPos(x,y-60);
-					Renderer &renderer= Renderer::getInstance();
-					renderer.computePosition(screenPos, targetPos);
+					targetPos=getMouseCellPos();
 					Vec2i surfaceCellPos = map->toSurfCoords(targetPos);
 
 					MarkedCell mc(targetPos,world.getThisFaction(),"placeholder for note",world.getThisFaction()->getStartLocationIndex());
@@ -4135,14 +4151,13 @@ void Game::mouseDownLeft(int x, int y) {
 					chatManager.switchOnEdit(this,500);
 
 					//renderer.updateMarkedCellScreenPosQuadCache(surfaceCellPos);
-					renderer.forceQuadCacheUpdate();
+					Renderer::getInstance().forceQuadCacheUpdate();
 				}
 
 				if(originalIsUnMarkCellEnabled == true && isUnMarkCellEnabled == true) {
 					Vec2i targetPos;
 					Vec2i screenPos(x,y-35);
-					Renderer &renderer= Renderer::getInstance();
-					renderer.computePosition(screenPos, targetPos);
+					targetPos=getMouseCellPos();
 					Vec2i surfaceCellPos = map->toSurfCoords(targetPos);
 
 //					if(mapMarkedCellList.find(surfaceCellPos) != mapMarkedCellList.end()) {
@@ -4160,7 +4175,7 @@ void Game::mouseDownLeft(int x, int y) {
 
 					//Renderer &renderer= Renderer::getInstance();
 					//renderer.updateMarkedCellScreenPosQuadCache(surfaceCellPos);
-					renderer.forceQuadCacheUpdate();
+					Renderer::getInstance().forceQuadCacheUpdate();
 				}
 			}
 		}
@@ -4242,9 +4257,8 @@ void Game::mouseDownRight(int x, int y) {
 		else {
 			Vec2i targetPos;
 			Vec2i screenPos(x,y);
-			Renderer &renderer= Renderer::getInstance();
-			renderer.computePosition(screenPos, targetPos);
-			if(renderer.computePosition(screenPos, targetPos) == true &&
+			targetPos=getMouseCellPos();
+			if(isValidMouseCellPos() == true &&
 				map->isInsideSurface(map->toSurfCoords(targetPos)) == true) {
 				gui.mouseDownRightGraphics(x, y,false);
 			}
@@ -4504,7 +4518,7 @@ void Game::mouseMove(int x, int y, const MouseState *ms) {
 		lastMousePos.y = mouseY;
 
 		Renderer &renderer= Renderer::getInstance();
-		renderer.computePosition(Vec2i(mouseX, mouseY), mouseCellPos);
+		renderer.ccomputePosition(Vec2i(mouseX, mouseY), mouseCellPos);
 	}
 	catch(const exception &ex) {
 		char szBuf[8096]="";
@@ -4521,6 +4535,15 @@ void Game::mouseMove(int x, int y, const MouseState *ms) {
 			networkManager.getGameNetworkInterface()->quitGame(true);
 		}
 		ErrorDisplayMessage(ex.what(),true);
+	}
+}
+
+bool Game::isValidMouseCellPos() const{
+	if(world.getMap() == NULL){
+		return false;
+	}
+	else {
+		return world.getMap()->isInside(mouseCellPos);
 	}
 }
 
@@ -4562,7 +4585,7 @@ void Game::startCameraFollowUnit() {
 		if(currentUnit != NULL) {
 			currentCameraFollowUnit = currentUnit;
 			getGameCameraPtr()->setState(GameCamera::sUnit);
-			getGameCameraPtr()->setPos(currentCameraFollowUnit->getCurrVector());
+			getGameCameraPtr()->setPos(currentCameraFollowUnit->getCurrMidHeightVector());
 
 			int rotation=currentCameraFollowUnit->getRotation();
 			getGameCameraPtr()->stop();
@@ -4650,6 +4673,39 @@ void Game::keyDown(SDL_KeyboardEvent key) {
 					gameCamera.setMaxHeight(-1);
 				}
 
+			}
+			//Toggle Healthbars
+			else if(isKeyPressed(configKeys.getSDLKey("ToggleHealthbars"),key, false) == true) {
+				switch (healthbarMode) {
+					case hbvUndefined:
+						healthbarMode=hbvOff;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsOff"));
+						break;
+					case hbvOff:
+						healthbarMode=hbvAlways;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsAlways"));
+						break;
+					case hbvAlways:
+						healthbarMode=hbvIfNeeded;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsIfNeeded"));
+						break;
+					case hbvIfNeeded:
+						healthbarMode=hbvSelected;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsSelected"));
+						break;
+					case hbvSelected:
+						healthbarMode=hbvSelected | hbvIfNeeded;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsSelectedOrNeeded"));
+						break;
+					case (hbvSelected | hbvIfNeeded):
+						healthbarMode=hbvUndefined;
+						console.addLine(lang.getString("Healthbar")+": "+lang.getString("HealthbarsFactionDefault"));
+						break;
+					default:
+						printf("In [%s::%s Line: %d] Toggle Healthbars Hotkey - Invalid Value. Setting to default.\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+						healthbarMode=hbvUndefined;
+						break;
+				}
 			}
 			//Toggle music
 			//else if(key == configKeys.getCharKey("ToggleMusic")) {
@@ -5053,8 +5109,8 @@ void Game::DumpCRCWorldLogIfRequired(string fileSuffix) {
 
 		GameSettings *settings = world.getGameSettingsPtr();
 		if(settings != NULL &&
-				(isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks_verbose)  == true ||
-				 isFlagType1BitEnabled(settings->getFlagTypes1(),ft1_network_synch_checks) 			== true)) {
+				(isFlagType1BitEnabled(ft1_network_synch_checks_verbose)  == true ||
+				 isFlagType1BitEnabled(ft1_network_synch_checks) 			== true)) {
 			string debugCRCWorldLogFile = Config::getInstance().getString("DebugCRCWorldLogFile","debugCRCWorld.log");
 			debugCRCWorldLogFile += fileSuffix;
 
@@ -5201,7 +5257,7 @@ void Game::render3d(){
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
 	//selection circles
-	renderer.renderSelectionEffects();
+	renderer.renderSelectionEffects(healthbarMode);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] renderFps = %d took msecs: %lld [renderSelectionEffects]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,renderFps,chrono.getMillis());
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
@@ -5251,6 +5307,11 @@ void Game::render3d(){
 	renderer.renderParticleManager(rsGame);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] renderFps = %d took msecs: %lld [renderParticleManager]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,renderFps,chrono.getMillis());
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
+
+	//renderOnTopBars (aka Healthbars)
+	if(photoModeEnabled == false) {
+		renderer.renderHealthBars(healthbarMode);
+	}
 
 	//mouse 3d
 	renderer.renderMouse3d();
@@ -5387,29 +5448,31 @@ string Game::getDebugStats(std::map<int,string> &factionDebugInfo) {
 	for(int i = 0; i < world.getFactionCount(); ++i) {
 		string factionInfo = this->gameSettings.getNetworkPlayerName(i);
 		//factionInfo += " [" + this->gameSettings.getNetworkPlayerUUID(i) + "]";
+		float multi=world.getStats()->getResourceMultiplier(i);
+		string multiplier="["+floatToStr(multi,1)+"]";
 		switch(this->gameSettings.getFactionControl(i)) {
 			case ctCpuEasy:
-				factionInfo += " CPU Easy";
+				factionInfo += " CPU Easy"+multiplier;
 				break;
 			case ctCpu:
-				factionInfo += " CPU Normal";
+				factionInfo += " CPU Normal"+multiplier;
 				break;
 			case ctCpuUltra:
-				factionInfo += " CPU Ultra";
+				factionInfo += " CPU Ultra"+multiplier;
 				break;
 			case ctCpuMega:
-				factionInfo += " CPU Mega";
+				factionInfo += " CPU Mega"+multiplier;
 				break;
 		}
 
 		factionInfo +=	" [" + formatString(this->gameSettings.getFactionTypeName(i)) +
 				" team: " + intToStr(this->gameSettings.getTeam(i)) + "]";
 
-//		bool showResourceDebugInfo = false;
+//		bool showResourceDebugInfo = true;
 //		if(showResourceDebugInfo == true) {
 //			factionInfo +=" res: ";
 //			for(int j = 0; j < world.getTechTree()->getResourceTypeCount(); ++j) {
-//				factionInfo += intToStr(world.getFaction(i)->getResource(j)->getAmount());
+//				factionInfo += world.getFaction(i)->getResource(j)->getType()->getName()+":"+intToStr(world.getFaction(i)->getResource(j)->getAmount());
 //				factionInfo += " ";
 //			}
 //		}
@@ -5623,7 +5686,7 @@ void Game::render2d() {
 		if(this->masterserverMode == false) {
 			renderer.renderResourceStatus();
 		}
-		renderer.renderConsole(&console,showFullConsole);
+		renderer.renderConsole(&console,showFullConsole?consoleFull:consoleNormal);
     }
 
     //2d mouse
@@ -5722,7 +5785,6 @@ std::map<int, int> Game::getTeamsAlive() {
 	std::map<int, int> teamsAlive;
 	for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
 		if (factionIndex != world.getThisFactionIndex()) {
-			//if(hasBuilding(world.getFaction(i))) {
 			if (factionLostGame(world.getFaction(factionIndex)) == false) {
 				teamsAlive[world.getFaction(factionIndex)->getTeam()] =
 						teamsAlive[world.getFaction(factionIndex)->getTeam()] + 1;
@@ -5743,11 +5805,14 @@ void Game::checkWinnerStandardHeadlessOrObserver() {
 			printf("Game finished...\n");
 		}
 		for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
+
 			Faction* faction = world.getFaction(factionIndex);
 			if (factionIndex != world.getThisFactionIndex() &&
 					teamsAlive.find(faction->getTeam()) != teamsAlive.end()) {
+
 				world.getStats()->setVictorious(factionIndex);
 				if (this->masterserverMode == true) {
+
 					printf("Player: %s is on the winning team #: %d\n",
 							this->gameSettings.getNetworkPlayerName(factionIndex).c_str(),
 							faction->getTeam());
@@ -5755,16 +5820,17 @@ void Game::checkWinnerStandardHeadlessOrObserver() {
 			}
 		}
 		bool wasGameOverAlready = gameOver;
-		gameOver = true;
+		gameOver 				= true;
 
 		// Only need to process this once
 		if(wasGameOverAlready == false) {
 			if (this->gameSettings.isNetworkGame() == false ||
-				this->gameSettings.getEnableObserverModeAtEndGame()
-							== true) {
+				this->gameSettings.getEnableObserverModeAtEndGame() == true) {
+
 				// Let the happy winner view everything left in the world
 				// This caused too much LAG for network games
 				if (this->gameSettings.isNetworkGame() == false) {
+
 					Renderer::getInstance().setPhotoMode(true);
 					gameCamera.setMaxHeight(PHOTO_MODE_MAXHEIGHT);
 				}
@@ -5773,10 +5839,7 @@ void Game::checkWinnerStandardHeadlessOrObserver() {
 			scriptManager.onGameOver(true);
 			if (world.getFactionCount() == 1 &&
 					world.getFaction(0)->getPersonalityType() == fpt_Observer) {
-				//printf("!!!!!!!!!!!!!!!!!!!!");
-				//gameCamera.setMoveY(100.0);
 				gameCamera.zoom(-300);
-				//gameCamera.update();
 			}
 			else {
 				showWinMessageBox();
@@ -5788,71 +5851,98 @@ void Game::checkWinnerStandardHeadlessOrObserver() {
 void Game::checkWinnerStandardPlayer() {
 	//lose
 	bool lose = false;
-	//if(hasBuilding(world.getThisFaction()) == false) {
 	if (factionLostGame(world.getThisFaction()) == true) {
-		lose = true;
-		for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
-			if (world.getFaction(factionIndex)->getPersonalityType() != fpt_Observer) {
-				if (world.getFaction(factionIndex)->isAlly(world.getThisFaction()) == false) {
-					world.getStats()->setVictorious(factionIndex);
+
+		bool playerLostGame = true;
+		// Team Shared units enabled?
+		if(isFlagType1BitEnabled(ft1_allow_shared_team_units) == true) {
+
+			// Check if all team members have lost?
+			for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
+
+				if (world.getFaction(factionIndex)->getPersonalityType() != fpt_Observer) {
+					if (world.getFaction(factionIndex)->isAlly(world.getThisFaction()) == true &&
+							factionLostGame(world.getFaction(factionIndex)) == false) {
+
+						playerLostGame = false;
+						break;
+					}
 				}
 			}
 		}
-		bool wasGameOverAlready = gameOver;
-		gameOver = true;
 
-		// Only need to process losing once
-		if(wasGameOverAlready == false) {
-			if (this->gameSettings.isNetworkGame() == false ||
-				this->gameSettings.getEnableObserverModeAtEndGame()
-							== true) {
-				// Let the poor user watch everything unfold
-				// This caused too much LAG for network games
-				if (this->gameSettings.isNetworkGame() == false) {
-					Renderer::getInstance().setPhotoMode(true);
-					gameCamera.setMaxHeight(PHOTO_MODE_MAXHEIGHT);
+		if(playerLostGame == true) {
+			lose = true;
+			for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
+
+				if (world.getFaction(factionIndex)->getPersonalityType() != fpt_Observer) {
+					if (world.getFaction(factionIndex)->isAlly(world.getThisFaction()) == false &&
+							factionLostGame(world.getFaction(factionIndex)) == false) {
+
+						world.getStats()->setVictorious(factionIndex);
+					}
 				}
-				// END
-				// but don't let him cheat via teamchat
-				chatManager.setDisableTeamMode(true);
 			}
-			scriptManager.onGameOver(!lose);
-			showLoseMessageBox();
+			bool wasGameOverAlready = gameOver;
+			gameOver 				= true;
+
+			// Only need to process losing once
+			if(wasGameOverAlready == false) {
+				if (this->gameSettings.isNetworkGame() == false ||
+					this->gameSettings.getEnableObserverModeAtEndGame()
+								== true) {
+					// Let the poor user watch everything unfold
+					// This caused too much LAG for network games
+					if (this->gameSettings.isNetworkGame() == false) {
+						Renderer::getInstance().setPhotoMode(true);
+						gameCamera.setMaxHeight(PHOTO_MODE_MAXHEIGHT);
+					}
+					// END
+					// but don't let him cheat via teamchat
+					chatManager.setDisableTeamMode(true);
+				}
+				scriptManager.onGameOver(!lose);
+				showLoseMessageBox();
+			}
 		}
 	}
+
 	//win
 	if (lose == false) {
 		bool win = true;
 		for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
+
 			if (factionIndex != world.getThisFactionIndex()) {
 				if (world.getFaction(factionIndex)->getPersonalityType() != fpt_Observer) {
-					//if(hasBuilding(world.getFaction(i)) &&
+
 					if (factionLostGame(world.getFaction(factionIndex)) == false &&
 						world.getFaction(factionIndex)->isAlly(world.getThisFaction()) == false) {
+
 						win = false;
 					}
 				}
 			}
 		}
-		//if win
+
 		if (win) {
 			for (int factionIndex = 0; factionIndex < world.getFactionCount(); ++factionIndex) {
 				if (world.getFaction(factionIndex)->getPersonalityType() != fpt_Observer) {
 					if (world.getFaction(factionIndex)->isAlly(world.getThisFaction())) {
+
 						world.getStats()->setVictorious(factionIndex);
 					}
 				}
 			}
 
 			bool wasGameOverAlready = gameOver;
-			gameOver = true;
+			gameOver 				= true;
 
 			// Only need to process winning once
 			if(wasGameOverAlready == false) {
 				if (this->gameSettings.isNetworkGame() == false ||
 					this->gameSettings.getEnableObserverModeAtEndGame() == true) {
 					// Let the happy winner view everything left in the world
-					//world.setFogOfWar(false);
+
 					// This caused too much LAG for network games
 					if (this->gameSettings.isNetworkGame() == false) {
 						Renderer::getInstance().setPhotoMode(true);
@@ -5883,12 +5973,13 @@ void Game::checkWinnerStandard() {
 void Game::checkWinnerScripted() {
 	if(scriptManager.getIsGameOver()) {
 		bool wasGameOverAlready = gameOver;
-		gameOver= true;
+		gameOver				= true;
 
 
-		for(int i= 0; i<world.getFactionCount(); ++i) {
-			if(scriptManager.getPlayerModifiers(i)->getWinner()) {
-				world.getStats()->setVictorious(i);
+		for(int index = 0; index < world.getFactionCount(); ++index) {
+			if(scriptManager.getPlayerModifiers(index)->getWinner()) {
+
+				world.getStats()->setVictorious(index);
 			}
 		}
 
@@ -5896,9 +5987,8 @@ void Game::checkWinnerScripted() {
 		if(wasGameOverAlready == false) {
 			if( this->gameSettings.isNetworkGame() == false ||
 				this->gameSettings.getEnableObserverModeAtEndGame() == true) {
-				// Let the happy winner view everything left in the world
-				//world.setFogOfWar(false);
 
+				// Let the happy winner view everything left in the world
 				// This caused too much LAG for network games
 				if(this->gameSettings.isNetworkGame() == false) {
 					Renderer::getInstance().setPhotoMode(true);
@@ -5907,7 +5997,8 @@ void Game::checkWinnerScripted() {
 				// END
 			}
 
-			if(this->masterserverMode == true || world.getThisFaction()->getPersonalityType() == fpt_Observer) {
+			if(this->masterserverMode == true ||
+					world.getThisFaction()->getPersonalityType() == fpt_Observer) {
 				showWinMessageBox();
 			}
 			else {
@@ -5922,6 +6013,10 @@ void Game::checkWinnerScripted() {
 			}
 		}
 	}
+}
+
+bool Game::isFlagType1BitEnabled(FlagTypes1 type) const {
+	return ((gameSettings.getFlagTypes1() & (uint32)type) == (uint32)type);
 }
 
 bool Game::factionLostGame(int factionIndex) {
@@ -6419,7 +6514,6 @@ string Game::saveGame(string name, string path) {
 		xmlTreeSaveGame.save(replayFile);
 	}
 
-	//XmlTree xmlTree(XML_XERCES_ENGINE);
 	XmlTree xmlTree;
 	xmlTree.init("megaglest-saved-game");
 	XmlNode *rootNode = xmlTree.getRootNode();
@@ -6613,7 +6707,7 @@ void Game::loadGame(string name,Program *programPtr,bool isMasterserverMode,cons
 
 		Lang &lang= Lang::getInstance();
 		string gameVer = versionNode->getAttribute("version")->getValue();
-		if(gameVer != glestVersionString && checkVersionComptability(gameVer, glestVersionString) == false) {
+		if(gameVer != glestVersionString && checkVersionComptability(gameVer, glestVersionString) == false){
 			char szBuf[8096]="";
 			snprintf(szBuf,8096,lang.getString("SavedGameBadVersion").c_str(),gameVer.c_str(),glestVersionString.c_str());
 			throw megaglest_runtime_error(szBuf,true);
@@ -6674,7 +6768,10 @@ void Game::loadGame(string name,Program *programPtr,bool isMasterserverMode,cons
 
 	Lang &lang= Lang::getInstance();
 	string gameVer = versionNode->getAttribute("version")->getValue();
-	if(gameVer != glestVersionString && checkVersionComptability(gameVer, glestVersionString) == false) {
+	// this is the version check for loading normal save games from menu_state_load_game
+	if (gameVer != glestVersionString
+			&& (compareMajorMinorVersion(gameVer, lastCompatibleSaveGameVersionString) < 0
+					|| compareMajorMinorVersion(glestVersionString, gameVer) < 0)) {
 		char szBuf[8096]="";
 		snprintf(szBuf,8096,lang.getString("SavedGameBadVersion").c_str(),gameVer.c_str(),glestVersionString.c_str());
 		throw megaglest_runtime_error(szBuf,true);
@@ -6692,6 +6789,12 @@ void Game::loadGame(string name,Program *programPtr,bool isMasterserverMode,cons
 		XmlNode *selectionNode = guiNode->getChild("Selection");
 		XmlNode *statsNode = worldNode->getChild("Stats");
 		XmlNode *minimapNode = worldNode->getChild("Minimap");
+
+		if(gameVer != glestVersionString && checkVersionComptability(gameVer, glestVersionString) == false){
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("SavedGameBadVersion").c_str(),gameVer.c_str(),glestVersionString.c_str());
+			throw megaglest_runtime_error(szBuf,true);
+		}
 		// This is explored fog of war for the host player, clear it
 		minimapNode->clearChild("fowPixmap1");
 
@@ -6764,7 +6867,13 @@ void Game::loadGame(string name,Program *programPtr,bool isMasterserverMode,cons
 	newGame->tickCount = gameNode->getAttribute("tickCount")->getIntValue();
 
 	//bool paused;
-	newGame->paused = gameNode->getAttribute("paused")->getIntValue() != 0;
+	if(newGame->inJoinGameLoading==true){
+		newGame->paused = gameNode->getAttribute("paused")->getIntValue() != 0;
+	}else{
+		//newGame->paused = gameNode->getAttribute("paused")->getIntValue() != 0;
+		newGame->paused = true;
+	}
+	if(newGame->paused) newGame->console.addLine(lang.getString("GamePaused"));
 	//bool gameOver;
 	newGame->gameOver = gameNode->getAttribute("gameOver")->getIntValue() != 0;
 	//bool renderNetworkStatus;

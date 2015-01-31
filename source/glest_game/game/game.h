@@ -141,6 +141,7 @@ private:
 	static const int renderTeamColorPlaneBit=2;
 
 	bool photoModeEnabled;
+	int healthbarMode;
 	bool visibleHUD;
 	bool timeDisplay;
 	bool withRainEffect;
@@ -223,6 +224,9 @@ public:
     Game(Program *program, const GameSettings *gameSettings, bool masterserverMode);
     ~Game();
 
+    void reInitGUI();
+    bool isFlagType1BitEnabled(FlagTypes1 type) const;
+
     bool isMarkCellMode() const { return isMarkCellEnabled; }
     const Texture2D * getMarkCellTexture() const { return markCellTexture; }
     bool isUnMarkCellMode() const { return isUnMarkCellEnabled; }
@@ -252,6 +256,9 @@ public:
 	const World *getWorld() const			{return &world;}
 
 	Program *getProgram()					{return program;}
+
+	Vec2i getMouseCellPos() const			{return mouseCellPos;}
+	bool isValidMouseCellPos() const;
 
 	void removeUnitFromSelection(const Unit *unit);
 	bool addUnitToSelection(Unit *unit);

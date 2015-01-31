@@ -32,36 +32,32 @@ PROJECT=MegaGlest
 # E-Mail address of registered Coverity Scan user with project access
 # EMAIL=x
 
+# Where to store the data gathered by the Coverity Scan Build Tool
+BUILDTOOL=cov-int
+
 # read in config settings
-if [ ! -f ${CURRENTDIR}/.coverity-submit ] ; then
+if [ ! -f ${CURRENTDIR}/.coverity-scan ] ; then
         echo "-----------------------------------------"
-        echo "**Missing Config** To use this script please create a config file named [${CURRENTDIR}/.coverity-submit]"
+        echo "**Missing Config** To use this script please create a config file named [${CURRENTDIR}/.coverity-scan]"
         echo "Containing: TOKEN=x , EMAIL=x , COVERITY_ANALYSIS_ROOT=x , NUMCORES=x"
         exit 1
 fi
 
-. ${CURRENTDIR}/.coverity-submit
+. ${CURRENTDIR}/.coverity-scan
 # echo "Read config values: TOKEN [$TOKEN] EMAIL [$EMAIL] COVERITY_ANALYSIS_ROOT [$COVERITY_ANALYSIS_ROOT] NUMCORES [${NUMCORES}]"
 # exit 1
+
+GITBRANCH=$(git rev-parse --abbrev-ref HEAD | tr '/' '_')
+GITVERSION_SHA1=$(git log -1 --format=%h)
+GITVERSION_REV=$(git rev-list HEAD --count)
+VERSION=${GITBRANCH}.${GITVERSION_REV}.${GITVERSION_SHA1}
 
 # Included from shared functions
 detect_system
 
-computername=$(hostname)
-#DESCRIPTION=${distribution}-${release}-${architecture}_${computername}
-DESCRIPTION=${distribution}-${architecture}_${computername}
-
-# Where to store the data gathered by the Coverity Scan Build Tool
-BUILDTOOL=cov-int
-
-# ------------------------------------------------------------------------------
-
-GITVERSION_SHA1=$(git log -1 --format=%h)
-GITVERSION_REV=$(git rev-list HEAD --count)
-
-VERSION=${GITVERSION_REV}.${GITVERSION_SHA1}
-FILENAME=${PROJECT}_${DESCRIPTION}_${VERSION}
-
+#DESCRIPTION=${distribution}-${release}-${architecture}_${hostname}
+DESCRIPTION=${GITBRANCH}.${GITVERSION_SHA1}.${distribution}-${architecture}.${hostname}
+FILENAME=${PROJECT}.${DESCRIPTION}
 # echo "FILENAME = [${FILENAME}]"
 # exit 1
 
@@ -73,7 +69,8 @@ export PATH="${PATH}:${COVERITY_ANALYSIS_ROOT}/bin"
 
 # cleanup old build files
 # rm -rf ../../build && ../../build-mg.sh -m 1
-cd ../../
+#cd ../../
+cd $CURRENTDIR
 rm -rf build
 ./build-mg.sh -m 1
 
@@ -92,7 +89,7 @@ ls -la ${FILENAME}.tar.gz
 echo "Running curl to upload analysis file..."
 # echo "curl --progress-bar --insecure --form \"project=${PROJECT}\" --form \"token=${TOKEN}\" --form \"email=${EMAIL}\" --form \"version=${VERSION}\" --form \"description=${DESCRIPTION}\" --form \"file=@${FILENAME}.tar.gz\" https://scan5.coverity.com/cgi-bin/upload.py"
 # exit 1
-curl --progress-bar --insecure --form "project=${PROJECT}" --form "token=${TOKEN}" --form "email=${EMAIL}" --form "version=${VERSION}" --form "description=${DESCRIPTION}" --form "file=@${FILENAME}.tar.gz" https://scan5.coverity.com/cgi-bin/upload.py | tee -a "coverity-submit.log" ; test ${PIPESTATUS[0]} -eq 0
+curl --progress-bar --insecure --form "project=${PROJECT}" --form "token=${TOKEN}" --form "email=${EMAIL}" --form "version=${VERSION}" --form "description=${DESCRIPTION}" --form "file=@${FILENAME}.tar.gz" https://scan5.coverity.com/cgi-bin/upload.py | tee -a "coverity-scan.log" ; test ${PIPESTATUS[0]} -eq 0
 
 echo "CURL returned: $?"
 
@@ -103,4 +100,7 @@ else
         rm -rf ${FILENAME}.tar.gz
         rm -rf ${BUILDTOOL}/
 fi
+
+# This currently fails to detect the following error situation, as reported in the HTML of the HTTP response (to the upload request):
+# ERROR: Too many build submitted. Wait for few days before submitting next build: Refer build frequency at https://scan.coverity.com/faq#frequency
 

@@ -278,9 +278,11 @@ private:
 	void DisplayFormattedText(const char *fmt,...);
 	void DisplayFormattedLangText(const char *fmt,...);
 	void setCameraPosition(const Vec2i &pos);
+	void shakeCamera(int shakeIntensity, int shakeDuration, bool cameraDistanceAffected, int unitId);
 	void createUnit(const string &unitName, int factionIndex, Vec2i pos);
 	void createUnitNoSpacing(const string &unitName, int factionIndex, Vec2i pos);
 
+	void setLockedUnitForFaction(const string &unitName, int factionIndex , bool lock);
 	void destroyUnit(int unitId);
 	void giveKills(int unitId, int amount);
 	void morphToUnit(int unitId,const string &morphName, int ignoreRequirements);
@@ -355,6 +357,7 @@ private:
 	Vec2i getUnitPosition(int unitId);
 	int getUnitFaction(int unitId);
 	const string getUnitName(int unitId);
+	const string getUnitDisplayName(int unitId);
 	int getResourceAmount(const string &resourceName, int factionIndex);
 	const string &getLastCreatedUnitName();
 	int getLastCreatedUnitId();
@@ -441,9 +444,12 @@ private:
 	static int DisplayFormattedLangText(LuaHandle* luaHandle);
 	static int clearDisplayText(LuaHandle* luaHandle);
 	static int setCameraPosition(LuaHandle* luaHandle);
+	static int shakeCamera(LuaHandle* luaHandle);
+	static int shakeCameraOnUnit(LuaHandle* luaHandle);
 	static int createUnit(LuaHandle* luaHandle);
 	static int createUnitNoSpacing(LuaHandle* luaHandle);
 
+	static int setLockedUnitForFaction(LuaHandle* luaHandle);
 	static int destroyUnit(LuaHandle* luaHandle);
 	static int giveKills(LuaHandle* luaHandle);
 	static int morphToUnit(LuaHandle* luaHandle);
@@ -518,6 +524,7 @@ private:
 	static int getUnitPosition(LuaHandle* luaHandle);
 	static int getUnitFaction(LuaHandle* luaHandle);
 	static int getUnitName(LuaHandle* luaHandle);
+	static int getUnitDisplayName(LuaHandle* luaHandle);
 	static int getResourceAmount(LuaHandle* luaHandle);
 	static int getLastCreatedUnitName(LuaHandle* luaHandle);
 	static int getLastCreatedUnitId(LuaHandle* luaHandle);

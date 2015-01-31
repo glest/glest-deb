@@ -142,9 +142,14 @@ private:
 	bool cacheFowAlphaTexture;
 	bool cacheFowAlphaTextureFogOfWarValue;
 
+	std::map<int, std::map<std::string, Resource > > TeamResources;
+
 public:
 	World();
 	~World();
+//	World & World(World &obj) {
+//		throw runtime_error("class World is NOT safe to assign!");
+//	}
 	void cleanup();
 	void end(); //to die before selection does
 	void endScenario(); //to die before selection does
@@ -317,6 +322,14 @@ public:
 	void refreshAllUnitExplorations();
 
 	bool factionLostGame(int factionIndex);
+
+	void initTeamResource(const ResourceType *rt,int teamIndex, int value);
+	const Resource * getResourceForTeam(const ResourceType *rt, int teamIndex);
+	int getStoreAmountForTeam(const ResourceType *rt, int teamIndex) const;
+	bool showResourceTypeForFaction(const ResourceType *rt, const Faction *faction) const;
+	bool showResourceTypeForTeam(const ResourceType *rt, int teamIndex) const;
+
+
 private:
 
 	void initCells(bool fogOfWar);

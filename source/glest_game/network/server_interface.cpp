@@ -1043,6 +1043,11 @@ void ServerInterface::checkForCompletedClientsUsingLoop(
 	}
 }
 
+std::string ServerInterface::getIpAddress(bool mutexLock) {
+	string result = serverSocket.getIpAddress();
+	return result;
+}
+
 void ServerInterface::setClientLagCallbackInterface(ClientLagCallbackInterface *intf) {
 	this->clientLagCallbackInterface = intf;
 }
@@ -1693,21 +1698,6 @@ void ServerInterface::updateKeyframe(int frameCount) {
 				// We always need to broadcast when not pause as clients
 				// look for broadcasts every network frame.
 				sendBroadcastMessage = true;
-
-				// If network CRC checking enabled we turn on broadcasting always
-//				bool calculateNetworkCRC = false;
-//				if(isFlagType1BitEnabled(this->gameSettings.getFlagTypes1(),ft1_network_synch_checks) == true ||
-//					isFlagType1BitEnabled(this->gameSettings.getFlagTypes1(),ft1_network_synch_checks_verbose) == true) {
-//
-//					calculateNetworkCRC = true;
-//				}
-//
-//				if(calculateNetworkCRC == true ||
-//					(lastBroadcastCommandsTimer.isStarted() == false ||
-//					 lastBroadcastCommandsTimer.getMillis() >= MAX_EMPTY_NETWORK_COMMAND_LIST_BROADCAST_INTERVAL_MILLISECONDS)) {
-//
-//					sendBroadcastMessage = true;
-//				}
 			}
 			// Auto pause is enabled due to client lagging, only send empty command
 			// broadcasts every MAX_EMPTY_NETWORK_COMMAND_LIST_BROADCAST_INTERVAL_MILLISECONDS
@@ -2876,7 +2866,7 @@ std::map<string,string> ServerInterface::publishToMasterserver() {
 	publishToServerInfo["glestVersion"] 		= glestVersionString;
 	publishToServerInfo["platform"] 			= getPlatformNameString() + "-" + getGITRevisionString();
 	publishToServerInfo["binaryCompileDate"] 	= getCompileDateTime();
-	publishToServerInfo["serverTitle"] 			= getHumanPlayerName() + "'s game";
+	publishToServerInfo["serverTitle"] 			= this->getGameSettings()->getGameName();
 	publishToServerInfo["tech"] 				= this->getGameSettings()->getTech();
 	publishToServerInfo["map"] 					= this->getGameSettings()->getMap();
 	publishToServerInfo["tileset"] 				= this->getGameSettings()->getTileset();
@@ -2979,7 +2969,11 @@ void ServerInterface::simpleTask(BaseThread *callingThread,void *userdata) {
 		if(needToRepublishToMasterserver == true) {
 			try {
 				if(Config::getInstance().getString("Masterserver","") != "") {
-					string request = Config::getInstance().getString("Masterserver") + "addServerInfo.php?";
+					string request = Config::getInstance().getString("Masterserver");
+					if(request != "") {
+						endPathWithSlash(request,false);
+					}
+					request += "addServerInfo.php?";
 
 					std::map<string,string> newPublishToServerInfo = publishToMasterserver();
 
@@ -3003,7 +2997,12 @@ void ServerInterface::simpleTask(BaseThread *callingThread,void *userdata) {
 					std::string serverInfo = SystemFlags::getHTTP(request,handle);
 					//printf("Result:\n%s\n",serverInfo .c_str());
 
-					string requestStats = Config::getInstance().getString("Masterserver") + "addGameStats.php?";
+					string requestStats = Config::getInstance().getString("Masterserver");
+					if(requestStats != "") {
+						endPathWithSlash(requestStats,false);
+					}
+					requestStats += "addGameStats.php?";
+
 					std::map<string,string> newPublishToServerInfoStats = publishToMasterserverStats();
 					if(newPublishToServerInfoStats.empty() == false) {
 						for(std::map<string,string>::const_iterator iterMap = newPublishToServerInfoStats.begin();

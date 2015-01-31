@@ -78,6 +78,9 @@ private:
     Texture2D *statusNotReadyTexture;
     Texture2D *statusBRBTexture;
 
+    Texture2D *healthbarTexture;
+    Texture2D *healthbarBackgroundTexture;
+
     std::vector<Texture2D *> miscTextureList;
 
     Font2D *displayFont;
@@ -113,7 +116,6 @@ public:
 	enum TextureSystemType {
 		tsyst_NONE,
 		tsyst_logoTexture,
-		//std::vector<Texture2D *> logoTextureList;
 		tsyst_backgroundTexture,
 		tsyst_fireTexture,
 		tsyst_teamColorTexture,
@@ -134,9 +136,10 @@ public:
 		tsyst_statusReadyTexture,
 		tsyst_statusNotReadyTexture,
 		tsyst_statusBRBTexture,
+		tsyst_healthbarTexture,
+		tsyst_healthbarBackgroundTexture,
 
 		tsyst_COUNT
-	    //std::vector<Texture2D *> miscTextureList;
 	};
 
 public:
@@ -149,7 +152,7 @@ public:
     void loadFonts();
 
     // Textures
-    Texture2D *getTextureBySystemId(TextureSystemType type) const;
+    Texture2D *getTextureBySystemId(TextureSystemType type);
 
 	Texture2D *getBackgroundTexture();
 	Texture2D *getFireTexture();
@@ -172,6 +175,9 @@ public:
     Texture2D *getStatusNotReadyTexture();
     Texture2D *getStatusBRBTexture();
 	Texture2D *getGameWinnerTexture();
+
+	Texture2D *getHealthbarTexture();
+	Texture2D *getHealthbarBackgroundTexture();
 
 	size_t getLogoTextureExtraCount();
 	Texture2D *getLogoTextureExtra(int idx);

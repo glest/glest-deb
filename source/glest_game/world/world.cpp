@@ -418,6 +418,11 @@ void World::init(Game *game, bool createUnits, bool initFactions){
 
 	//initExplorationState(); ... was only for !fog-of-war, now handled in initCells()
 	computeFow();
+	if(getFrameCount()>1){
+		// this is needed for games that are loaded to "switch the light on".
+		// otherwise the FowTexture is completely black like in the beginning of a game.
+		minimap.updateFowTex(1.f);
+	}
 
 	if(gotError == true) {
 		throw megaglest_runtime_error(sErrBuf,!skipStackTrace);
@@ -1033,6 +1038,7 @@ void World::tick() {
 
 			//if consumable
 			if(rt != NULL && rt->getClass() == rcConsumable) {
+
 				int balance= 0;
 				for(int unitIndex = 0;
 						unitIndex < faction->getUnitCount(); ++unitIndex) {
@@ -1040,11 +1046,13 @@ void World::tick() {
 					//if unit operative and has this cost
 					const Unit *unit = faction->getUnit(unitIndex);
 					if(unit != NULL && unit->isOperative()) {
+
 						const UnitType *ut = unit->getType();
 						const Resource *resource = NULL;
 						std::map<const UnitType *, std::map<const ResourceType *, const Resource *> >::iterator iterFind = resourceCostCache.find(ut);
 						if(iterFind != resourceCostCache.end() &&
 								iterFind->second.find(rt) != iterFind->second.end()) {
+
 							resource = iterFind->second.find(rt)->second;
 						}
 						else {
@@ -1331,6 +1339,11 @@ void World::createUnit(const string &unitName, int factionIndex, const Vec2i &po
 			unit->born(NULL);
 			if(scriptManager) {
 				scriptManager->onUnitCreated(unit);
+			}
+			if(game->getPaused()==true){
+				// new units added in pause mode might change the Fow. ( Scenarios do this )
+				computeFow();
+				minimap.updateFowTex(1.f);
 			}
 		}
 		else {
@@ -1699,6 +1712,9 @@ void World::clearCaches() {
 
 void World::togglePauseGame(bool pauseStatus,bool forceAllowPauseStateChange) {
 	game->setPaused(pauseStatus, forceAllowPauseStateChange, false, false);
+	// ensures that the Fow is really up to date when the game switches to pause mode. ( mainly for scenarios )
+	computeFow();
+	minimap.updateFowTex(1.f);
 }
 
 void World::addConsoleText(const string &text) {
@@ -2241,7 +2257,11 @@ void World::initUnits() {
 						placeUnitAtLocation(map.getStartLocation(startLocationIndex), generationArea, unit, true);
 					}
 				}
-
+			}
+			// the following is done here in an extra loop and not in the loop above, because shared resources games
+			// need to load all factions first, before calculating limitResourcesToStore()
+			for(int i = 0; i < getFactionCount(); ++i) {
+				Faction *f= factions[i];
 				// Ensure Starting Resource Amount are adjusted to max store levels
 				f->limitResourcesToStore();
 			}
@@ -2654,6 +2674,87 @@ void World::stopStreamingVideo(const string &playVideo) {
 
 void World::stopAllVideo() {
 	this->game->stopAllVideo();
+}
+
+void World::initTeamResource(const ResourceType *rt,int teamIndex, int value) {
+	std::string resourceTypeName = rt->getName(false);
+	TeamResources[teamIndex][resourceTypeName].init(rt,value);
+}
+
+const Resource *World::getResourceForTeam(const ResourceType *rt, int teamIndex) {
+	if(rt == NULL) {
+		return NULL;
+	}
+
+	std::map<std::string, Resource> &resourceList 	= TeamResources[teamIndex];
+	std::string resourceTypeName 					= rt->getName(false);
+	resourceList[resourceTypeName].init(rt,0);
+	Resource &teamResource 							= resourceList[resourceTypeName];
+
+	for(int index = 0; index < (int)factions.size(); ++index) {
+
+		Faction *faction = factions[index];
+		if(faction != NULL && faction->getTeam() == teamIndex) {
+			const Resource *factionResource = faction->getResource(rt,true);
+			if(factionResource != NULL && factionResource->getType() != NULL) {
+
+				int teamResourceAmount 	= teamResource.getAmount();
+				int teamResourceBalance = teamResource.getBalance();
+
+				teamResource.setAmount(teamResourceAmount 	+ factionResource->getAmount());
+				teamResource.setBalance(teamResourceBalance + factionResource->getBalance());
+			}
+		}
+	}
+
+	return &teamResource;
+}
+
+int World::getStoreAmountForTeam(const ResourceType *rt, int teamIndex) const {
+
+	int teamStoreAmount = 0;
+	for(int index = 0; index < (int)factions.size(); ++index) {
+
+		Faction *faction = factions[index];
+		if(faction != NULL && faction->getTeam() == teamIndex) {
+
+			teamStoreAmount += faction->getStoreAmount(rt,true);
+		}
+	}
+
+	return teamStoreAmount;
+}
+
+bool World::showResourceTypeForTeam(const ResourceType *rt, int teamIndex) const {
+	//if any unit produces the resource
+	bool showResource = false;
+	for(int index = 0; showResource == false && index < (int)factions.size(); ++index) {
+		const Faction *teamFaction = factions[index];
+		if(teamFaction != NULL && teamFaction->getTeam() == teamIndex) {
+
+			if(teamFaction->hasUnitTypeWithResourceCostInCache(rt) == true) {
+				showResource = true;
+			}
+		}
+	}
+	return showResource;
+}
+
+
+bool World::showResourceTypeForFaction(const ResourceType *rt, const Faction *faction) const {
+	//if any unit produces the resource
+	bool showResource = false;
+	for(int factionUnitTypeIndex = 0;
+			factionUnitTypeIndex < faction->getType()->getUnitTypeCount();
+				++factionUnitTypeIndex) {
+
+		const UnitType *ut = faction->getType()->getUnitType(factionUnitTypeIndex);
+		if(ut->getCost(rt) != NULL) {
+			showResource = true;
+			break;
+		}
+	}
+	return showResource;
 }
 
 void World::removeResourceTargetFromCache(const Vec2i &pos) {

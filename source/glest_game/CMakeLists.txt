@@ -41,11 +41,13 @@ IF(BUILD_MEGAGLEST)
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${OPENGL_LIBRARY})
 	ENDIF()
 
-	FIND_PACKAGE(XercesC REQUIRED)
-	INCLUDE_DIRECTORIES(${XERCESC_INCLUDE})
-	IF(UNIX)
-		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${XERCESC_LIBRARY})
-	ENDIF()
+        IF(WANT_XERCES)
+	        FIND_PACKAGE(XercesC REQUIRED)
+	        INCLUDE_DIRECTORIES(${XERCESC_INCLUDE})
+	        IF(UNIX)
+		        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${XERCESC_LIBRARY})
+	        ENDIF()
+        ENDIF()
 
 	FIND_PACKAGE(OpenAL REQUIRED)
 	INCLUDE_DIRECTORIES(${OPENAL_INCLUDE_DIR})
@@ -206,6 +208,7 @@ IF(BUILD_MEGAGLEST)
 	ENDIF()
 
 	IF(WIN32)
+		SET(CMAKE_CXX_FLAGS_NONE "${CMAKE_CXX_FLAGS_NONE} -Wl,-subsystem,console -mconsole")
 		SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wl,-subsystem,console -mconsole")
 		SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wl,-subsystem,console -mconsole")
 		SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -Wl,-subsystem,console -mconsole")
@@ -280,7 +283,7 @@ IF(BUILD_MEGAGLEST)
 
         # Requires an install prefix for the items below to work
         IF(NOT CMAKE_INSTALL_PREFIX STREQUAL "")
-	        MESSAGE(STATUS "**Source package [${PROJECT_SOURCE_DIR}]")	
+	        MESSAGE(STATUS "**Source package INSTALL TRIGGERED [${PROJECT_SOURCE_DIR}]")	
 
 	        # Installation of the program
 	        INSTALL(TARGETS 
@@ -296,40 +299,39 @@ IF(BUILD_MEGAGLEST)
 		          DESTINATION ${MEGAGLEST_MANPAGE_INSTALL_PATH})
 	        ENDIF()
 
-	        # Check if we are running from an GIT folder structure or tarballs
-	        IF(EXISTS "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop")
-		        MESSAGE(STATUS "**Source package detected git folder structure.")
+		# rename the ini for installation
+		IF(WIN32)
+			INSTALL(FILES 
+			  "${PROJECT_SOURCE_DIR}/mk/windoze/glest.ini"
+                          "${PROJECT_SOURCE_DIR}/mk/shared/glestkeys.ini"
+			  DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH})
+		ELSE()
+			INSTALL(FILES 
+			  "${PROJECT_SOURCE_DIR}/mk/linux/glest.ini"
+                          "${PROJECT_SOURCE_DIR}/mk/shared/glestkeys.ini"
+			  DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH})
+		ENDIF()
 
-		        # Installation of the program desktop file
-		        INSTALL(FILES 
-		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop"
-		          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
+		# Installation of data files from outside normal data folder
+		INSTALL(DIRECTORY "${PROJECT_SOURCE_DIR}/source/masterserver/flags" 
+		  DESTINATION ${MEGAGLEST_DATA_INSTALL_PATH}data/core/misc_textures
+		  OPTIONAL REGEX "/.git" EXCLUDE)
 
-		        # Installation of the program desktop icon file
-		        INSTALL(FILES 
-		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.png"
-		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.xpm"
-		          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.bmp"
-		          "${PROJECT_SOURCE_DIR}/data/glest_game/editor.ico"
-		          "${PROJECT_SOURCE_DIR}/mk/linux/glest.ico"
-		          "${PROJECT_SOURCE_DIR}/data/glest_game/g3dviewer.ico"
-		          DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
-	        ELSE()
+	        MESSAGE(STATUS "**Source package detected git folder structure.")
 
-		        # Installation of the program desktop file
-		        INSTALL(FILES 
-		          "${PROJECT_SOURCE_DIR}/megaglest.desktop"
-		          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
+	        # Installation of the program desktop file
+	        INSTALL(FILES 
+	          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.desktop"
+	          DESTINATION ${MEGAGLEST_DESKTOP_INSTALL_PATH})
 
-		        # Installation of the program desktop icon file
-		        INSTALL(FILES 
-		          "${PROJECT_SOURCE_DIR}/megaglest.png"
-		          "${PROJECT_SOURCE_DIR}/megaglest.xpm"
-		          "${PROJECT_SOURCE_DIR}/megaglest.bmp"
-		          "${PROJECT_SOURCE_DIR}/editor.ico"
-		          "${PROJECT_SOURCE_DIR}/glest.ico"
-		          "${PROJECT_SOURCE_DIR}/g3dviewer.ico"
-		          DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
-	        ENDIF()
+	        # Installation of the program desktop icon file
+	        INSTALL(FILES 
+	          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.png"
+	          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.xpm"
+	          "${PROJECT_SOURCE_DIR}/mk/linux/megaglest.bmp"
+	          "${PROJECT_SOURCE_DIR}/mk/shared/editor.ico"
+	          "${PROJECT_SOURCE_DIR}/mk/shared/glest.ico"
+	          "${PROJECT_SOURCE_DIR}/mk/shared/g3dviewer.ico"
+	          DESTINATION ${MEGAGLEST_ICON_INSTALL_PATH})
         ENDIF()
 ENDIF()

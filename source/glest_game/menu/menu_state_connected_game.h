@@ -63,6 +63,7 @@ private:
 	GraphicLabel labelMapInfo;
 	GraphicLabel labelStatus;
 	GraphicLabel labelInfo;
+	GraphicLabel labelWaitingForPlayers;
 	GraphicButton buttonRestoreLastSettings;
 
 	//GraphicLabel labelPathFinderType;
@@ -89,7 +90,6 @@ private:
 
 	GraphicListBox listBoxPlayerStatus;
 	GraphicLabel labelPlayerStatus[GameConstants::maxPlayers];
-	int nonAdminPlayerStatusX;
 
 	GraphicLabel labelAllowObservers;
 	GraphicCheckBox checkBoxAllowObservers;
@@ -206,8 +206,13 @@ private:
     GraphicButton buttonCancelDownloads;
 
 	GraphicLabel labelEnableSwitchTeamMode;
-	//GraphicListBox listBoxEnableSwitchTeamMode;
 	GraphicCheckBox checkBoxEnableSwitchTeamMode;
+
+	GraphicLabel labelAllowTeamUnitSharing;
+	GraphicCheckBox checkBoxAllowTeamUnitSharing;
+
+	GraphicLabel labelAllowTeamResourceSharing;
+	GraphicCheckBox checkBoxAllowTeamResourceSharing;
 
 	GraphicLabel labelAISwitchTeamAcceptPercent;
 	GraphicListBox listBoxAISwitchTeamAcceptPercent;
@@ -233,8 +238,17 @@ private:
 	time_t broadcastServerSettingsDelayTimer;
 	int lastGameSettingsReceivedCount;
 
+	time_t noReceiveTimer;
+
 	bool launchingNewGame;
+	bool isfirstSwitchingMapMessage;
 	std::auto_ptr<TechTree> techTree;
+
+	GameSettings originalGamesettings;
+	bool validOriginalGameSettings;
+	GameSettings displayedGamesettings;
+	bool validDisplayedGamesettings;
+
 
 public:
 
