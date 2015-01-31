@@ -8,7 +8,8 @@ megaglest (3.11.0+dfsg-1) experimental; urgency=medium
     architectures again.
   * Drop fix-cmake-build-type-none.patch. Merged upstream.
   * Drop wxWidgets-assertions.patch. Merged upstream.
-  * Drop clean file. Let the build system handle that.
+  * Update clean file and clean only required files, not the complete mk/linux
+    directory.
   * Update debian/copyright for new release.
   * Remove empty data directory and the ini files which are also provided by
     megaglest-data.
