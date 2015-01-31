@@ -1,3 +1,19 @@
+megaglest (3.11.0-1) UNRELEASED; urgency=medium
+
+  * Debian release 3.9.1-3.
+    Soften the dependency on megaglest-data
+  * Initial upstream branch.
+  * Imported Upstream version 3.6.0.3
+  * Imported Upstream version 3.9.1
+  * Imported Upstream version 3.11.0
+  * Move the package to Git.
+  * debian/control: Use Architecture: any. Try to build on all available
+    architectures again.
+  * Drop fix-cmake-build-type-none.patch. Merged upstream.
+  * Drop wxWidgets-assertions.patch. Merged upstream.
+
+ -- Markus Koschany <apo@gambaru.de>  Sat, 31 Jan 2015 15:43:43 +0100
+
 megaglest (3.9.1-3) unstable; urgency=medium
 
   * debian/control: Soften the dependency on megaglest-data to
