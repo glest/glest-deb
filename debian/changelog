@@ -1,18 +1,17 @@
-megaglest (3.11.0-1) UNRELEASED; urgency=medium
+megaglest (3.11.0+dfsg-1) experimental; urgency=medium
 
-  * Debian release 3.9.1-3.
-    Soften the dependency on megaglest-data
-  * Initial upstream branch.
-  * Imported Upstream version 3.6.0.3
-  * Imported Upstream version 3.9.1
-  * Imported Upstream version 3.11.0
+  * Imported Upstream version 3.11.0+dfsg.
+  * Remove prebuilt windows dll file with Files-Excluded mechanism.
+  * Add get-orig-source target and repack the source tarball.
   * Move the package to Git.
   * debian/control: Use Architecture: any. Try to build on all available
     architectures again.
   * Drop fix-cmake-build-type-none.patch. Merged upstream.
   * Drop wxWidgets-assertions.patch. Merged upstream.
+  * Drop clean file. Let the build system handle that.
+  * Update debian/copyright for new release.
 
- -- Markus Koschany <apo@gambaru.de>  Sat, 31 Jan 2015 15:43:43 +0100
+ -- Markus Koschany <apo@gambaru.de>  Sat, 31 Jan 2015 17:51:32 +0100
 
 megaglest (3.9.1-3) unstable; urgency=medium
 
