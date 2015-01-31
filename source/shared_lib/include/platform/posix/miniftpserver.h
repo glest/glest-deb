@@ -12,10 +12,15 @@
 #ifndef _SHARED_PLATFORMCOMMON_MINIFTPSERVERTHREAD_H_
 #define _SHARED_PLATFORMCOMMON_MINIFTPSERVERTHREAD_H_
 
+#ifdef WIN32
+  #include <winsock2.h>
+  #include <winsock.h>
+#endif
+
 #include "base_thread.h"
 #include <vector>
 #include <string>
-#include "types.h"
+#include "data_types.h"
 #include "socket.h"
 
 #include "leak_dumper.h"
@@ -34,6 +39,7 @@ protected:
     std::pair<string,string> mapsPath;
     std::pair<string,string> tilesetsPath;
     std::pair<string,string> techtreesPath;
+    string tempFilesPath;
 
     int portNumber;
     int maxPlayers;
@@ -49,7 +55,8 @@ public:
     		std::pair<string,string> tilesetsPath, std::pair<string,string> techtreesPath,
     		bool internetEnabledFlag,
     		bool allowInternetTilesetFileTransfers, bool allowInternetTechtreeFileTransfers,
-    		int portNumber,int maxPlayers, FTPClientValidationInterface *ftpValidationIntf);
+    		int portNumber,int maxPlayers, FTPClientValidationInterface *ftpValidationIntf,
+    		string tempFilesPath);
     ~FTPServerThread();
     virtual void execute();
     virtual void signalQuit();

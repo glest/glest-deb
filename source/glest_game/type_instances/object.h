@@ -11,6 +11,11 @@
 #ifndef _GLEST_GAME_OBJECT_H_
 #define _GLEST_GAME_OBJECT_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "model.h"
 #include "vec.h"
 #include "leak_dumper.h"
@@ -23,6 +28,7 @@ namespace Glest{ namespace Game{
 class ObjectType;
 class ResourceType;
 class Resource;
+class TechTree;
 
 using Shared::Graphics::Model;
 using Shared::Graphics::Vec2i;
@@ -40,9 +46,10 @@ class Object;
 class ObjectStateInterface {
 public:
 	virtual void removingObjectEvent(Object *object) = 0;
+	virtual ~ObjectStateInterface() {}
 };
 
-class Object : public BaseColorPickEntity {
+class Object : public BaseColorPickEntity, public ParticleOwner {
 private:
 	typedef vector<UnitParticleSystem*> UnitParticleSystems;
 
@@ -56,14 +63,18 @@ private:
 	int lastRenderFrame;
 	Vec2i mapPos;
 	bool visible;
+	bool animated;
+	float animProgress;
+	float highlight;
 
 	static ObjectStateInterface *stateCallback;
 
 public:
 	Object(ObjectType *objectType, const Vec3f &pos, const Vec2i &mapPos);
-	~Object();
+	virtual ~Object();
 
-	void end(); //to kill particles
+	virtual void end(); //to kill particles
+	virtual void logParticleInfo(string info) {};
 	void initParticles();
 	void initParticlesFromTypes(const ModelParticleSystemTypes *particleTypes);
 	static void setStateCallback(ObjectStateInterface *value) { stateCallback=value; }
@@ -77,6 +88,11 @@ public:
 	const Model *getModel() const;
 	Model *getModelPtr() const;
 	bool getWalkable() const;
+	bool isAnimated() const				{return animated;}
+
+	float getHightlight() const			{return highlight;}
+	bool isHighlighted() const			{return highlight>0.f;}
+	void resetHighlight();
 
 	void setResource(const ResourceType *resourceType, const Vec2i &pos);
 	void setHeight(float height);
@@ -87,7 +103,15 @@ public:
 
 	const Vec2i & getMapPos() const { return mapPos; }
 
+	void updateHighlight();
+	void update();
+	float getAnimProgress() const { return animProgress;}
+
 	virtual string getUniquePickName() const;
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode,const TechTree *techTree);
+
+	virtual void end(ParticleSystem *particleSystem);
 };
 
 }}//end namespace

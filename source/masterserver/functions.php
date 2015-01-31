@@ -1,4 +1,8 @@
 <?php
+//      Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke and Tom Reynolds
+//      The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 	if ( !defined('INCLUSION_PERMITTED') || ( defined('INCLUSION_PERMITTED') && INCLUSION_PERMITTED !== true ) ) { die( 'This file must not be invoked directly.' ); }
 
 	# This function cleans out special characters
@@ -55,9 +59,19 @@
 	function cleanupServerList()
 	{
 		// on a busy server, this function should be invoked by cron in regular intervals instead (one SQL query less for the script)
-		return mysql_query( 'DELETE FROM glestserver WHERE lasttime<DATE_add(NOW(), INTERVAL -1 minute);' );
+		mysql_query( 'DELETE FROM glestserver WHERE status <> 3 AND lasttime < DATE_add(NOW(), INTERVAL -1 minute);' );
 		//return mysql_query( 'UPDATE glestserver SET status=\'???\' WHERE lasttime<DATE_add(NOW(), INTERVAL -2 minute);' );
-	}
+        }
+
+	function cleanupGameStats()
+	{
+                // Purge completed games that are less than x minutes in duration
+                mysql_query( 'DELETE FROM glestserver WHERE status = 3 AND gameUUID in (SELECT gameUUID from glestgamestats where framesToCalculatePlaytime / 40 / 60 < ' . MAX_MINS_OLD_COMPLETED_GAMES . ');');
+
+                // Cleanup game stats for games that are purged
+                mysql_query( 'DELETE FROM glestgamestats WHERE gameUUID NOT IN (SELECT gameUUID from glestserver);');
+                mysql_query( 'DELETE FROM glestgameplayerstats WHERE gameUUID NOT IN (SELECT gameUUID from glestgamestats);');
+        }
 
 	function addLatestServer($remote_ip, $service_port, $serverTitle, $connectedClients, $networkSlots )
 	{
@@ -84,4 +98,25 @@
 		mysql_query( "UPDATE recent_servers SET name='$serverTitle', players='$players' WHERE id=$id LIMIT 1");
 	}
 
+        function getTimeString($frames) {
+	        $framesleft = (int)$frames;
+                $updateFps = 40.0;
+
+	        $hours = (int)($frames / $updateFps / 3600.0);
+	        $framesleft = $framesleft - $hours * 3600 * $updateFps;
+	        $minutes = (int)($framesleft / $updateFps / 60.0);
+	        $framesleft = $framesleft - $minutes * 60 * $updateFps;
+	        $seconds = (int)($framesleft / $updateFps);
+
+	        $hourstr = $hours;
+	        if($hours < 10) $hourstr = "0" . $hourstr;
+
+	        $minutestr = $minutes;
+	        if($minutes < 10) $minutestr = "0" . $minutestr;
+
+	        $secondstr = $seconds;
+	        if($seconds < 10) $secondstr = "0" . $secondstr;
+
+	        return $hourstr . ":" . $minutestr . ":" . $secondstr;
+        }
 ?>

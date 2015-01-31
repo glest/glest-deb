@@ -1,3 +1,13 @@
+/*
+    Copyright 2006 Nicolas Brodu
+    		  2012 Mark Vejvoda
+
+	You can redistribute this code and/or modify it under
+	the terms of the GNU General Public License as published
+	by the Free Software Foundation; either version 2 of the
+	License, or (at your option) any later version
+*/
+
 // Includes Math.h in turn
 #include "streflop.h"
 
@@ -8,13 +18,13 @@ namespace streflop {
     const Simple SimpleZero(0.0f);
     const Simple SimplePositiveInfinity = Simple(1.0f) / SimpleZero;
     const Simple SimpleNegativeInfinity = Simple(-1.0f) / SimpleZero;
-    // TODO: non-signaling version
+    // non-signaling version
     const Simple SimpleNaN = SimplePositiveInfinity + SimpleNegativeInfinity;
 
     const Double DoubleZero(0.0f);
     const Double DoublePositiveInfinity = Double(1.0f) / DoubleZero;
     const Double DoubleNegativeInfinity = Double(-1.0f) / DoubleZero;
-    // TODO: non-signaling version
+    // non-signaling version
     const Double DoubleNaN = DoublePositiveInfinity + DoubleNegativeInfinity;
 
 // Extended are not always available
@@ -23,7 +33,7 @@ namespace streflop {
     const Extended ExtendedZero(0.0f);
     const Extended ExtendedPositiveInfinity = Extended(1.0f) / ExtendedZero;
     const Extended ExtendedNegativeInfinity = Extended(-1.0f) / ExtendedZero;
-    // TODO: non-signaling version
+    // non-signaling version
     const Extended ExtendedNaN = ExtendedPositiveInfinity + ExtendedNegativeInfinity;
 
 #endif

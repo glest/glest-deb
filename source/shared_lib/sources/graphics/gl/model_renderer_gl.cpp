@@ -31,9 +31,11 @@ ModelRendererGl::ModelRendererGl() {
 	rendering= false;
 	duplicateTexCoords= false;
 	secondaryTexCoordUnit= 1;
+	lastTexture=0;
 }
 
-void ModelRendererGl::begin(bool renderNormals, bool renderTextures, bool renderColors, MeshCallback *meshCallback) {
+void ModelRendererGl::begin(bool renderNormals, bool renderTextures, bool renderColors,
+		bool colorPickingMode, MeshCallback *meshCallback) {
 	//assertions
 	assert(rendering == false);
 	assertGl();
@@ -41,6 +43,7 @@ void ModelRendererGl::begin(bool renderNormals, bool renderTextures, bool render
 	this->renderTextures= renderTextures;
 	this->renderNormals= renderNormals;
 	this->renderColors= renderColors;
+	this->colorPickingMode = colorPickingMode;
 	this->meshCallback= meshCallback;
 
 	rendering= true;
@@ -52,14 +55,19 @@ void ModelRendererGl::begin(bool renderNormals, bool renderTextures, bool render
 	glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT);
 
 	//init opengl
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	if(this->colorPickingMode == false) {
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glFrontFace(GL_CCW);
-	glEnable(GL_NORMALIZE);
-	glEnable(GL_BLEND);
 
-	glEnable(GL_POLYGON_OFFSET_FILL);
-	glPolygonOffset(0.005f, 0.0f);
+	if(this->colorPickingMode == false) {
+		glEnable(GL_NORMALIZE);
+		glEnable(GL_BLEND);
+
+		glEnable(GL_POLYGON_OFFSET_FILL);
+		glPolygonOffset(0.005f, 0.0f);
+	}
 
 	glEnableClientState(GL_VERTEX_ARRAY);
 
@@ -80,6 +88,11 @@ void ModelRendererGl::begin(bool renderNormals, bool renderTextures, bool render
 	glHint( GL_POLYGON_SMOOTH_HINT, GL_FASTEST );
 	glHint( GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST );
 */
+
+	if(this->colorPickingMode == true) {
+		BaseColorPickEntity::beginPicking();
+	}
+
 	//assertions
 	assertGl();
 }
@@ -92,18 +105,24 @@ void ModelRendererGl::end() {
 	//set render state
 	rendering= false;
 
-	glPolygonOffset( 0.0f, 0.0f );
-	glDisable(GL_POLYGON_OFFSET_FILL);
+	if(this->colorPickingMode == false) {
+		glPolygonOffset( 0.0f, 0.0f );
+		glDisable(GL_POLYGON_OFFSET_FILL);
+	}
 
 	//pop
 	glPopAttrib();
 	glPopClientAttrib();
 
+	if(colorPickingMode == true) {
+		BaseColorPickEntity::endPicking();
+	}
+
 	//assertions
 	assertGl();
 }
 
-void ModelRendererGl::render(Model *model) {
+void ModelRendererGl::render(Model *model,int renderMode) {
 	//assertions
 	assert(rendering);
 	assertGl();
@@ -113,7 +132,7 @@ void ModelRendererGl::render(Model *model) {
 	//render every mesh
 	//if(model->getIsStaticModel() == true) {
 	for(uint32 i = 0;  i < model->getMeshCount(); ++i) {
-		renderMesh(model->getMeshPtr(i));
+		renderMesh(model->getMeshPtr(i),renderMode);
 	}
 	//}
 	//assertions
@@ -138,8 +157,12 @@ void ModelRendererGl::renderNormalsOnly(Model *model) {
 
 // ===================== PRIVATE =======================
 
-void ModelRendererGl::renderMesh(Mesh *mesh) {
+void ModelRendererGl::renderMesh(Mesh *mesh,int renderMode) {
 
+	if(renderMode==rmSelection && mesh->getNoSelect()==true)
+	{// don't render this and do nothing
+		return;
+	}
 	//assertions
 	assertGl();
 
@@ -152,35 +175,37 @@ void ModelRendererGl::renderMesh(Mesh *mesh) {
 		glEnable(GL_CULL_FACE);
 	}
 
-	//set color
-	if(renderColors) {
-		Vec4f color(mesh->getDiffuseColor(), mesh->getOpacity());
-		glColor4fv(color.ptr());
-	}
+	if(this->colorPickingMode == false) {
+		//set color
+		if(renderColors) {
+			Vec4f color(mesh->getDiffuseColor(), mesh->getOpacity());
+			glColor4fv(color.ptr());
+		}
 
-	//texture state
-	const Texture2DGl *texture= static_cast<const Texture2DGl*>(mesh->getTexture(mtDiffuse));
-	if(texture != NULL && renderTextures) {
-		if(lastTexture != texture->getHandle()){
-			//assert(glIsTexture(texture->getHandle()));
-			//throw runtime_error("glIsTexture(texture->getHandle()) == false for texture: " + texture->getPath());
-			if(glIsTexture(texture->getHandle()) == GL_TRUE) {
-                glBindTexture(GL_TEXTURE_2D, texture->getHandle());
-                lastTexture= texture->getHandle();
-			}
-			else {
-                glBindTexture(GL_TEXTURE_2D, 0);
-                lastTexture= 0;
+		//texture state
+		const Texture2DGl *texture= static_cast<const Texture2DGl*>(mesh->getTexture(mtDiffuse));
+		if(texture != NULL && renderTextures) {
+			if(lastTexture != texture->getHandle()){
+				//assert(glIsTexture(texture->getHandle()));
+				//throw megaglest_runtime_error("glIsTexture(texture->getHandle()) == false for texture: " + texture->getPath());
+				if(glIsTexture(texture->getHandle()) == GL_TRUE) {
+					glBindTexture(GL_TEXTURE_2D, texture->getHandle());
+					lastTexture= texture->getHandle();
+				}
+				else {
+					glBindTexture(GL_TEXTURE_2D, 0);
+					lastTexture= 0;
+				}
 			}
 		}
-	}
-	else{
-		glBindTexture(GL_TEXTURE_2D, 0);
-		lastTexture= 0;
-	}
+		else{
+			glBindTexture(GL_TEXTURE_2D, 0);
+			lastTexture= 0;
+		}
 
-	if(meshCallback != NULL) {
-		meshCallback->execute(mesh);
+		if(meshCallback != NULL) {
+			meshCallback->execute(mesh);
+		}
 	}
 
 	//misc vars
@@ -211,6 +236,8 @@ void ModelRendererGl::renderMesh(Mesh *mesh) {
 		else{
 			glDisableClientState(GL_NORMAL_ARRAY);
 		}
+
+		assertGl();
 
 		//tex coords
 		if(renderTextures && mesh->getTexture(mtDiffuse) != NULL ) {
@@ -254,6 +281,8 @@ void ModelRendererGl::renderMesh(Mesh *mesh) {
 			glDisableClientState(GL_NORMAL_ARRAY);
 		}
 
+		assertGl();
+
 		//tex coords
 		if(renderTextures && mesh->getTexture(mtDiffuse)!=NULL ) {
 			if(duplicateTexCoords) {
@@ -277,15 +306,21 @@ void ModelRendererGl::renderMesh(Mesh *mesh) {
 	}
 
 	if(getVBOSupported() == true && mesh->getFrameCount() == 1) {
+		assertGl();
+
 		glBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, mesh->getVBOIndexes() );
 		glDrawRangeElements(GL_TRIANGLES, 0, vertexCount-1, indexCount, GL_UNSIGNED_INT, (char *)NULL);
 		glBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, 0 );
 		glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
 
 		//glDrawRangeElements(GL_TRIANGLES, 0, vertexCount-1, indexCount, GL_UNSIGNED_INT, mesh->getIndices());
+
+		assertGl();
 	}
 	else {
 		//draw model
+		assertGl();
+
 		glDrawRangeElements(GL_TRIANGLES, 0, vertexCount-1, indexCount, GL_UNSIGNED_INT, mesh->getIndices());
 	}
 

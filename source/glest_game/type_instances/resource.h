@@ -11,13 +11,20 @@
 #ifndef _GLEST_GAME_RESOURCE_H_
 #define _GLEST_GAME_RESOURCE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include "vec.h"
 #include "platform_common.h"
+#include "xml_parser.h"
 #include "leak_dumper.h"
 
 using std::string;
 using std::map;
+using Shared::Xml::XmlNode;
 
 namespace Glest{ namespace Game{
 
@@ -25,7 +32,7 @@ using Shared::Graphics::Vec2i;
 using Shared::PlatformCommon::ValueCheckerVault;
 
 class ResourceType;
-
+class TechTree;
 // =====================================================
 // 	class Resource  
 //
@@ -49,12 +56,18 @@ public:
 
 	int getAmount() const;
 	int getBalance() const;
-	string getDescription() const;
+	string getDescription(bool translatedValue) const;
 
 	void setAmount(int amount);
 	void setBalance(int balance);
 
     bool decAmount(int i);
+
+    void saveGame(XmlNode *rootNode) const;
+    void loadGame(const XmlNode *rootNode, int index,const TechTree *techTree);
+
+    std::string toString() const;
+    Checksum getCRC();
 };
 
 }}// end namespace

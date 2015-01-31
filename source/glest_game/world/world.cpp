@@ -22,7 +22,6 @@
 #include "sound_renderer.h"
 #include "game_settings.h"
 #include "cache_manager.h"
-#include "route_planner.h"
 #include <iostream>
 #include "sound.h"
 #include "sound_renderer.h"
@@ -38,39 +37,33 @@ namespace Glest{ namespace Game{
 // 	class World
 // =====================================================
 
-const float World::airHeight= 5.f;
 // This limit is to keep RAM use under control while offering better performance.
 int MaxExploredCellsLookupItemCache = 9500;
 time_t ExploredCellsLookupItem::lastDebug = 0;
 
 // ===================== PUBLIC ========================
 
-World::World(){
+World::World() : mutexFactionNextUnitId(new Mutex(CODE_AT_LINE)) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	Config &config= Config::getInstance();
 
-	staggeredFactionUpdates = config.getBool("StaggeredFactionUpdates","false");
 	unitParticlesEnabled=config.getBool("UnitParticles","true");
+
+	animatedTilesetObjectPosListLoaded = false;
 
 	ExploredCellsLookupItemCache.clear();
 	ExploredCellsLookupItemCacheTimer.clear();
 	ExploredCellsLookupItemCacheTimerCount = 0;
-	FowAlphaCellsLookupItemCache.clear();
 
 	nextCommandGroupId = 0;
 	techTree = NULL;
 	fogOfWarOverride = false;
+	fogOfWarSkillTypeValue = -1;
 
 	fogOfWarSmoothing= config.getBool("FogOfWarSmoothing");
 	fogOfWarSmoothingFrameSkip= config.getInt("FogOfWarSmoothingFrameSkip");
 
-	MaxExploredCellsLookupItemCache= config.getInt("MaxExploredCellsLookupItemCache",intToStr(MaxExploredCellsLookupItemCache).c_str());
-
-	routePlanner = 0;
-	cartographer = 0;
-
 	frameCount= 0;
-	//nextUnitId= 0;
 
 	scriptManager= NULL;
 	this->game = NULL;
@@ -78,9 +71,15 @@ World::World(){
 	thisFactionIndex=0;
 	thisTeamIndex=0;
 	fogOfWar=false;
+	originalGameFogOfWar = fogOfWar;
 	perfTimerEnabled=false;
 	queuedScenarioName="";
 	queuedScenarioKeepFactions=false;
+	disableAttackEffects = false;
+
+	loadWorldNode = NULL;
+	cacheFowAlphaTexture = false;
+	cacheFowAlphaTextureFogOfWarValue = false;
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -88,18 +87,21 @@ World::World(){
 void World::cleanup() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+	animatedTilesetObjectPosListLoaded = false;
+
 	ExploredCellsLookupItemCache.clear();
 	ExploredCellsLookupItemCacheTimer.clear();
-	FowAlphaCellsLookupItemCache.clear();
+	//FowAlphaCellsLookupItemCache.clear();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	for(int i= 0; i<factions.size(); ++i){
+	for(int i= 0; i < (int)factions.size(); ++i){
 		factions[i]->end();
 	}
 
+	masterController.clearSlaves(true);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	for(int i= 0; i<factions.size(); ++i){
+	for(int i= 0; i < (int)factions.size(); ++i){
 		delete factions[i];
 	}
 	factions.clear();
@@ -117,16 +119,13 @@ void World::cleanup() {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	delete routePlanner;
-	routePlanner = 0;
-
-	for(std::map<string,StaticSound *>::iterator iterMap = staticSoundList.begin();
+	for(std::map<string,::Shared::Sound::StaticSound *>::iterator iterMap = staticSoundList.begin();
 		iterMap != staticSoundList.end(); ++iterMap) {
 		delete iterMap->second;
 	}
 	staticSoundList.clear();
 
-	for(std::map<string,StrSound *>::iterator iterMap = streamSoundList.begin();
+	for(std::map<string,::Shared::Sound::StrSound *>::iterator iterMap = streamSoundList.begin();
 		iterMap != streamSoundList.end(); ++iterMap) {
 		delete iterMap->second;
 	}
@@ -134,8 +133,6 @@ void World::cleanup() {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	delete cartographer;
-	cartographer = 0;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
@@ -144,18 +141,26 @@ World::~World() {
 
 	cleanup();
 
+	delete mutexFactionNextUnitId;
+	mutexFactionNextUnitId = NULL;
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
 void World::endScenario() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingWorld","",true), true);
+    Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingWorld","",true), true);
+
+    animatedTilesetObjectPosListLoaded = false;
 
     ExploredCellsLookupItemCache.clear();
     ExploredCellsLookupItemCacheTimer.clear();
-    FowAlphaCellsLookupItemCache.clear();
 
 	fogOfWarOverride = false;
+	originalGameFogOfWar = fogOfWar;
+	fogOfWarSkillTypeValue = -1;
+	cacheFowAlphaTexture = false;
+	cacheFowAlphaTextureFogOfWarValue = false;
 
 	map.end();
 
@@ -165,16 +170,19 @@ void World::endScenario() {
 
 void World::end(){
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    Logger::getInstance().add(Lang::getInstance().get("LogScreenGameUnLoadingWorld","",true), true);
+    Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameUnLoadingWorld","",true), true);
+
+    animatedTilesetObjectPosListLoaded = false;
 
     ExploredCellsLookupItemCache.clear();
     ExploredCellsLookupItemCacheTimer.clear();
-    FowAlphaCellsLookupItemCache.clear();
 
-	for(int i= 0; i<factions.size(); ++i){
+	for(int i= 0; i < (int)factions.size(); ++i){
 		factions[i]->end();
 	}
-	for(int i= 0; i<factions.size(); ++i){
+
+	masterController.clearSlaves(true);
+	for(int i= 0; i < (int)factions.size(); ++i){
 		delete factions[i];
 	}
 	factions.clear();
@@ -186,8 +194,12 @@ void World::end(){
 #endif
 
 	fogOfWarOverride = false;
+	originalGameFogOfWar = fogOfWar;
+	fogOfWarSkillTypeValue = -1;
 
 	map.end();
+	cacheFowAlphaTexture = false;
+	cacheFowAlphaTextureFogOfWarValue = false;
 
 	//stats will be deleted by BattleEnd
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -195,21 +207,118 @@ void World::end(){
 
 // ========================== init ===============================================
 
-void World::setFogOfWar(bool value) {
-	fogOfWar 		 = value;
-	fogOfWarOverride = true;
+void World::addFogOfWarSkillType(const Unit *unit,const FogOfWarSkillType *fowst) {
+	std::pair<const Unit *,const FogOfWarSkillType *> fowData;
+	fowData.first = unit;
+	fowData.second = fowst;
 
-	if(game != NULL && game->getGameSettings() != NULL) {
-		game->getGameSettings()->setFogOfWar(fogOfWar);
-		initCells(fogOfWar); //must be done after knowing faction number and dimensions
-		//initMinimap();
-		minimap.setFogOfWar(fogOfWar);
-		computeFow();
+	mapFogOfWarUnitList[unit->getId()] = fowData;
+
+	if((fowst->getApplyToTeam() == true && unit->getTeam() == this->getThisTeamIndex()) ||
+		(fowst->getApplyToTeam() == false && unit->getFactionIndex() == this->getThisFactionIndex())) {
+		if((fowst->getFowEnable() == false && fogOfWarSkillTypeValue != 0) ||
+				(fowst->getFowEnable() == true && fogOfWarSkillTypeValue != 1)) {
+
+			//printf("In [%s::%s Line: %d] current = %d new = %d\n",__FILE__,__FUNCTION__,__LINE__,fogOfWar,fowst->getFowEnable());
+			setFogOfWar(fowst->getFowEnable());
+		}
 	}
+}
+
+bool World::removeFogOfWarSkillTypeFromList(const Unit *unit) {
+	bool result = false;
+	if(mapFogOfWarUnitList.find(unit->getId()) != mapFogOfWarUnitList.end()) {
+		mapFogOfWarUnitList.erase(unit->getId());
+		result = true;
+	}
+	return result;
+}
+
+void World::removeFogOfWarSkillType(const Unit *unit) {
+	bool removedFromList = removeFogOfWarSkillTypeFromList(unit);
+	if(removedFromList == true) {
+		if(mapFogOfWarUnitList.empty() == true) {
+
+			//printf("In [%s::%s Line: %d] current = %d new = %d\n",__FILE__,__FUNCTION__,__LINE__,fogOfWar,originalGameFogOfWar);
+			fogOfWarSkillTypeValue = -1;
+			fogOfWarOverride = false;
+			minimap.restoreFowTex();
+		}
+		else {
+			bool fowEnabled = false;
+			for(std::map<int,std::pair<const Unit *,const FogOfWarSkillType *> >::const_iterator iterMap = mapFogOfWarUnitList.begin();
+					iterMap != mapFogOfWarUnitList.end(); ++iterMap) {
+
+				const Unit *unit 				= iterMap->second.first;
+				const FogOfWarSkillType *fowst 	= iterMap->second.second;
+
+				if((fowst->getApplyToTeam() == true && unit->getTeam() == this->getThisTeamIndex()) ||
+					(fowst->getApplyToTeam() == false && unit->getFactionIndex() == this->getThisFactionIndex())) {
+					if(fowst->getFowEnable() == true) {
+						fowEnabled = true;
+						break;
+					}
+				}
+			}
+
+			if((fowEnabled == false && fogOfWarSkillTypeValue != 0) ||
+					(fowEnabled == true && fogOfWarSkillTypeValue != 1)) {
+				//printf("In [%s::%s Line: %d] current = %d new = %d\n",__FILE__,__FUNCTION__,__LINE__,fogOfWar,fowEnabled);
+				setFogOfWar(fowEnabled);
+			}
+		}
+	}
+}
+
+void World::setFogOfWar(bool value) {
+	//printf("In [%s::%s Line: %d] current = %d new = %d\n",__FILE__,__FUNCTION__,__LINE__,fogOfWar,value);
+
+	if(fogOfWarOverride == false) {
+		minimap.copyFowTex();
+	}
+
+	if(value == true) {
+		fogOfWarSkillTypeValue = 1;
+	}
+	else {
+		fogOfWarSkillTypeValue = 0;
+	}
+
+	fogOfWarOverride = true;
 }
 
 void World::clearTileset() {
 	tileset = Tileset();
+}
+
+void World::restoreExploredFogOfWarCells() {
+	for (int i = 0; i < map.getSurfaceW(); ++i) {
+		for (int j = 0; j < map.getSurfaceH(); ++j) {
+			for (int k = 0;	k < GameConstants::maxPlayers + GameConstants::specialFactions; ++k) {
+				if (k == thisTeamIndex) {
+					if (map.getSurfaceCell(i, j)->isExplored(k) == true) {
+						const Vec2i pos(i, j);
+						Vec2i surfPos = pos;
+						//compute max alpha
+						float maxAlpha = 0.0f;
+						if (surfPos.x > 1 && surfPos.y > 1
+								&& surfPos.x < map.getSurfaceW() - 2
+								&& surfPos.y < map.getSurfaceH() - 2) {
+							maxAlpha = 1.f;
+						} else if (surfPos.x > 0 && surfPos.y > 0
+								&& surfPos.x < map.getSurfaceW() - 1
+								&& surfPos.y < map.getSurfaceH() - 1) {
+							maxAlpha = 0.3f;
+						}
+
+						//compute alpha
+						float alpha = maxAlpha;
+						minimap.incFowTextureAlphaSurface(surfPos, alpha);
+					}
+				}
+			}
+		}
+	}
 }
 
 void World::init(Game *game, bool createUnits, bool initFactions){
@@ -218,7 +327,6 @@ void World::init(Game *game, bool createUnits, bool initFactions){
 
 	ExploredCellsLookupItemCache.clear();
 	ExploredCellsLookupItemCacheTimer.clear();
-	FowAlphaCellsLookupItemCache.clear();
 
 	this->game = game;
 	scriptManager= game->getScriptManager();
@@ -226,6 +334,11 @@ void World::init(Game *game, bool createUnits, bool initFactions){
 	GameSettings *gs = game->getGameSettings();
 	if(fogOfWarOverride == false) {
 		fogOfWar = gs->getFogOfWar();
+	}
+	originalGameFogOfWar = fogOfWar;
+
+	if(loadWorldNode != NULL) {
+		timeFlow.loadGame(loadWorldNode);
 	}
 
 	if(initFactions == true) {
@@ -235,21 +348,80 @@ void World::init(Game *game, bool createUnits, bool initFactions){
 	initMap();
 	initSplattedTextures();
 
-	// must be done after initMap()
-	if(gs->getPathFinderType() != pfBasic) {
-		routePlanner = new RoutePlanner(this);
-		cartographer = new Cartographer(this);
-	}
-
 	unitUpdater.init(game);
+	if(loadWorldNode != NULL) {
+		unitUpdater.loadGame(loadWorldNode);
+	}
 
 	//minimap must be init after sum computation
 	initMinimap();
-	if(createUnits){
-		initUnits();
+
+	bool gotError = false;
+	bool skipStackTrace = false;
+	string sErrBuf = "";
+
+	try {
+		if(createUnits) {
+			initUnits();
+		}
 	}
+	catch(const megaglest_runtime_error &ex) {
+		gotError = true;
+		if(ex.wantStackTrace() == true) {
+			char szErrBuf[8096]="";
+			snprintf(szErrBuf,8096,"In [%s::%s %d]",__FILE__,__FUNCTION__,__LINE__);
+			sErrBuf = string(szErrBuf) + string("\nerror [") + string(ex.what()) + string("]\n");
+		}
+		else {
+			skipStackTrace = true;
+			sErrBuf = ex.what();
+		}
+		SystemFlags::OutputDebug(SystemFlags::debugError,sErrBuf.c_str());
+	}
+	catch(const std::exception &ex) {
+		gotError = true;
+		char szErrBuf[8096]="";
+		snprintf(szErrBuf,8096,"In [%s::%s %d]",__FILE__,__FUNCTION__,__LINE__);
+		sErrBuf = string(szErrBuf) + string("\nerror [") + string(ex.what()) + string("]\n");
+		SystemFlags::OutputDebug(SystemFlags::debugError,sErrBuf.c_str());
+	}
+
+	if(loadWorldNode != NULL) {
+		map.loadGame(loadWorldNode,this);
+
+		if(fogOfWar == false) {
+		    for(int i=0; i< map.getSurfaceW(); ++i) {
+		        for(int j=0; j< map.getSurfaceH(); ++j) {
+
+					SurfaceCell *sc= map.getSurfaceCell(i, j);
+					if(sc == NULL) {
+						throw megaglest_runtime_error("sc == NULL");
+					}
+
+					for (int k = 0; k < GameConstants::maxPlayers; k++) {
+						//sc->setExplored(k, (game->getGameSettings()->getFlagTypes1() & ft1_show_map_resources) == ft1_show_map_resources);
+						sc->setVisible(k, !fogOfWar);
+					}
+					for (int k = GameConstants::maxPlayers; k < GameConstants::maxPlayers + GameConstants::specialFactions; k++) {
+						sc->setExplored(k, true);
+						sc->setVisible(k, true);
+					}
+		        }
+		    }
+		}
+		else {
+			restoreExploredFogOfWarCells();
+		}
+
+		//minimap.loadGame(loadWorldNode);
+	}
+
 	//initExplorationState(); ... was only for !fog-of-war, now handled in initCells()
 	computeFow();
+
+	if(gotError == true) {
+		throw megaglest_runtime_error(sErrBuf,!skipStackTrace);
+	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -283,14 +455,16 @@ Checksum World::loadTileset(const string &dir, Checksum *checksum, std::map<stri
 
 //load tech
 Checksum World::loadTech(const vector<string> pathList, const string &techName,
-		set<string> &factions, Checksum *checksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
+		set<string> &factions, Checksum *checksum,
+		std::map<string,vector<pair<string, string> > > &loadedFileList,
+		bool validationMode) {
 	Checksum techtreeChecksum;
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	techTree = new TechTree();
-	techtreeChecksum = techTree->loadTech(pathList, techName, factions,
-			checksum,loadedFileList);
+	techTree = new TechTree(pathList);
+	techtreeChecksum = techTree->loadTech( techName, factions,
+			checksum,loadedFileList,validationMode);
 	return techtreeChecksum;
 }
 
@@ -314,7 +488,7 @@ Checksum World::loadMap(const string &path, Checksum *checksum) {
 }
 
 //load map
-Checksum World::loadScenario(const string &path, Checksum *checksum, bool resetCurrentScenario) {
+Checksum World::loadScenario(const string &path, Checksum *checksum, bool resetCurrentScenario, const XmlNode *rootNode) {
 	//printf("[%s:%s] Line: %d path [%s]\n",__FILE__,__FUNCTION__,__LINE__,path.c_str());
 
     Checksum scenarioChecksum;
@@ -325,7 +499,7 @@ Checksum World::loadScenario(const string &path, Checksum *checksum, bool resetC
 
 	if(resetCurrentScenario == true) {
 		scenario = Scenario();
-		scriptManager->init(this, this->getGame()->getGameCameraPtr());
+		if(scriptManager) scriptManager->init(this, this->getGame()->getGameCameraPtr(),rootNode);
 	}
 
 	scenarioChecksum = scenario.load(path);
@@ -340,13 +514,71 @@ void World::setQueuedScenario(string scenarioName,bool keepFactions) {
 	queuedScenarioKeepFactions = keepFactions;
 }
 
+void World::updateAllTilesetObjects() {
+	Gui *gui = this->game->getGuiPtr();
+	if(gui != NULL) {
+		Object *selObj = gui->getHighlightedResourceObject();
+		if(selObj != NULL) {
+			selObj->updateHighlight();
+		}
+	}
+
+	if(animatedTilesetObjectPosListLoaded == false) {
+		animatedTilesetObjectPosListLoaded = true;
+		animatedTilesetObjectPosList.clear();
+
+		for(int x = 0; x < map.getSurfaceW(); ++x) {
+			for(int y = 0; y < map.getSurfaceH(); ++y) {
+				SurfaceCell *sc = map.getSurfaceCell(x,y);
+				if(sc != NULL) {
+					Object *obj = sc->getObject();
+					if(obj != NULL && obj->isAnimated() == true) {
+						//obj->update();
+						animatedTilesetObjectPosList.push_back(Vec2i(x,y));
+					}
+				}
+			}
+		}
+	}
+	if(animatedTilesetObjectPosList.empty() == false) {
+		for(unsigned int i = 0; i < animatedTilesetObjectPosList.size(); ++i) {
+			const Vec2i &pos = animatedTilesetObjectPosList[i];
+			SurfaceCell *sc = map.getSurfaceCell(pos);
+			if(sc != NULL) {
+				Object *obj = sc->getObject();
+				if(obj != NULL && obj->isAnimated() == true) {
+					obj->update();
+				}
+			}
+		}
+	}
+
+//	for(int x = 0; x < map.getSurfaceW(); ++x) {
+//		for(int y = 0; y < map.getSurfaceH(); ++y) {
+//			SurfaceCell *sc = map.getSurfaceCell(x,y);
+//			if(sc != NULL) {
+//				Object *obj = sc->getObject();
+//				if(obj != NULL) {
+//					obj->update();
+//				}
+//			}
+//		}
+//	}
+}
+
 void World::updateAllFactionUnits() {
-	scriptManager->onTimerTriggerEvent();
+	bool showPerfStats = Config::getInstance().getBool("ShowPerfStats","false");
+	Chrono chronoPerf;
+	if(showPerfStats) chronoPerf.start();
+	char perfBuf[8096]="";
+	std::vector<string> perfList;
+
+	if(scriptManager) scriptManager->onTimerTriggerEvent();
 
 	// Prioritize grouped command units so closest units to target go first
 	// units
 	int factionCount = getFactionCount();
-
+	//printf("===== STARTING Frame: %d\n",frameCount);
 //	Config &config= Config::getInstance();
 //	bool sortedUnitsAllowed = config.getBool("AllowGroupedUnitCommands","true");
 //
@@ -355,7 +587,7 @@ void World::updateAllFactionUnits() {
 //		for(int i = 0; i < factionCount; ++i) {
 //			Faction *faction = getFaction(i);
 //			if(faction == NULL) {
-//				throw runtime_error("faction == NULL");
+//				throw megaglest_runtime_error("faction == NULL");
 //			}
 //
 //			// Sort units by command groups
@@ -363,57 +595,168 @@ void World::updateAllFactionUnits() {
 //		}
 //	}
 
-	// Signal the faction threads to do any pre-processing
+	// Clear pathfinder list restrictions
 	for(int i = 0; i < factionCount; ++i) {
 		Faction *faction = getFaction(i);
-		if(faction == NULL) {
-			throw runtime_error("faction == NULL");
-		}
-		faction->signalWorkerThread(frameCount);
+		faction->clearUnitsPathfinding();
+		faction->clearWorldSynchThreadedLogList();
 	}
 
-	bool workThreadsFinished = false;
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
 	Chrono chrono;
 	chrono.start();
 
-	const int MAX_FACTION_THREAD_WAIT_MILLISECONDS = 20000;
-	for(;chrono.getMillis() < MAX_FACTION_THREAD_WAIT_MILLISECONDS;) {
-		workThreadsFinished = true;
+	const bool newThreadManager = Config::getInstance().getBool("EnableNewThreadManager","false");
+	if(newThreadManager == true) {
+		masterController.signalSlaves(&frameCount);
+		bool slavesCompleted = masterController.waitTillSlavesTrigger(20000);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED && chrono.getMillis() >= 10) printf("In [%s::%s Line: %d] *** Faction thread preprocessing took [%lld] msecs for %d factions for frameCount = %d slavesCompleted = %d.\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis(),factionCount,frameCount,slavesCompleted);
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+	}
+	else {
+		// Signal the faction threads to do any pre-processing
 		for(int i = 0; i < factionCount; ++i) {
 			Faction *faction = getFaction(i);
-			if(faction == NULL) {
-				throw runtime_error("faction == NULL");
+			faction->signalWorkerThread(frameCount);
+		}
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		Chrono chrono;
+		chrono.start();
+
+		const int MAX_FACTION_THREAD_WAIT_MILLISECONDS = 20000;
+		for(;chrono.getMillis() < MAX_FACTION_THREAD_WAIT_MILLISECONDS;) {
+			bool workThreadsFinished = true;
+			for(int i = 0; i < factionCount; ++i) {
+				Faction *faction = getFaction(i);
+				if(faction->isWorkerThreadSignalCompleted(frameCount) == false) {
+					workThreadsFinished = false;
+					break;
+				}
 			}
-			if(faction->isWorkerThreadSignalCompleted(frameCount) == false) {
-				workThreadsFinished = false;
+			if(workThreadsFinished == true) {
 				break;
 			}
+			// WARNING... Sleep in here causes the server to lag a bit
+			//if(chrono.getMillis() % 5 == 0) {
+			//	sleep(0);
+			//}
 		}
-		if(workThreadsFinished == false) {
-			//sleep(0);
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
 		}
-		else {
-			break;
-		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED && chrono.getMillis() >= 10) printf("In [%s::%s Line: %d] *** Faction thread preprocessing took [%lld] msecs for %d factions for frameCount = %d.\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis(),factionCount,frameCount);
 	}
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED && chrono.getMillis() >= 10) printf("In [%s::%s Line: %d] *** Faction thread preprocessing took [%lld] msecs for %d factions for frameCount = %d.\n",__FILE__,__FUNCTION__,__LINE__,(long long int)chrono.getMillis(),factionCount,frameCount);
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
 
 	//units
+	Chrono chronoPerfUnit;
+	int totalUnitsChecked = 0;
+	int totalUnitsProcessed = 0;
 	for(int i = 0; i < factionCount; ++i) {
 		Faction *faction = getFaction(i);
-		if(faction == NULL) {
-			throw runtime_error("faction == NULL");
-		}
+
+		faction->dumpWorldSynchThreadedLogList();
+		faction->clearUnitsPathfinding();
+
+		std::map<CommandClass,int> mapCommandCount;
+		std::map<SkillClass,int> mapSkillCount;
+		int unitCountStuck = 0;
+		int unitCountUpdated = 0;
 
 		int unitCount = faction->getUnitCount();
 		for(int j = 0; j < unitCount; ++j) {
 			Unit *unit = faction->getUnit(j);
 			if(unit == NULL) {
-				throw runtime_error("unit == NULL");
+				throw megaglest_runtime_error("unit == NULL");
 			}
 
-			unitUpdater.updateUnit(unit);
+			CommandClass unitCommandClass = ccCount;
+			if(unit->getCurrCommand() != NULL) {
+				unitCommandClass = unit->getCurrCommand()->getCommandType()->getClass();
+			}
+
+			SkillClass unitSkillClass = scCount;
+			if(unit->getCurrSkill() != NULL) {
+				unitSkillClass = unit->getCurrSkill()->getClass();
+			}
+
+			if(showPerfStats) chronoPerfUnit.start();
+
+			int unitBlockCount = unit->getPath()->getBlockCount();
+			bool isStuck = unit->getPath()->isStuck();
+			//bool isStuckWithinTolerance = unit->isLastStuckFrameWithinCurrentFrameTolerance(false);
+			//uint32 lastStuckFrame = unit->getLastStuckFrame();
+
+			if(unitUpdater.updateUnit(unit) == true) {
+				unitCountUpdated++;
+
+				if(unit->getLastStuckFrame() == (unsigned int)frameCount) {
+					unitCountStuck++;
+				}
+				mapCommandCount[unitCommandClass] = mapCommandCount[unitCommandClass] + 1;
+				mapSkillCount[unitSkillClass] = mapSkillCount[unitSkillClass] + 1;
+			}
+			totalUnitsChecked++;
+
+			if(showPerfStats && chronoPerfUnit.getMillis() >= 10) {
+				//sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " stuck: %d [%d] for unit:\n%sBEFORE unitBlockCount = %d, AFTER = %d, BEFORE lastStuckFrame = %u, AFTER: %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerfUnit.getMillis(),isStuck,isStuckWithinTolerance,unit->toString().c_str(),unitBlockCount,unit->getPath()->getBlockCount(),lastStuckFrame,unit->getLastStuckFrame());
+				sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " stuck: %d for unit:\n%sBEFORE unitBlockCount = %d, AFTER = %d, BEFORE , AFTER: %u\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerfUnit.getMillis(),isStuck,unit->toString().c_str(),unitBlockCount,unit->getPath()->getBlockCount(),unit->getLastStuckFrame());
+				perfList.push_back(perfBuf);
+			}
+
+		}
+		totalUnitsProcessed += unitCountUpdated;
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " faction: %d / %d unitCount = %d unitCountUpdated = %d unitCountStuck = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),i+1,factionCount,unitCount,unitCountUpdated,unitCountStuck);
+			perfList.push_back(perfBuf);
+
+			for(std::map<CommandClass,int>::iterator iterMap = mapCommandCount.begin();
+					iterMap != mapCommandCount.end(); ++iterMap) {
+
+				sprintf(perfBuf,"Command class = %d, count = %d\n",iterMap->first,iterMap->second);
+				perfList.push_back(perfBuf);
+			}
+
+			for(std::map<SkillClass,int>::iterator iterMap = mapSkillCount.begin();
+					iterMap != mapSkillCount.end(); ++iterMap) {
+
+				sprintf(perfBuf,"Skill class = %d, count = %d\n",iterMap->first,iterMap->second);
+				perfList.push_back(perfBuf);
+			}
+		}
+	}
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " totalUnitsProcessed = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),totalUnitsProcessed);
+		perfList.push_back(perfBuf);
+	}
+
+	if(showPerfStats && chronoPerf.getMillis() >= 50) {
+		for(unsigned int x = 0; x < perfList.size(); ++x) {
+			printf("%s",perfList[x].c_str());
 		}
 	}
 
@@ -421,42 +764,37 @@ void World::updateAllFactionUnits() {
 }
 
 void World::underTakeDeadFactionUnits() {
-	int factionIdxToTick = -1;
-	if(staggeredFactionUpdates == true) {
-		factionIdxToTick = tickFactionIndex();
-		if(factionIdxToTick < 0) {
-			return;
-		}
-	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	int factionCount = getFactionCount();
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] factionIdxToTick = %d, factionCount = %d\n",__FILE__,__FUNCTION__,__LINE__,factionIdxToTick,factionCount);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] factionCount = %d\n",__FILE__,__FUNCTION__,__LINE__,factionCount);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//undertake the dead
 	for(int i = 0; i< factionCount; ++i) {
-		if(factionIdxToTick == -1 || factionIdxToTick == i) {
-			Faction *faction = getFaction(i);
-			if(faction == NULL) {
-				throw runtime_error("faction == NULL");
+		Faction *faction = getFaction(i);
+		int unitCount = faction->getUnitCount();
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] i = %d, unitCount = %d\n",__FILE__,__FUNCTION__,__LINE__,i,unitCount);
+
+		for(int j= unitCount - 1; j >= 0; j--) {
+			Unit *unit= faction->getUnit(j);
+
+			if(unit == NULL) {
+				throw megaglest_runtime_error("unit == NULL");
 			}
-			int unitCount = faction->getUnitCount();
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] factionIdxToTick = %d, i = %d, unitCount = %d\n",__FILE__,__FUNCTION__,__LINE__,factionIdxToTick,i,unitCount);
 
-			for(int j= unitCount - 1; j >= 0; j--) {
-				Unit *unit= faction->getUnit(j);
+			if(unit->getToBeUndertaken() == true) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-				if(unit == NULL) {
-					throw runtime_error("unit == NULL");
-				}
+				unit->undertake();
+				delete unit;
 
-				if(unit->getToBeUndertaken() == true) {
-					unit->undertake();
-					delete unit;
-					//j--;
-				}
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			}
-		}
+			}
+
 	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void World::updateAllFactionConsumableCosts() {
@@ -469,7 +807,7 @@ void World::updateAllFactionConsumableCosts() {
 			for(int j = 0; j < factionCount; ++j) {
 				Faction *faction = getFaction(j);
 				if(faction == NULL) {
-					throw runtime_error("faction == NULL");
+					throw megaglest_runtime_error("faction == NULL");
 				}
 
 				faction->applyCostsOnInterval(rt);
@@ -478,168 +816,261 @@ void World::updateAllFactionConsumableCosts() {
 	}
 }
 
-void World::update(){
+void World::update() {
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	bool showPerfStats = Config::getInstance().getBool("ShowPerfStats","false");
+	Chrono chronoPerf;
+	char perfBuf[8096]="";
+	std::vector<string> perfList;
+	if(showPerfStats) chronoPerf.start();
+
+	Chrono chronoGamePerformanceCounts;
+
 	++frameCount;
 
 	//time
 	timeFlow.update();
+	if(scriptManager) scriptManager->onDayNightTriggerEvent();
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
 
 	//water effects
 	waterEffects.update(1.0f);
 	// attack effects
 	attackEffects.update(0.25f);
 
-	//bool needToUpdateUnits = true;
-	//if(staggeredFactionUpdates == true) {
-	//	needToUpdateUnits = (frameCount % (GameConstants::updateFps / GameConstants::maxPlayers) == 0);
-	//}
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
 
-	//if(needToUpdateUnits == true) {
-	//	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] needToUpdateUnits = %d, frameCount = %d\n",__FILE__,__FUNCTION__,__LINE__,needToUpdateUnits,frameCount);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	// objects on the map from tilesets
+	if(this->game) chronoGamePerformanceCounts.start();
+
+	updateAllTilesetObjects();
+
+	if(this->game) this->game->addPerformanceCount("updateAllTilesetObjects",chronoGamePerformanceCounts.getMillis());
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
 
 	//units
-	updateAllFactionUnits();
+	if(getFactionCount() > 0) {
+		if(this->game) chronoGamePerformanceCounts.start();
 
-	//undertake the dead
-	underTakeDeadFactionUnits();
-	//}
+		updateAllFactionUnits();
 
-	//food costs
-	updateAllFactionConsumableCosts();
+		if(this->game) this->game->addPerformanceCount("updateAllFactionUnits",chronoGamePerformanceCounts.getMillis());
 
-	//fow smoothing
-	if(fogOfWarSmoothing && ((frameCount+1) % (fogOfWarSmoothingFrameSkip+1))==0) {
-		float fogFactor= static_cast<float>(frameCount % GameConstants::updateFps) / GameConstants::updateFps;
-		minimap.updateFowTex(clamp(fogFactor, 0.f, 1.f));
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		//undertake the dead
+		if(this->game) chronoGamePerformanceCounts.start();
+
+		underTakeDeadFactionUnits();
+
+		if(this->game) this->game->addPerformanceCount("underTakeDeadFactionUnits",chronoGamePerformanceCounts.getMillis());
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		//food costs
+		if(this->game) chronoGamePerformanceCounts.start();
+
+		updateAllFactionConsumableCosts();
+
+		if(this->game) this->game->addPerformanceCount("updateAllFactionConsumableCosts",chronoGamePerformanceCounts.getMillis());
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		//fow smoothing
+		if(fogOfWarSmoothing && ((frameCount+1) % (fogOfWarSmoothingFrameSkip+1)) == 0) {
+			if(this->game) chronoGamePerformanceCounts.start();
+
+			float fogFactor= static_cast<float>(frameCount % GameConstants::updateFps) / GameConstants::updateFps;
+			minimap.updateFowTex(clamp(fogFactor, 0.f, 1.f));
+
+			if(this->game) this->game->addPerformanceCount("minimap.updateFowTex",chronoGamePerformanceCounts.getMillis());
+		}
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		//tick
+		bool needToTick = canTickWorld();
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		if(needToTick == true) {
+			//printf("=========== World is about to be updated, current frameCount = %d\n",frameCount);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+			if(this->game) chronoGamePerformanceCounts.start();
+
+			tick();
+
+			if(this->game) this->game->addPerformanceCount("world->tick",chronoGamePerformanceCounts.getMillis());
+		}
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
 	}
 
-	//tick
-	bool needToTick = canTickWorld();
-	if(needToTick == true) {
-		//printf("=========== World is about to be updated, current frameCount = %d\n",frameCount);
-		tick();
+	if(showPerfStats && chronoPerf.getMillis() >= 50) {
+		for(unsigned int x = 0; x < perfList.size(); ++x) {
+			printf("%s",perfList[x].c_str());
+		}
 	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 bool World::canTickWorld() const {
 	//tick
 	bool needToTick = (frameCount % GameConstants::updateFps == 0);
-	if(staggeredFactionUpdates == true) {
-		needToTick = (frameCount % (GameConstants::updateFps / GameConstants::maxPlayers) == 0);
-	}
-
 	return needToTick;
 }
 
-int World::getUpdateFps(int factionIndex) const {
-	int result = GameConstants::updateFps;
-	//if(factionIndex != -1 && staggeredFactionUpdates == true) {
-	//	result = (GameConstants::updateFps / GameConstants::maxPlayers);
-	//}
-	return result;
-}
-
-bool World::canTickFaction(int factionIdx) {
-	int factionUpdateInterval = (GameConstants::updateFps / GameConstants::maxPlayers);
-	int expectedFactionIdx = (frameCount / factionUpdateInterval) -1;
-	if(expectedFactionIdx >= GameConstants::maxPlayers) {
-		expectedFactionIdx = expectedFactionIdx % GameConstants::maxPlayers;
-	}
-	bool result = (expectedFactionIdx == factionIdx);
-
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] factionIdx = %d, frameCount = %d, GameConstants::updateFps = %d, expectedFactionIdx = %d, factionUpdateInterval = %d, result = %d\n",__FILE__,__FUNCTION__,__LINE__,factionIdx,frameCount,GameConstants::updateFps,expectedFactionIdx,factionUpdateInterval,result);
-
-	return result;
-}
-
-int World::tickFactionIndex() {
-	int factionIdxToTick = -1;
-	for(int i=0; i<getFactionCount(); ++i) {
-		if(canTickFaction(i) == true) {
-			factionIdxToTick = i;
-			break;
-		}
-	}
-
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] factionIdxToTick = %d\n",__FILE__,__FUNCTION__,__LINE__,factionIdxToTick);
-
-	return factionIdxToTick;
-}
-
 void World::tick() {
-	int factionIdxToTick = -1;
-	if(staggeredFactionUpdates == true) {
-		factionIdxToTick = tickFactionIndex();
-		if(factionIdxToTick < 0) {
-			return;
-		}
-	}
-	computeFow(factionIdxToTick);
+	bool showPerfStats = Config::getInstance().getBool("ShowPerfStats","false");
+	Chrono chronoPerf;
+	char perfBuf[8096]="";
+	std::vector<string> perfList;
+	if(showPerfStats) chronoPerf.start();
 
-	if(factionIdxToTick == -1 || factionIdxToTick == 0) {
-		if(fogOfWarSmoothing == false) {
-			minimap.updateFowTex(1.f);
-		}
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
+	Chrono chronoGamePerformanceCounts;
+	if(this->game) chronoGamePerformanceCounts.start();
+
+	computeFow();
+
+	if(this->game) this->game->addPerformanceCount("world->computeFow",chronoGamePerformanceCounts.getMillis());
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " fogOfWar: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),fogOfWar);
+		perfList.push_back(perfBuf);
+	}
+
+	if(fogOfWarSmoothing == false) {
+		if(this->game) chronoGamePerformanceCounts.start();
+
+		minimap.updateFowTex(1.f);
+
+		if(this->game) this->game->addPerformanceCount("minimap.updateFowTex",chronoGamePerformanceCounts.getMillis());
+	}
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
 	}
 
 	//increase hp
-	//int i = factionIdxToTick;
+	if(this->game) chronoGamePerformanceCounts.start();
+
 	int factionCount = getFactionCount();
-	for(int i = 0; i < factionCount; ++i) {
-		if(factionIdxToTick == -1 || i == factionIdxToTick) {
-			Faction *faction = getFaction(i);
-			if(faction == NULL) {
-				throw runtime_error("faction == NULL");
-			}
-			int unitCount = faction->getUnitCount();
+	for(int factionIndex = 0; factionIndex < factionCount; ++factionIndex) {
+		Faction *faction = getFaction(factionIndex);
+		int unitCount = faction->getUnitCount();
 
-			for(int j = 0; j < unitCount; ++j) {
-				Unit *unit = faction->getUnit(j);
-				if(unit == NULL) {
-					throw runtime_error("unit == NULL");
-				}
-
-				unit->tick();
+		for(int unitIndex = 0; unitIndex < unitCount; ++unitIndex) {
+			Unit *unit = faction->getUnit(unitIndex);
+			if(unit == NULL) {
+				throw megaglest_runtime_error("unit == NULL");
 			}
+
+			unit->tick();
 		}
+	}
+	if(this->game) this->game->addPerformanceCount("world unit->tick()",chronoGamePerformanceCounts.getMillis());
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
 	}
 
 	//compute resources balance
-	//int k = factionIdxToTick;
+	if(this->game) chronoGamePerformanceCounts.start();
+
+	std::map<const UnitType *, std::map<const ResourceType *, const Resource *> > resourceCostCache;
 	factionCount = getFactionCount();
-	for(int k = 0; k < factionCount; ++k) {
-		if(factionIdxToTick == -1 || k == factionIdxToTick) {
-			Faction *faction= getFaction(k);
-			if(faction == NULL) {
-				throw runtime_error("faction == NULL");
-			}
+	for(int factionIndex = 0; factionIndex < factionCount; ++factionIndex) {
+		Faction *faction = getFaction(factionIndex);
 
-			//for each resource
-			for(int i = 0; i < techTree->getResourceTypeCount(); ++i) {
-				const ResourceType *rt= techTree->getResourceType(i);
+		//for each resource
+		for(int resourceTypeIndex = 0;
+				resourceTypeIndex < techTree->getResourceTypeCount(); ++resourceTypeIndex) {
+			const ResourceType *rt= techTree->getResourceType(resourceTypeIndex);
 
-				//if consumable
-				if(rt != NULL && rt->getClass()==rcConsumable) {
-					int balance= 0;
-					for(int j = 0; j < faction->getUnitCount(); ++j) {
+			//if consumable
+			if(rt != NULL && rt->getClass() == rcConsumable) {
+				int balance= 0;
+				for(int unitIndex = 0;
+						unitIndex < faction->getUnitCount(); ++unitIndex) {
 
-						//if unit operative and has this cost
-						const Unit *u=  faction->getUnit(j);
-						if(u != NULL && u->isOperative()) {
-							const Resource *r= u->getType()->getCost(rt);
-							if(r != NULL) {
-								balance -= u->getType()->getCost(rt)->getAmount();
-							}
+					//if unit operative and has this cost
+					const Unit *unit = faction->getUnit(unitIndex);
+					if(unit != NULL && unit->isOperative()) {
+						const UnitType *ut = unit->getType();
+						const Resource *resource = NULL;
+						std::map<const UnitType *, std::map<const ResourceType *, const Resource *> >::iterator iterFind = resourceCostCache.find(ut);
+						if(iterFind != resourceCostCache.end() &&
+								iterFind->second.find(rt) != iterFind->second.end()) {
+							resource = iterFind->second.find(rt)->second;
+						}
+						else {
+							resource = ut->getCost(rt);
+							resourceCostCache[ut][rt] = resource;
+						}
+						if(resource != NULL) {
+							balance -= resource->getAmount();
 						}
 					}
-					faction->setResourceBalance(rt, balance);
 				}
+				faction->setResourceBalance(rt, balance);
 			}
 		}
 	}
+	if(this->game) this->game->addPerformanceCount("world faction->setResourceBalance()",chronoGamePerformanceCounts.getMillis());
 
-	if(cartographer != NULL) {
-		cartographer->tick();
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
+	if(showPerfStats && chronoPerf.getMillis() >= 50) {
+		for(unsigned int x = 0; x < perfList.size(); ++x) {
+			printf("%s",perfList[x].c_str());
+		}
 	}
 }
 
@@ -656,7 +1087,7 @@ Unit* World::findUnitById(int id) const {
 
 const UnitType* World::findUnitTypeById(const FactionType* factionType, int id) {
 	if(factionType == NULL) {
-		throw runtime_error("factionType == NULL");
+		throw megaglest_runtime_error("factionType == NULL");
 	}
 	for(int i= 0; i < factionType->getUnitTypeCount(); ++i) {
 		const UnitType *unitType = factionType->getUnitType(i);
@@ -667,10 +1098,30 @@ const UnitType* World::findUnitTypeById(const FactionType* factionType, int id) 
 	return NULL;
 }
 
+const UnitType * World::findUnitTypeByName(const string factionName, const string unitTypeName) {
+	const UnitType *unitTypeResult = NULL;
+
+	for(int index = 0; unitTypeResult == NULL && index < getFactionCount(); ++index) {
+		const Faction *faction = getFaction(index);
+		if(factionName == "" || factionName == faction->getType()->getName(false)) {
+			for(int unitIndex = 0;
+				unitTypeResult == NULL && unitIndex < faction->getType()->getUnitTypeCount(); ++unitIndex) {
+
+				const UnitType *unitType = faction->getType()->getUnitType(unitIndex);
+				if(unitType != NULL && unitType->getName(false) == unitTypeName) {
+					unitTypeResult = unitType;
+					break;
+				}
+			}
+		}
+	}
+	return unitTypeResult;
+}
+
 //looks for a place for a unit around a start location, returns true if succeded
 bool World::placeUnit(const Vec2i &startLoc, int radius, Unit *unit, bool spaciated) {
     if(unit == NULL) {
-    	throw runtime_error("unit == NULL");
+    	throw megaglest_runtime_error("unit == NULL");
     }
 
 	bool freeSpace=false;
@@ -704,13 +1155,12 @@ bool World::placeUnit(const Vec2i &startLoc, int radius, Unit *unit, bool spacia
 //clears a unit old position from map and places new position
 void World::moveUnitCells(Unit *unit) {
 	if(unit == NULL) {
-    	throw runtime_error("unit == NULL");
+    	throw megaglest_runtime_error("unit == NULL");
     }
 
 	Vec2i newPos= unit->getTargetPos();
 
 	//newPos must be free or the same pos as current
-	//assert(map.getCell(unit->getPos())->getUnit(unit->getCurrField())==unit || map.isFreeCell(newPos, unit->getCurrField()));
 
 	// Only change cell placement in map if the new position is different
 	// from the old one
@@ -732,29 +1182,28 @@ void World::moveUnitCells(Unit *unit) {
 		}
 	}
 
-	scriptManager->onCellTriggerEvent(unit);
+	if(scriptManager) scriptManager->onCellTriggerEvent(unit);
 }
 
-void World::addAttackEffects(const Unit *unit)
-{
+void World::addAttackEffects(const Unit *unit) {
 	attackEffects.addWaterSplash(
-					Vec2f(unit->getPos().x, unit->getPos().y),1);
+					Vec2f(unit->getPosNotThreadSafe().x, unit->getPosNotThreadSafe().y),1);
 }
 
 //returns the nearest unit that can store a type of resource given a position and a faction
 Unit *World::nearestStore(const Vec2i &pos, int factionIndex, const ResourceType *rt) {
-    float currDist= infinity;
+	float currDist = infinity;
     Unit *currUnit= NULL;
 
     if(factionIndex >= getFactionCount()) {
-    	throw runtime_error("factionIndex >= getFactionCount()");
+    	throw megaglest_runtime_error("factionIndex >= getFactionCount()");
     }
 
     for(int i=0; i < getFaction(factionIndex)->getUnitCount(); ++i) {
 		Unit *u= getFaction(factionIndex)->getUnit(i);
 		if(u != NULL) {
 			float tmpDist= u->getPos().dist(pos);
-			if(tmpDist < currDist && u->getType()->getStore(rt) > 0 && u->isOperative()) {
+			if(tmpDist < currDist &&  u->getType() != NULL && u->getType()->getStore(rt) > 0 && u->isOperative()) {
 				currDist= tmpDist;
 				currUnit= u;
 			}
@@ -765,16 +1214,16 @@ Unit *World::nearestStore(const Vec2i &pos, int factionIndex, const ResourceType
 
 bool World::toRenderUnit(const Unit *unit, const Quad2i &visibleQuad) const {
     if(unit == NULL) {
-    	throw runtime_error("unit == NULL");
+    	throw megaglest_runtime_error("unit == NULL");
     }
 
 	//a unit is rendered if it is in a visible cell or is attacking a unit in a visible cell
-    return visibleQuad.isInside(unit->getPos()) && toRenderUnit(unit);
+    return visibleQuad.isInside(unit->getPosNotThreadSafe()) && toRenderUnit(unit);
 }
 
 bool World::toRenderUnit(const Unit *unit) const {
     if(unit == NULL) {
-    	throw runtime_error("unit == NULL");
+    	throw megaglest_runtime_error("unit == NULL");
     }
 
     if(showWorldForPlayer(thisFactionIndex) == true) {
@@ -789,6 +1238,23 @@ bool World::toRenderUnit(const Unit *unit) const {
          map.getSurfaceCell(Map::toSurfCoords(unit->getTargetPos()))->isExplored(thisTeamIndex));
 }
 
+bool World::toRenderUnit(const UnitBuildInfo &pendingUnit) const {
+    if(pendingUnit.unit == NULL) {
+    	throw megaglest_runtime_error("unit == NULL");
+    }
+
+    if(showWorldForPlayer(thisFactionIndex) == true) {
+        return true;
+    }
+    if(pendingUnit.unit->getTeam() != thisTeamIndex) {
+    	return false;
+    }
+
+	return
+        (map.getSurfaceCell(Map::toSurfCoords(pendingUnit.pos))->isVisible(thisTeamIndex) &&
+         map.getSurfaceCell(Map::toSurfCoords(pendingUnit.pos))->isExplored(thisTeamIndex) );
+}
+
 void World::morphToUnit(int unitId,const string &morphName,bool ignoreRequirements) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] forceUpgradesIfRequired = %d\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),ignoreRequirements);
 	Unit* unit= findUnitById(unitId);
@@ -796,13 +1262,13 @@ void World::morphToUnit(int unitId,const string &morphName,bool ignoreRequiremen
 		for(int i = 0; i < unit->getType()->getCommandTypeCount(); ++i) {
 			const CommandType *ct = unit->getType()->getCommandType(i);
 			const MorphCommandType *mct = dynamic_cast<const MorphCommandType *>(ct);
-			if(mct != NULL && mct->getName() == morphName) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s]\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName().c_str());
+			if(mct != NULL && mct->getName(false) == morphName) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s]\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName(false).c_str());
 
-				CommandResult cr = crFailUndefined;
+				std::pair<CommandResult,string> cr(crFailUndefined,"");
 				try {
 					if(unit->getFaction()->reqsOk(mct) == false && ignoreRequirements == true) {
-						if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s] mct->getUpgradeReqCount() = %d\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName().c_str(),mct->getUpgradeReqCount());
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s] mct->getUpgradeReqCount() = %d\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName(false).c_str(),mct->getUpgradeReqCount());
 						unit->setIgnoreCheckCommand(true);
 					}
 
@@ -813,17 +1279,17 @@ void World::morphToUnit(int unitId,const string &morphName,bool ignoreRequiremen
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 					unit->setIgnoreCheckCommand(false);
 
-					throw runtime_error(ex.what());
+					throw megaglest_runtime_error(ex.what());
 				}
 
-				if(cr == crSuccess) {
+				if(cr.first == crSuccess) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				}
 				else {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				}
 
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s] returned = %d\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName().c_str(),cr);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d] morphName [%s] comparing mct [%s] returned = %d\n",__FILE__,__FUNCTION__,__LINE__,unitId,morphName.c_str(),mct->getName(false).c_str(),cr.first);
 
 				break;
 			}
@@ -834,14 +1300,14 @@ void World::morphToUnit(int unitId,const string &morphName,bool ignoreRequiremen
 	}
 }
 
-void World::createUnit(const string &unitName, int factionIndex, const Vec2i &pos) {
+void World::createUnit(const string &unitName, int factionIndex, const Vec2i &pos, bool spaciated) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unitName [%s] factionIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,unitName.c_str(),factionIndex);
 
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 
 		if(faction->getIndex() != factionIndex) {
-			throw runtime_error("faction->getIndex() != factionIndex");
+			throw megaglest_runtime_error("faction->getIndex() != factionIndex",true);
 		}
 
 		const FactionType* ft= faction->getType();
@@ -852,46 +1318,112 @@ void World::createUnit(const string &unitName, int factionIndex, const Vec2i &po
 			case pfBasic:
 				newpath = new UnitPathBasic();
 				break;
-			case pfRoutePlanner:
-				newpath = new UnitPath();
-				break;
 			default:
-				throw runtime_error("detected unsupported pathfinder type!");
+				throw megaglest_runtime_error("detected unsupported pathfinder type!",true);
 	    }
 
 		Unit* unit= new Unit(getNextUnitId(faction), newpath, pos, ut, faction, &map, CardinalDir::NORTH);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
 
-		if(placeUnit(pos, generationArea, unit, true)) {
+		if(placeUnit(pos, generationArea, unit, spaciated)) {
 			unit->create(true);
-			unit->born();
-			scriptManager->onUnitCreated(unit);
+			unit->born(NULL);
+			if(scriptManager) {
+				scriptManager->onUnitCreated(unit);
+			}
 		}
 		else {
 			delete unit;
 			unit = NULL;
-			throw runtime_error("Unit cant be placed");
+			throw megaglest_runtime_error("Unit cant be placed",true);
 		}
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
 	}
 	else {
-		throw runtime_error("Invalid faction index in createUnitAtPosition: " + intToStr(factionIndex));
+		throw megaglest_runtime_error("Invalid faction index in createUnitAtPosition: " + intToStr(factionIndex),true);
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
 void World::giveResource(const string &resourceName, int factionIndex, int amount) {
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 		const ResourceType* rt= techTree->getResourceType(resourceName);
 		faction->incResourceAmount(rt, amount);
 	}
 	else {
-		throw runtime_error("Invalid faction index in giveResource: " + intToStr(factionIndex));
+		throw megaglest_runtime_error("Invalid faction index in giveResource: " + intToStr(factionIndex),true);
 	}
+}
+
+int World::getUnitCurrentField(int unitId) {
+	int field = -1;
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d]\n",__FILE__,__FUNCTION__,__LINE__,unitId);
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		field = unit->getCurrField();
+	}
+
+	return field;
+}
+
+bool World::getIsUnitAlive(int unitId) {
+	bool result = false;
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] unit [%d]\n",__FILE__,__FUNCTION__,__LINE__,unitId);
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		result = unit->isAlive();
+	}
+	return result;
+}
+
+vector<int> World::getUnitsForFaction(int factionIndex,const string& commandTypeName, int field) {
+	vector<int> units;
+
+	if(factionIndex < 0 || factionIndex > getFactionCount()) {
+		throw megaglest_runtime_error("Invalid faction index in getUnitsForFaction: " + intToStr(factionIndex),true);
+	}
+	Faction *faction = getFaction(factionIndex);
+	if(faction != NULL) {
+		CommandType *commandType = NULL;
+		if(commandTypeName != "") {
+			commandType = CommandTypeFactory::getInstance().newInstance(commandTypeName);
+		}
+		int unitCount = faction->getUnitCount();
+		for(int i = 0; i < unitCount; ++i) {
+			Unit *unit = faction->getUnit(i);
+			if(unit != NULL) {
+				bool addToList = true;
+				if(commandType != NULL) {
+					if(commandType->getClass() == ccAttack && field >= 0) {
+						const AttackCommandType *act = unit->getType()->getFirstAttackCommand(static_cast<Field>(field));
+						addToList = (act != NULL);
+					}
+					else if(commandType->getClass() == ccAttackStopped && field >= 0) {
+						const AttackStoppedCommandType *asct = unit->getType()->getFirstAttackStoppedCommand(static_cast<Field>(field));
+						addToList = (asct != NULL);
+					}
+					else {
+						addToList = unit->getType()->hasCommandClass(commandType->getClass());
+					}
+				}
+				else if(field >= 0) {
+					addToList = (unit->getCurrField() == static_cast<Field>(field));
+				}
+
+				if(addToList == true) {
+					units.push_back(unit->getId());
+				}
+			}
+		}
+
+		delete commandType;
+		commandType = NULL;
+	}
+	return units;
 }
 
 void World::givePositionCommand(int unitId, const string &commandName, const Vec2i &pos) {
@@ -906,18 +1438,78 @@ void World::givePositionCommand(int unitId, const string &commandName, const Vec
 			cc= ccAttack;
 		}
 		else {
-			throw runtime_error("Invalid position commmand: " + commandName);
+			throw megaglest_runtime_error("Invalid position commmand: " + commandName,true);
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName().c_str());
+		if(unit->getType()->getFirstCtOfClass(cc) == NULL) {
+			throw megaglest_runtime_error("Invalid commmand: [" + commandName + "] for unit: [" + unit->getType()->getName(false) + "] id [" + intToStr(unit->getId()) + "]",true);
+		}
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName(false).c_str());
 		unit->giveCommand(new Command( unit->getType()->getFirstCtOfClass(cc), pos ));
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	}
 	else {
-		throw runtime_error("Invalid unitId index in givePositionCommand: " + intToStr(unitId) + " commandName = " + commandName);
+		throw megaglest_runtime_error("Invalid unitId index in givePositionCommand: " + intToStr(unitId) + " commandName = " + commandName,true);
 	}
 }
 
+void World::giveStopCommand(int unitId) {
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		const CommandType *ct = unit->getType()->getFirstCtOfClass(ccStop);
+		if(ct != NULL) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] Unit [%s] will stop\n",__FILE__,__FUNCTION__,__LINE__,unit->getFullName(false).c_str());
+			unit->giveCommand(new Command(ct));
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		}
+		else {
+			throw megaglest_runtime_error("Invalid ct in giveStopCommand: " + intToStr(unitId),true);
+		}
+	}
+	else {
+		throw megaglest_runtime_error("Invalid unitId index in giveStopCommand: " + intToStr(unitId),true);
+	}
+}
+
+bool World::selectUnit(int unitId) {
+	bool result = false;
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		result = game->addUnitToSelection(unit);
+	}
+
+	return result;
+}
+
+void World::unselectUnit(int unitId) {
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		game->removeUnitFromSelection(unit);
+	}
+}
+
+void World::addUnitToGroupSelection(int unitId,int groupIndex) {
+	Unit* unit= findUnitById(unitId);
+	if(unit != NULL) {
+		game->addUnitToGroupSelection(unit,groupIndex);
+	}
+}
+
+void World::removeUnitFromGroupSelection(int unitId,int groupIndex) {
+	game->removeUnitFromGroupSelection(unitId,groupIndex);
+}
+
+void World::recallGroupSelection(int groupIndex) {
+	game->recallGroupSelection(groupIndex);
+}
+
+void World::setAttackWarningsEnabled(bool enabled) {
+	this->disableAttackEffects = !enabled;
+}
+bool World::getAttackWarningsEnabled() {
+	return (this->disableAttackEffects == false);
+}
 
 void World::giveAttackCommand(int unitId, int unitToAttackId) {
 	Unit* unit= findUnitById(unitId);
@@ -926,37 +1518,47 @@ void World::giveAttackCommand(int unitId, int unitToAttackId) {
 		if(targetUnit != NULL) {
 			const CommandType *ct = unit->getType()->getFirstAttackCommand(targetUnit->getCurrField());
 			if(ct != NULL) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] Unit [%s] is attacking [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->getFullName().c_str(),targetUnit->getFullName().c_str());
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] Unit [%s] is attacking [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->getFullName(false).c_str(),targetUnit->getFullName(false).c_str());
 				unit->giveCommand(new Command(ct,targetUnit));
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 			}
 			else {
-				throw runtime_error("Invalid ct in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId));
+				throw megaglest_runtime_error("Invalid ct in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId),true);
 			}
 		}
 		else {
-			throw runtime_error("Invalid unitToAttackId index in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId));
+			throw megaglest_runtime_error("Invalid unitToAttackId index in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId),true);
 		}
 	}
 	else {
-		throw runtime_error("Invalid unitId index in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId));
+		throw megaglest_runtime_error("Invalid unitId index in giveAttackCommand: " + intToStr(unitId) + " unitToAttackId = " + intToStr(unitToAttackId),true);
 	}
 }
 
 void World::giveProductionCommand(int unitId, const string &producedName) {
+	//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 	Unit *unit= findUnitById(unitId);
+	//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
+
 	if(unit != NULL) {
+		//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
+
 		const UnitType *ut= unit->getType();
+
+		//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 
 		//Search for a command that can produce the unit
 		for(int i= 0; i< ut->getCommandTypeCount(); ++i) {
 			const CommandType* ct= ut->getCommandType(i);
 			if(ct != NULL && ct->getClass() == ccProduce) {
-				const ProduceCommandType *pct= static_cast<const ProduceCommandType*>(ct);
-				if(pct != NULL && pct->getProducedUnit()->getName() == producedName) {
+				const ProduceCommandType *pct= dynamic_cast<const ProduceCommandType*>(ct);
+				if(pct != NULL && pct->getProducedUnit() != NULL &&
+					pct->getProducedUnit()->getName(false) == producedName) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+					//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 					unit->giveCommand(new Command(pct));
+					//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 					break;
@@ -965,8 +1567,9 @@ void World::giveProductionCommand(int unitId, const string &producedName) {
 		}
 	}
 	else {
-		throw runtime_error("Invalid unitId index in giveProductionCommand: " + intToStr(unitId) + " producedName = " + producedName);
+		throw megaglest_runtime_error("Invalid unitId index in giveProductionCommand: " + intToStr(unitId) + " producedName = " + producedName,true);
 	}
+	//printf("File: %s line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 }
 
 void World::giveAttackStoppedCommand(int unitId, const string &itemName, bool ignoreRequirements) {
@@ -978,12 +1581,15 @@ void World::giveAttackStoppedCommand(int unitId, const string &itemName, bool ig
 		for(int i= 0; i < ut->getCommandTypeCount(); ++i) {
 			const CommandType* ct= ut->getCommandType(i);
 			if(ct != NULL && ct->getClass() == ccAttackStopped) {
+
 				const AttackStoppedCommandType *act= static_cast<const AttackStoppedCommandType*>(ct);
-				if(act != NULL && act->getName() == itemName) {
+				if(act != NULL && act->getName(false) == itemName) {
+
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 					try {
 						if(unit->getFaction()->reqsOk(act) == false && ignoreRequirements == true) {
+
 							if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 							unit->setIgnoreCheckCommand(true);
 						}
@@ -994,7 +1600,7 @@ void World::giveAttackStoppedCommand(int unitId, const string &itemName, bool ig
 						if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 						unit->setIgnoreCheckCommand(false);
 
-						throw runtime_error(ex.what());
+						throw megaglest_runtime_error(ex.what());
 					}
 
 
@@ -1005,45 +1611,57 @@ void World::giveAttackStoppedCommand(int unitId, const string &itemName, bool ig
 		}
 	}
 	else {
-		throw runtime_error("Invalid unitId index in giveAttackStoppedCommand: " + intToStr(unitId) + " itemName = " + itemName);
+		throw megaglest_runtime_error("Invalid unitId index in giveAttackStoppedCommand: " + intToStr(unitId) + " itemName = " + itemName,true);
 	}
 }
 
 void World::playStaticSound(const string &playSound) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] playSound [%s]\n",__FILE__,__FUNCTION__,__LINE__,playSound.c_str());
 
-	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+	string calculatedFilePath = playSound;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nPlay static sound changed: %d [%s] [%s]\n\n",changed, playSound.c_str(),calculatedFilePath.c_str());
 
-	if(staticSoundList.find(playSound) == staticSoundList.end()) {
+	if(staticSoundList.find(calculatedFilePath) == staticSoundList.end()) {
 		StaticSound *sound = new StaticSound();
-		sound->load(playSound);
-		staticSoundList[playSound] = sound;
+		sound->load(calculatedFilePath);
+		staticSoundList[calculatedFilePath] = sound;
 	}
-	StaticSound *playSoundItem = staticSoundList[playSound];
+	StaticSound *playSoundItem = staticSoundList[calculatedFilePath];
+
+	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 	soundRenderer.playFx(playSoundItem);
 }
 
 void World::playStreamingSound(const string &playSound) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] playSound [%s]\n",__FILE__,__FUNCTION__,__LINE__,playSound.c_str());
 
-	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+	string calculatedFilePath = playSound;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nPlay streaming sound changed: %d [%s] [%s]\n\n",changed, playSound.c_str(),calculatedFilePath.c_str());
 
-	if(streamSoundList.find(playSound) == streamSoundList.end()) {
+	if(streamSoundList.find(calculatedFilePath) == streamSoundList.end()) {
 		StrSound *sound = new StrSound();
-		sound->open(playSound);
+		sound->open(calculatedFilePath);
 		sound->setNext(sound);
-		streamSoundList[playSound] = sound;
+		streamSoundList[calculatedFilePath] = sound;
 	}
-	StrSound *playSoundItem = streamSoundList[playSound];
+	StrSound *playSoundItem = streamSoundList[calculatedFilePath];
+
+	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 	soundRenderer.playMusic(playSoundItem);
 }
 
 void World::stopStreamingSound(const string &playSound) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled) SystemFlags::OutputDebug(SystemFlags::debugLUA,"In [%s::%s Line: %d] playSound [%s]\n",__FILE__,__FUNCTION__,__LINE__,playSound.c_str());
-	SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 
-	if(streamSoundList.find(playSound) != streamSoundList.end()) {
-		StrSound *playSoundItem = streamSoundList[playSound];
+	string calculatedFilePath = playSound;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nStop streaming sound changed: %d [%s] [%s]\n\n",changed, playSound.c_str(),calculatedFilePath.c_str());
+
+	if(streamSoundList.find(calculatedFilePath) != streamSoundList.end()) {
+		StrSound *playSoundItem = streamSoundList[calculatedFilePath];
+		SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 		soundRenderer.stopMusic(playSoundItem);
 	}
 }
@@ -1058,21 +1676,29 @@ void World::moveToUnit(int unitId, int destUnitId) {
 	Unit* unit= findUnitById(unitId);
 	if(unit != NULL) {
 		CommandClass cc= ccMove;
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName().c_str());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName(false).c_str());
 		Unit* destUnit = findUnitById(destUnitId);
 		if(destUnit != NULL) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s] destUnit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName().c_str(),destUnit->getFullName().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] cc = %d Unit [%s] destUnit [%s]\n",__FILE__,__FUNCTION__,__LINE__,cc,unit->getFullName(false).c_str(),destUnit->getFullName(false).c_str());
 			unit->giveCommand(new Command( unit->getType()->getFirstCtOfClass(cc), destUnit));
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		}
 	}
 	else {
-		throw runtime_error("Invalid unitId index in followUnit: " + intToStr(unitId));
+		throw megaglest_runtime_error("Invalid unitId index in followUnit: " + intToStr(unitId),true);
 	}
 }
 
-void World::togglePauseGame(bool pauseStatus) {
-	game->setPaused(pauseStatus);
+void World::clearCaches() {
+	ExploredCellsLookupItemCache.clear();
+	ExploredCellsLookupItemCacheTimer.clear();
+	ExploredCellsLookupItemCacheTimerCount = 0;
+
+	unitUpdater.clearCaches();
+}
+
+void World::togglePauseGame(bool pauseStatus,bool forceAllowPauseStateChange) {
+	game->setPaused(pauseStatus, forceAllowPauseStateChange, false, false);
 }
 
 void World::addConsoleText(const string &text) {
@@ -1080,6 +1706,26 @@ void World::addConsoleText(const string &text) {
 }
 void World::addConsoleTextWoLang(const string &text) {
 	game->getConsole()->addLine(text);
+}
+
+const string World::getSystemMacroValue(const string key) {
+	std::string result = key;
+	bool tagApplied = Properties::applyTagsToValue(result);
+	if(tagApplied == false) {
+		result = "";
+
+		if(key == "$SCENARIO_PATH") {
+			result = extractDirectoryPathFromFile(game->getGameSettings()->getScenarioDir());
+		}
+	}
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("system macro key [%s] returning [%s]\n",key.c_str(),result.c_str());
+
+	return result;
+}
+
+const string World::getPlayerName(int factionIndex) {
+	return game->getGameSettings()->getNetworkPlayerName(factionIndex);
 }
 
 void World::giveUpgradeCommand(int unitId, const string &upgradeName) {
@@ -1104,50 +1750,139 @@ void World::giveUpgradeCommand(int unitId, const string &upgradeName) {
 		}
 	}
 	else {
-		throw runtime_error("Invalid unitId index in giveUpgradeCommand: " + intToStr(unitId) + " upgradeName = " + upgradeName);
+		throw megaglest_runtime_error("Invalid unitId index in giveUpgradeCommand: " + intToStr(unitId) + " upgradeName = " + upgradeName,true);
 	}
 }
 
 
 int World::getResourceAmount(const string &resourceName, int factionIndex) {
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 		const ResourceType* rt= techTree->getResourceType(resourceName);
 		return faction->getResource(rt)->getAmount();
 	}
 	else {
-		throw runtime_error("Invalid faction index in giveResource: " + intToStr(factionIndex) + " resourceName = " + resourceName);
+		throw megaglest_runtime_error("Invalid faction index in giveResource: " + intToStr(factionIndex) + " resourceName = " + resourceName,true);
 	}
 }
 
 Vec2i World::getStartLocation(int factionIndex) {
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 		return map.getStartLocation(faction->getStartLocationIndex());
 	}
 	else {
-		throw runtime_error("Invalid faction index in getStartLocation: " + intToStr(factionIndex));
+		printf("\n=================================================\n%s\n",game->getGameSettings()->toString().c_str());
+
+		throw megaglest_runtime_error("Invalid faction index in getStartLocation: " + intToStr(factionIndex) + " : " + intToStr(factions.size()),true);
 	}
 }
 
 Vec2i World::getUnitPosition(int unitId) {
 	Unit* unit= findUnitById(unitId);
 	if(unit == NULL) {
-		throw runtime_error("Can not find unit to get position unitId = " + intToStr(unitId));
+		throw megaglest_runtime_error("Can not find unit to get position unitId = " + intToStr(unitId),true);
 	}
 	return unit->getPos();
 }
 
+void World::setUnitPosition(int unitId, Vec2i pos) {
+	Unit* unit= findUnitById(unitId);
+	if(unit == NULL) {
+		throw megaglest_runtime_error("Can not find unit to set position unitId = " + intToStr(unitId),true);
+	}
+	unit->setTargetPos(pos);
+	this->moveUnitCells(unit);
+}
+
+void World::addCellMarker(Vec2i pos, int factionIndex, const string &note, const string textureFile) {
+	const Faction *faction = NULL;
+	if(factionIndex >= 0) {
+		faction = this->getFaction(factionIndex);
+	}
+
+	Vec2i surfaceCellPos = map.toSurfCoords(pos);
+	SurfaceCell *sc = map.getSurfaceCell(surfaceCellPos);
+	if(sc == NULL) {
+		throw megaglest_runtime_error("sc == NULL",true);
+	}
+	Vec3f vertex = sc->getVertex();
+	Vec2i targetPos(vertex.x,vertex.z);
+
+	//printf("pos [%s] scPos [%s][%p] targetPos [%s]\n",pos.getString().c_str(),surfaceCellPos.getString().c_str(),sc,targetPos.getString().c_str());
+
+	MarkedCell mc(targetPos,faction,note,(faction != NULL ? faction->getStartLocationIndex() : -1));
+	game->addCellMarker(surfaceCellPos, mc);
+}
+
+void World::removeCellMarker(Vec2i pos, int factionIndex) {
+	const Faction *faction = NULL;
+	if(factionIndex >= 0) {
+		faction = this->getFaction(factionIndex);
+	}
+
+	Vec2i surfaceCellPos = map.toSurfCoords(pos);
+
+	game->removeCellMarker(surfaceCellPos, faction);
+}
+
+void World::showMarker(Vec2i pos, int factionIndex, const string &note, const string textureFile, int flashCount) {
+	const Faction *faction = NULL;
+	if(factionIndex >= 0) {
+		faction = this->getFaction(factionIndex);
+	}
+
+	Vec2i surfaceCellPos = map.toSurfCoords(pos);
+	SurfaceCell *sc = map.getSurfaceCell(surfaceCellPos);
+	if(sc == NULL) {
+		throw megaglest_runtime_error("sc == NULL",true);
+	}
+	Vec3f vertex = sc->getVertex();
+	Vec2i targetPos(vertex.x,vertex.z);
+
+	//printf("pos [%s] scPos [%s][%p] targetPos [%s]\n",pos.getString().c_str(),surfaceCellPos.getString().c_str(),sc,targetPos.getString().c_str());
+
+	MarkedCell mc(targetPos,faction,note,(faction != NULL ? faction->getStartLocationIndex() : -1));
+	if(flashCount > 0) {
+		mc.setAliveCount(flashCount);
+	}
+	game->showMarker(surfaceCellPos, mc);
+}
+
+void World::highlightUnit(int unitId,float radius, float thickness, Vec4f color) {
+	Unit* unit= findUnitById(unitId);
+	if(unit == NULL) {
+		throw megaglest_runtime_error("Can not find unit to set highlight unitId = " + intToStr(unitId),true);
+	}
+	game->highlightUnit(unitId,radius, thickness, color);
+}
+
+void World::unhighlightUnit(int unitId) {
+	Unit* unit= findUnitById(unitId);
+	if(unit == NULL) {
+		throw megaglest_runtime_error("Can not find unit to set highlight unitId = " + intToStr(unitId),true);
+	}
+	game->unhighlightUnit(unitId);
+}
+
+
 int World::getUnitFactionIndex(int unitId) {
 	Unit* unit= findUnitById(unitId);
 	if(unit == NULL) {
-		throw runtime_error("Can not find Faction unit to get position unitId = " + intToStr(unitId));
+		throw megaglest_runtime_error("Can not find Faction unit to get position unitId = " + intToStr(unitId),true);
 	}
 	return unit->getFactionIndex();
 }
+const string World::getUnitName(int unitId) {
+	Unit* unit= findUnitById(unitId);
+	if(unit == NULL) {
+		throw megaglest_runtime_error("Can not find Faction unit to get position unitId = " + intToStr(unitId),true);
+	}
+	return unit->getFullName(game->showTranslatedTechTree());
+}
 
 int World::getUnitCount(int factionIndex) {
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 		int count= 0;
 
@@ -1160,25 +1895,25 @@ int World::getUnitCount(int factionIndex) {
 		return count;
 	}
 	else {
-		throw runtime_error("Invalid faction index in getUnitCount: " + intToStr(factionIndex));
+		throw megaglest_runtime_error("Invalid faction index in getUnitCount: " + intToStr(factionIndex),true);
 	}
 }
 
 int World::getUnitCountOfType(int factionIndex, const string &typeName) {
-	if(factionIndex < factions.size()) {
+	if(factionIndex < (int)factions.size()) {
 		Faction* faction= factions[factionIndex];
 		int count= 0;
 
 		for(int i= 0; i< faction->getUnitCount(); ++i) {
 			const Unit* unit= faction->getUnit(i);
-			if(unit != NULL && unit->isAlive() && unit->getType()->getName() == typeName) {
+			if(unit != NULL && unit->isAlive() && unit->getType()->getName(false) == typeName) {
 				++count;
 			}
 		}
 		return count;
 	}
 	else {
-		throw runtime_error("Invalid faction index in getUnitCountOfType: " + intToStr(factionIndex));
+		throw megaglest_runtime_error("Invalid faction index in getUnitCountOfType: " + intToStr(factionIndex),true);
 	}
 }
 
@@ -1190,13 +1925,13 @@ int World::getUnitCountOfType(int factionIndex, const string &typeName) {
 void World::initCells(bool fogOfWar) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameLoadingStateCells","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameLoadingStateCells","",true), true);
     for(int i=0; i< map.getSurfaceW(); ++i) {
         for(int j=0; j< map.getSurfaceH(); ++j) {
 
 			SurfaceCell *sc= map.getSurfaceCell(i, j);
 			if(sc == NULL) {
-				throw runtime_error("sc == NULL");
+				throw megaglest_runtime_error("sc == NULL");
 			}
 			if(sc->getObject()!=NULL){
         		sc->getObject()->initParticles();
@@ -1231,23 +1966,23 @@ void World::initSplattedTextures() {
 			SurfaceCell *sc11= map.getSurfaceCell(i+1, j+1);
 
 			if(sc00 == NULL) {
-				throw runtime_error("sc00 == NULL");
+				throw megaglest_runtime_error("sc00 == NULL");
 			}
 			if(sc10 == NULL) {
-				throw runtime_error("sc10 == NULL");
+				throw megaglest_runtime_error("sc10 == NULL");
 			}
 			if(sc01 == NULL) {
-				throw runtime_error("sc01 == NULL");
+				throw megaglest_runtime_error("sc01 == NULL");
 			}
 			if(sc11 == NULL) {
-				throw runtime_error("sc11 == NULL");
+				throw megaglest_runtime_error("sc11 == NULL");
 			}
 
 			tileset.addSurfTex( sc00->getSurfaceType(),
 								sc10->getSurfaceType(),
 								sc01->getSurfaceType(),
 								sc11->getSurfaceType(),
-								coord, texture);
+								coord, texture,j,i);
 			sc00->setSurfTexCoord(coord);
 			sc00->setSurfaceTexture(texture);
 		}
@@ -1258,23 +1993,33 @@ void World::initSplattedTextures() {
 //creates each faction looking at each faction name contained in GameSettings
 void World::initFactionTypes(GameSettings *gs) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameLoadingFactionTypes","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameLoadingFactionTypes","",true), true);
 
 	if(gs == NULL) {
-		throw runtime_error("gs == NULL");
+		throw megaglest_runtime_error("gs == NULL");
 	}
 
 	if(gs->getFactionCount() > map.getMaxPlayers()) {
-		throw runtime_error("This map only supports "+intToStr(map.getMaxPlayers())+" players");
+		throw megaglest_runtime_error("This map only supports "+intToStr(map.getMaxPlayers())+" players, factionCount is " + intToStr(gs->getFactionCount()));
 	}
 
 	//create stats
-	stats.init(gs->getFactionCount(), gs->getThisFactionIndex(), gs->getDescription());
+	//printf("World gs->getThisFactionIndex() = %d\n",gs->getThisFactionIndex());
+
+	if(this->game->isMasterserverMode() == true) {
+		this->thisFactionIndex = -1;
+	}
+	else {
+		this->thisFactionIndex= gs->getThisFactionIndex();
+	}
+
+	stats.init(gs->getFactionCount(), this->thisFactionIndex, gs->getDescription(),gs->getTech());
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	//create factions
-	this->thisFactionIndex= gs->getThisFactionIndex();
+	//printf("this->thisFactionIndex = %d\n",this->thisFactionIndex);
+
 	//factions.resize(gs->getFactionCount());
 	for(int i= 0; i < gs->getFactionCount(); ++i){
 		Faction *newFaction = new Faction();
@@ -1283,13 +2028,14 @@ void World::initFactionTypes(GameSettings *gs) {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] factions.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,factions.size());
 
-	for(int i=0; i < factions.size(); ++i) {
+	for(int i=0; i < (int)factions.size(); ++i) {
 		FactionType *ft= techTree->getTypeByName(gs->getFactionTypeName(i));
 		if(ft == NULL) {
-			throw runtime_error("ft == NULL");
+			throw megaglest_runtime_error("ft == NULL");
 		}
 		factions[i]->init(ft, gs->getFactionControl(i), techTree, game, i, gs->getTeam(i),
-						 gs->getStartLocationIndex(i), i==thisFactionIndex, gs->getDefaultResources());
+						 gs->getStartLocationIndex(i), i==thisFactionIndex,
+						 gs->getDefaultResources(),loadWorldNode);
 
 		stats.setTeam(i, gs->getTeam(i));
 		stats.setFactionTypeName(i, formatString(gs->getFactionTypeName(i)));
@@ -1302,10 +2048,86 @@ void World::initFactionTypes(GameSettings *gs) {
 		}
 	}
 
+	if(Config::getInstance().getBool("EnableNewThreadManager","false") == true) {
+		std::vector<SlaveThreadControllerInterface *> slaveThreadList;
+		for(unsigned int i = 0; i < factions.size(); ++i) {
+			Faction *faction = factions[i];
+			slaveThreadList.push_back(faction->getWorkerThread());
+		}
+		masterController.setSlaves(slaveThreadList);
+	}
+
+	if(loadWorldNode != NULL) {
+		stats.loadGame(loadWorldNode);
+		random.setLastNumber(loadWorldNode->getAttribute("random")->getIntValue());
+
+		thisFactionIndex = loadWorldNode->getAttribute("thisFactionIndex")->getIntValue();
+	//	int thisTeamIndex;
+		thisTeamIndex = loadWorldNode->getAttribute("thisTeamIndex")->getIntValue();
+	//	int frameCount;
+		frameCount = loadWorldNode->getAttribute("frameCount")->getIntValue();
+
+		//printf("**LOAD World thisFactionIndex = %d\n",thisFactionIndex);
+
+		MutexSafeWrapper safeMutex(mutexFactionNextUnitId,string(__FILE__) + "_" + intToStr(__LINE__));
+	//	std::map<int,int> mapFactionNextUnitId;
+//		for(std::map<int,int>::iterator iterMap = mapFactionNextUnitId.begin();
+//				iterMap != mapFactionNextUnitId.end(); ++iterMap) {
+//			XmlNode *factionNextUnitIdNode = worldNode->addChild("FactionNextUnitId");
+//
+//			factionNextUnitIdNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+//			factionNextUnitIdNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+//		}
+		//!!!
+		vector<XmlNode *> factionNextUnitIdNodeList = loadWorldNode->getChildList("FactionNextUnitId");
+		for(unsigned int i = 0; i < factionNextUnitIdNodeList.size(); ++i) {
+			XmlNode *factionNextUnitIdNode = factionNextUnitIdNodeList[i];
+
+			int key = factionNextUnitIdNode->getAttribute("key")->getIntValue();
+			int value = factionNextUnitIdNode->getAttribute("value")->getIntValue();
+
+			mapFactionNextUnitId[key] = value;
+		}
+		safeMutex.ReleaseLock();
+	//	//config
+	//	bool fogOfWarOverride;
+		fogOfWarOverride = loadWorldNode->getAttribute("fogOfWarOverride")->getIntValue() != 0;
+	//	bool fogOfWar;
+		fogOfWar = loadWorldNode->getAttribute("fogOfWar")->getIntValue() != 0;
+	//	int fogOfWarSmoothingFrameSkip;
+		fogOfWarSmoothingFrameSkip = loadWorldNode->getAttribute("fogOfWarSmoothingFrameSkip")->getIntValue();
+	//	bool fogOfWarSmoothing;
+		fogOfWarSmoothing = loadWorldNode->getAttribute("fogOfWarSmoothing")->getIntValue() != 0;
+	//	Game *game;
+	//	Chrono chronoPerfTimer;
+	//	bool perfTimerEnabled;
+	//
+	//	bool unitParticlesEnabled;
+		unitParticlesEnabled = loadWorldNode->getAttribute("unitParticlesEnabled")->getIntValue() != 0;
+	//	std::map<string,StaticSound *> staticSoundList;
+	//	std::map<string,StrSound *> streamSoundList;
+	//
+	//	uint32 nextCommandGroupId;
+		nextCommandGroupId = loadWorldNode->getAttribute("nextCommandGroupId")->getIntValue();
+	//	string queuedScenarioName;
+		queuedScenarioName = loadWorldNode->getAttribute("queuedScenarioName")->getValue();
+	//	bool queuedScenarioKeepFactions;
+		queuedScenarioKeepFactions = loadWorldNode->getAttribute("queuedScenarioKeepFactions")->getIntValue() != 0;
+
+		if(loadWorldNode->hasAttribute("disableAttackEffects") == true) {
+			disableAttackEffects = loadWorldNode->getAttribute("disableAttackEffects")->getIntValue() != 0;
+		}
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	if(factions.empty() == false) {
-		thisTeamIndex= getFaction(thisFactionIndex)->getTeam();
+		if(this->game->isMasterserverMode() == true) {
+			thisTeamIndex = -1;
+		}
+		else {
+			thisTeamIndex = getFaction(thisFactionIndex)->getTeam();
+		}
 	}
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
@@ -1314,14 +2136,14 @@ void World::initMinimap() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	minimap.init(map.getW(), map.getH(), this, game->getGameSettings()->getFogOfWar());
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameLoadingMinimapSurface","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameLoadingMinimapSurface","",true), true);
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
 void World::initUnitsForScenario() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameLoadingGenerateGameElements","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameLoadingGenerateGameElements","",true), true);
 
 	//put starting units
 	for(int i = 0; i < getFactionCount(); ++i) {
@@ -1340,17 +2162,14 @@ void World::initUnitsForScenario() {
 				//unit->born();
 			}
 			else {
-				string unitName = unit->getType()->getName();
+				string unitName = unit->getType()->getName(false);
 				delete unit;
 				unit = NULL;
-				throw runtime_error("Unit: " + unitName + " can't be placed, this error is caused because there\nis not enough room to put all units near their start location.\nmake a better/larger map. Faction: #" + intToStr(i) + " name: " + ft->getName());
+				throw megaglest_runtime_error("Unit: " + unitName + " can't be placed, this error is caused because there\nis not enough room to put all units near their start location.\nmake a better/larger map. Faction: #" + intToStr(i) + " name: " + ft->getName(false));
 			}
 
 			if (unit->getType()->hasSkillClass(scBeBuilt)) {
 				map.flatternTerrain(unit);
-				if(cartographer != NULL) {
-					cartographer->updateMapMetrics(unit->getPos(), unit->getType()->getSize());
-				}
 			}
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
 		}
@@ -1363,64 +2182,114 @@ void World::initUnitsForScenario() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
+void World::placeUnitAtLocation(const Vec2i &location, int radius, Unit *unit, bool spaciated) {
+	if(placeUnit(location, generationArea, unit, spaciated)) {
+		unit->create(true);
+		unit->born(NULL);
+	}
+	else {
+		string unitName = unit->getType()->getName(false);
+		string unitFactionName = unit->getFaction()->getType()->getName(false);
+		int unitFactionIndex = unit->getFactionIndex();
+
+		delete unit;
+		unit = NULL;
+
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Unit: [%s] can't be placed, this error is caused because there\nis not enough room to put all units near their start location.\nmake a better/larger map. Faction: #%d name: [%s]",
+				unitName.c_str(),unitFactionIndex,unitFactionName.c_str());
+		throw megaglest_runtime_error(szBuf,false);
+	}
+	if (unit->getType()->hasSkillClass(scBeBuilt)) {
+		map.flatternTerrain(unit);
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
+
+}
+
 //place units randomly aroud start location
 void World::initUnits() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	Logger::getInstance().add(Lang::getInstance().get("LogScreenGameLoadingGenerateGameElements","",true), true);
+	Logger::getInstance().add(Lang::getInstance().getString("LogScreenGameLoadingGenerateGameElements","",true), true);
 
-	//put starting units
-	for(int i = 0; i < getFactionCount(); ++i) {
-		Faction *f= factions[i];
-		const FactionType *ft= f->getType();
+	bool gotError = false;
+	bool skipStackTrace = false;
+	string sErrBuf="";
+	try {
+		//put starting units
+		if(loadWorldNode == NULL) {
+			for(int i = 0; i < getFactionCount(); ++i) {
+				Faction *f= factions[i];
+				const FactionType *ft= f->getType();
+				for(int j = 0; j < ft->getStartingUnitCount(); ++j) {
+					const UnitType *ut= ft->getStartingUnit(j);
+					int initNumber= ft->getStartingUnitAmount(j);
 
-		for(int j = 0; j < ft->getStartingUnitCount(); ++j) {
-			const UnitType *ut= ft->getStartingUnit(j);
-			int initNumber= ft->getStartingUnitAmount(j);
+					for(int l = 0; l < initNumber; l++) {
 
-			for(int l = 0; l < initNumber; l++) {
+						UnitPathInterface *newpath = NULL;
+						switch(game->getGameSettings()->getPathFinderType()) {
+							case pfBasic:
+								newpath = new UnitPathBasic();
+								break;
+							default:
+								throw megaglest_runtime_error("detected unsupported pathfinder type!");
+						}
 
-				UnitPathInterface *newpath = NULL;
-				switch(game->getGameSettings()->getPathFinderType()) {
-					case pfBasic:
-						newpath = new UnitPathBasic();
-						break;
-					case pfRoutePlanner:
-						newpath = new UnitPath();
-						break;
-					default:
-						throw runtime_error("detected unsupported pathfinder type!");
-			    }
-
-				Unit *unit= new Unit(getNextUnitId(f), newpath, Vec2i(0), ut, f, &map, CardinalDir::NORTH);
-
-				int startLocationIndex= f->getStartLocationIndex();
-
-				if(placeUnit(map.getStartLocation(startLocationIndex), generationArea, unit, true)) {
-					unit->create(true);
-					unit->born();
-				}
-				else {
-					string unitName = unit->getType()->getName();
-					delete unit;
-					unit = NULL;
-					throw runtime_error("Unit: " + unitName + " can't be placed, this error is caused because there\nis not enough room to put all units near their start location.\nmake a better/larger map. Faction: #" + intToStr(i) + " name: " + ft->getName());
-				}
-				if (unit->getType()->hasSkillClass(scBeBuilt)) {
-					map.flatternTerrain(unit);
-					if(cartographer != NULL) {
-						cartographer->updateMapMetrics(unit->getPos(), unit->getType()->getSize());
+						Unit *unit= new Unit(getNextUnitId(f), newpath, Vec2i(0), ut, f, &map, CardinalDir::NORTH);
+						int startLocationIndex= f->getStartLocationIndex();
+						placeUnitAtLocation(map.getStartLocation(startLocationIndex), generationArea, unit, true);
 					}
 				}
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
-            }
-		}
 
-		// Ensure Starting Resource Amount are adjusted to max store levels
-		f->limitResourcesToStore();
+				// Ensure Starting Resource Amount are adjusted to max store levels
+				f->limitResourcesToStore();
+			}
+		}
+		else {
+			//printf("Load game setting unit pos\n");
+			refreshAllUnitExplorations();
+		}
 	}
+	catch(const megaglest_runtime_error &ex) {
+		gotError = true;
+		if(ex.wantStackTrace() == true) {
+			char szErrBuf[8096]="";
+			snprintf(szErrBuf,8096,"In [%s::%s %d]",__FILE__,__FUNCTION__,__LINE__);
+			sErrBuf = string(szErrBuf) + string("\nerror [") + string(ex.what()) + string("]\n");
+		}
+		else {
+			skipStackTrace = true;
+			sErrBuf = ex.what();
+		}
+		SystemFlags::OutputDebug(SystemFlags::debugError,sErrBuf.c_str());
+	}
+	catch(const std::exception &ex) {
+		gotError = true;
+		char szErrBuf[8096]="";
+		snprintf(szErrBuf,8096,"In [%s::%s %d]",__FILE__,__FUNCTION__,__LINE__);
+		sErrBuf = string(szErrBuf) + string("\nerror [") + string(ex.what()) + string("]\n");
+		SystemFlags::OutputDebug(SystemFlags::debugError,sErrBuf.c_str());
+	}
+
 	map.computeNormals();
 	map.computeInterpolatedHeights();
+
+	if(gotError == true) {
+		throw megaglest_runtime_error(sErrBuf,!skipStackTrace);
+	}
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+}
+
+void World::refreshAllUnitExplorations() {
+	for(unsigned int i = 0; i < (unsigned int)getFactionCount(); ++i) {
+		Faction *faction = factions[i];
+
+		for(unsigned int j = 0; j < (unsigned int)faction->getUnitCount(); ++j) {
+			Unit *unit = faction->getUnit(j);
+			unit->refreshPos();
+		}
+	}
 }
 
 void World::initMap() {
@@ -1429,18 +2298,26 @@ void World::initMap() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
+void World::exploreCells(int teamIndex, ExploredCellsLookupItem &exploredCellsCache) {
+	std::vector<SurfaceCell*> &cellList = exploredCellsCache.exploredCellList;
+	for (int idx2 = 0; idx2 < (int)cellList.size(); ++idx2) {
+		SurfaceCell* sc = cellList[idx2];
+		sc->setExplored(teamIndex, true);
+	}
+	cellList = exploredCellsCache.visibleCellList;
+	for (int idx2 = 0; idx2 < (int)cellList.size(); ++idx2) {
+		SurfaceCell* sc = cellList[idx2];
+		sc->setVisible(teamIndex, true);
+	}
+}
+
 // ==================== exploration ====================
 
-void World::exploreCells(const Vec2i &newPos, int sightRange, int teamIndex) {
-	//bool cacheLookupPosResult 	= false;
-	//bool cacheLookupSightResult = false;
-
+ExploredCellsLookupItem World::exploreCells(const Vec2i &newPos, int sightRange, int teamIndex) {
 	// cache lookup of previously calculated cells + sight range
-	//if(MaxExploredCellsLookupItemCache > 0 && game->isMasterserverMode() == false) {
 	if(MaxExploredCellsLookupItemCache > 0) {
 		if(difftime(time(NULL),ExploredCellsLookupItem::lastDebug) >= 10) {
 			ExploredCellsLookupItem::lastDebug = time(NULL);
-			//printf("In [%s::%s Line: %d] ExploredCellsLookupItemCache.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,ExploredCellsLookupItemCache.size());
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] ExploredCellsLookupItemCache.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,ExploredCellsLookupItemCache.size());
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] ExploredCellsLookupItemCache.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,ExploredCellsLookupItemCache.size());
 		}
@@ -1448,14 +2325,14 @@ void World::exploreCells(const Vec2i &newPos, int sightRange, int teamIndex) {
 		// Ok we limit the cache size due to possible RAM constraints when
 		// the threshold is met
 		bool MaxExploredCellsLookupItemCacheTriggered = false;
-		if(ExploredCellsLookupItemCache.size() >= MaxExploredCellsLookupItemCache) {
+		if((int)ExploredCellsLookupItemCache.size() >= MaxExploredCellsLookupItemCache) {
 			MaxExploredCellsLookupItemCacheTriggered = true;
 			// Snag the oldest entry in the list
 			std::map<int,ExploredCellsLookupKey>::reverse_iterator purgeItem = ExploredCellsLookupItemCacheTimer.rbegin();
 
 			ExploredCellsLookupItemCache[purgeItem->second.pos].erase(purgeItem->second.sightRange);
 
-			if(ExploredCellsLookupItemCache[purgeItem->second.pos].size() == 0) {
+			if(ExploredCellsLookupItemCache[purgeItem->second.pos].empty() == true) {
 				ExploredCellsLookupItemCache.erase(purgeItem->second.pos);
 			}
 
@@ -1466,74 +2343,65 @@ void World::exploreCells(const Vec2i &newPos, int sightRange, int teamIndex) {
 		// cache if already found
 		std::map<Vec2i, std::map<int, ExploredCellsLookupItem> >::iterator iterFind = ExploredCellsLookupItemCache.find(newPos);
 		if(iterFind != ExploredCellsLookupItemCache.end()) {
-			//cacheLookupPosResult = true;
 
 			std::map<int, ExploredCellsLookupItem>::iterator iterFind2 = iterFind->second.find(sightRange);
 			if(iterFind2 != iterFind->second.end()) {
-				//cacheLookupSightResult = true;
 
-				std::vector<SurfaceCell *> &cellList = iterFind2->second.exploredCellList;
-				for(int idx2 = 0; idx2 < cellList.size(); ++idx2) {
-					SurfaceCell *sc = cellList[idx2];
-					sc->setExplored(teamIndex, true);
-				}
-				cellList = iterFind2->second.visibleCellList;
-				for(int idx2 = 0; idx2 < cellList.size(); ++idx2) {
-					SurfaceCell *sc = cellList[idx2];
-					sc->setVisible(teamIndex, true);
-				}
+				ExploredCellsLookupItem &exploredCellsCache = iterFind2->second;
+				exploreCells(teamIndex, exploredCellsCache);
 
 				// Only start worrying about updating the cache timer if we
 				// have hit the threshold
 				if(MaxExploredCellsLookupItemCacheTriggered == true) {
 					// Remove the old timer entry since the search key id is stale
-					ExploredCellsLookupItemCacheTimer.erase(iterFind2->second.ExploredCellsLookupItemCacheTimerCountIndex);
-					iterFind2->second.ExploredCellsLookupItemCacheTimerCountIndex = ExploredCellsLookupItemCacheTimerCount++;
+					ExploredCellsLookupItemCacheTimer.erase(exploredCellsCache.ExploredCellsLookupItemCacheTimerCountIndex);
+					exploredCellsCache.ExploredCellsLookupItemCacheTimerCountIndex = ExploredCellsLookupItemCacheTimerCount++;
 
 					ExploredCellsLookupKey lookupKey;
 					lookupKey.pos = newPos;
 					lookupKey.sightRange = sightRange;
 					lookupKey.teamIndex = teamIndex;
 
-					// Add a new search key since we just used this item
-					ExploredCellsLookupItemCacheTimer[iterFind2->second.ExploredCellsLookupItemCacheTimerCountIndex] = lookupKey;
+					// Add a new search key since we just used this exploredCellsCache
+					ExploredCellsLookupItemCacheTimer[exploredCellsCache.ExploredCellsLookupItemCacheTimerCountIndex] = lookupKey;
 				}
 
-				return;
+				return exploredCellsCache;
 			}
 		}
 	}
 
 	Vec2i newSurfPos= Map::toSurfCoords(newPos);
-	int surfSightRange= sightRange/Map::cellScale+1;
+	int surfSightRange= sightRange / Map::cellScale+1;
 
 	// Explore, this code is quite expensive when we have lots of units
-	ExploredCellsLookupItem item;
+	ExploredCellsLookupItem exploredCellsCache;
+	exploredCellsCache.exploredCellList.reserve(surfSightRange + indirectSightRange * 4);
+	exploredCellsCache.visibleCellList.reserve(surfSightRange + indirectSightRange * 4);
 
-	int loopCount = 0;
+	//int loopCount = 0;
     for(int i = -surfSightRange - indirectSightRange -1; i <= surfSightRange + indirectSightRange +1; ++i) {
         for(int j = -surfSightRange - indirectSightRange -1; j <= surfSightRange + indirectSightRange +1; ++j) {
-        	loopCount++;
+        	//loopCount++;
         	Vec2i currRelPos= Vec2i(i, j);
             Vec2i currPos= newSurfPos + currRelPos;
-            if(map.isInsideSurface(currPos)){
+            if(map.isInsideSurface(currPos) == true){
 				SurfaceCell *sc= map.getSurfaceCell(currPos);
 				if(sc == NULL) {
-					throw runtime_error("sc == NULL");
+					throw megaglest_runtime_error("sc == NULL");
 				}
 
 				//explore
-				//if(Vec2i(0).dist(currRelPos) < surfSightRange + indirectSightRange + 1) {
-				if(currRelPos.length() < surfSightRange + indirectSightRange + 1) {
+				float posLength = currRelPos.length();
+				if(posLength < surfSightRange + indirectSightRange + 1) {
                     sc->setExplored(teamIndex, true);
-                    item.exploredCellList.push_back(sc);
+                    exploredCellsCache.exploredCellList.push_back(sc);
 				}
 
 				//visible
-				//if(Vec2i(0).dist(currRelPos) < surfSightRange) {
-				if(currRelPos.length() < surfSightRange) {
+				if(posLength < surfSightRange) {
 					sc->setVisible(teamIndex, true);
-					item.visibleCellList.push_back(sc);
+					exploredCellsCache.visibleCellList.push_back(sc);
 				}
             }
         }
@@ -1541,236 +2409,196 @@ void World::exploreCells(const Vec2i &newPos, int sightRange, int teamIndex) {
 
     // Ok update our caches with the latest info for this position, sight and team
     if(MaxExploredCellsLookupItemCache > 0) {
-		if(item.exploredCellList.empty() == false || item.visibleCellList.empty() == false) {
-			//ExploredCellsLookupItemCache.push_back(item);
-			item.ExploredCellsLookupItemCacheTimerCountIndex = ExploredCellsLookupItemCacheTimerCount++;
-			ExploredCellsLookupItemCache[newPos][sightRange] = item;
+		if(exploredCellsCache.exploredCellList.empty() == false || exploredCellsCache.visibleCellList.empty() == false) {
+			exploredCellsCache.ExploredCellsLookupItemCacheTimerCountIndex = ExploredCellsLookupItemCacheTimerCount++;
+			ExploredCellsLookupItemCache[newPos][sightRange] = exploredCellsCache;
 
 			ExploredCellsLookupKey lookupKey;
 			lookupKey.pos 			= newPos;
 			lookupKey.sightRange 	= sightRange;
 			lookupKey.teamIndex 	= teamIndex;
-			ExploredCellsLookupItemCacheTimer[item.ExploredCellsLookupItemCacheTimerCountIndex] = lookupKey;
+			ExploredCellsLookupItemCacheTimer[exploredCellsCache.ExploredCellsLookupItemCacheTimerCountIndex] = lookupKey;
 		}
     }
+    return exploredCellsCache;
 }
 
-bool World::showWorldForPlayer(int factionIndex) const {
+bool World::showWorldForPlayer(int factionIndex, bool excludeFogOfWarCheck) const {
     bool ret = false;
-    if(factionIndex == thisFactionIndex) {
-        // Player is an Observer
-        if(thisTeamIndex == GameConstants::maxPlayers -1 + fpt_Observer) {
-            ret = true;
-        }
-        // Game over and not a network game
-        else if(game->getGameOver() == true &&
-                game->getGameSettings()->isNetworkGame() == false) {
-            ret = true;
-        }
-        // Game is over but playing a Network game so check if we can
-        // turn off fog of war?
-        else if(game->getGameOver() == true &&
-                game->getGameSettings()->isNetworkGame() == true &&
-                game->getGameSettings()->getEnableObserverModeAtEndGame() == true) {
-            ret = true;
+    if(factionIndex >= 0) {
+		if(excludeFogOfWarCheck == false &&
+			fogOfWarSkillTypeValue == 0 && fogOfWarOverride == true) {
+			ret = true;
+		}
+		else if(factionIndex == thisFactionIndex && game != NULL) {
+			// Player is an Observer
+			if(thisTeamIndex == GameConstants::maxPlayers -1 + fpt_Observer) {
+				ret = true;
+			}
+			// Game over and not a network game
+			else if(game->getGameOver() == true &&
+					game->getGameSettings()->isNetworkGame() == false) {
+				ret = true;
+			}
+			// Game is over but playing a Network game so check if we can
+			// turn off fog of war?
+			else if(game->getGameOver() == true &&
+					game->getGameSettings()->isNetworkGame() == true &&
+					game->getGameSettings()->getEnableObserverModeAtEndGame() == true) {
+				ret = true;
 
-            // If the faction is NOT on the winning team, don't let them see the map
-            // until all mobile units are dead
-            if(getStats()->getVictory(factionIndex) == false) {
-                // If the player has at least 1 Unit alive that is mobile (can move)
-                // then we cannot turn off fog of war
-                for(int i = 0; i < getFaction(factionIndex)->getUnitCount(); ++i) {
-                    Unit *unit = getFaction(factionIndex)->getUnit(i);
-                    if(unit != NULL && unit->isAlive() && unit->getType()->isMobile() == true) {
-                        ret = false;
-                        break;
-                    }
-                }
-            }
-        }
+				// If the faction is NOT on the winning team, don't let them see the map
+				// until all mobile units are dead
+				if(getStats()->getVictory(factionIndex) == false) {
+					// If the player has at least 1 Unit alive that is mobile (can move)
+					// then we cannot turn off fog of war
+
+					const Faction *faction = getFaction(factionIndex);
+	//                for(int i = 0; i < faction->getUnitCount(); ++i) {
+	//                    Unit *unit = getFaction(factionIndex)->getUnit(i);
+	//                    if(unit != NULL && unit->isAlive() && unit->getType()->isMobile() == true) {
+	//                        ret = false;
+	//                        break;
+	//                    }
+	//                }
+					if(faction->hasAliveUnits(true,false) == true) {
+						ret = false;
+					}
+				}
+			}
+		}
     }
-
     return ret;
 }
 
 //computes the fog of war texture, contained in the minimap
-void World::computeFow(int factionIdxToTick) {
+void World::computeFow() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s] Line: %d in frame: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,getFrameCount());
+
+	Chrono chronoGamePerformanceCounts;
+	if(this->game) chronoGamePerformanceCounts.start();
+
 	minimap.resetFowTex();
 
-	//reset cells
-	if(factionIdxToTick == -1 || factionIdxToTick == this->thisFactionIndex) {
-		for(int i = 0; i < map.getSurfaceW(); ++i) {
-			for(int j = 0; j < map.getSurfaceH(); ++j) {
-				for(int k = 0; k < GameConstants::maxPlayers + GameConstants::specialFactions; ++k) {
-					if(fogOfWar || k != thisTeamIndex) {
-						map.getSurfaceCell(i, j)->setVisible(k, false);
-						if(showWorldForPlayer(k) == true) {
-							const Vec2i pos(i,j);
-							Vec2i surfPos= pos;
+	if(this->game) this->game->addPerformanceCount("world minimap.resetFowTex",chronoGamePerformanceCounts.getMillis());
 
-							//compute max alpha
-							float maxAlpha= 0.0f;
-							if(surfPos.x > 1 && surfPos.y > 1 &&
-                               surfPos.x < map.getSurfaceW() - 2 &&
-                               surfPos.y < map.getSurfaceH() - 2) {
-								maxAlpha= 1.f;
-							}
-							else if(surfPos.x > 0 && surfPos.y > 0 &&
-                                    surfPos.x < map.getSurfaceW() - 1 &&
-                                    surfPos.y < map.getSurfaceH() - 1){
-								maxAlpha= 0.3f;
-							}
+	// reset cells
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s] Line: %d in frame: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,getFrameCount());
 
-							//compute alpha
-							float alpha=maxAlpha;
-							minimap.incFowTextureAlphaSurface(surfPos, alpha);
+	if(this->game) chronoGamePerformanceCounts.start();
+
+	// Once we have calculated fog of war texture alpha, they are cached so we
+	// restore the default texture in one shot for speed
+	if(cacheFowAlphaTexture == true) {
+		if(cacheFowAlphaTextureFogOfWarValue != fogOfWar) {
+			cacheFowAlphaTexture = false;
+		}
+		else {
+			minimap.restoreFowTexAlphaSurface();
+		}
+	}
+	int resetFowAlphaFactionCount = 0;
+	for(int indexFaction = 0;
+			indexFaction < GameConstants::maxPlayers + GameConstants::specialFactions;
+			++indexFaction) {
+		if(fogOfWar || indexFaction != thisTeamIndex) {
+			bool showWorldForFaction = showWorldForPlayer(indexFaction);
+			if(showWorldForFaction == true) {
+				resetFowAlphaFactionCount++;
+			}
+
+			for(int indexSurfaceW = 0; indexSurfaceW < map.getSurfaceW(); ++indexSurfaceW) {
+				for(int indexSurfaceH = 0; indexSurfaceH < map.getSurfaceH(); ++indexSurfaceH) {
+					// set all cells to not visible
+					map.getSurfaceCell(indexSurfaceW, indexSurfaceH)->setVisible(indexFaction, false);
+
+					// reset fog of ware texture alpha values
+					if(cacheFowAlphaTexture == false &&
+						showWorldForFaction == true &&
+							resetFowAlphaFactionCount <= 1) {
+						const Vec2i surfPos(indexSurfaceW,indexSurfaceH);
+
+						//compute max alpha
+						float maxAlpha= 0.0f;
+						if(surfPos.x > 1 && surfPos.y > 1 &&
+						   surfPos.x < map.getSurfaceW() - 2 &&
+						   surfPos.y < map.getSurfaceH() - 2) {
+							maxAlpha= 1.f;
 						}
-						//else {
-						//	map.getSurfaceCell(i, j)->setVisible(k, false);
-						//}
+						else if(surfPos.x > 0 && surfPos.y > 0 &&
+								surfPos.x < map.getSurfaceW() - 1 &&
+								surfPos.y < map.getSurfaceH() - 1){
+							maxAlpha= 0.3f;
+						}
+
+						// compute alpha
+						float alpha = maxAlpha;
+						minimap.incFowTextureAlphaSurface(surfPos, alpha);
 					}
 				}
 			}
 		}
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s] Line: %d in frame: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,getFrameCount());
 	}
-	else {
-		// Deal with observers
-		for(int i = 0; i < map.getSurfaceW(); ++i) {
-			for(int j = 0; j < map.getSurfaceH(); ++j) {
-				for(int k = 0; k < GameConstants::maxPlayers + GameConstants::specialFactions; ++k) {
-					if(fogOfWar || k != thisTeamIndex) {
-						if(k == thisTeamIndex && thisTeamIndex == GameConstants::maxPlayers -1 + fpt_Observer) {
-							//map.getSurfaceCell(i, j)->setVisible(k, true);
-							//map.getSurfaceCell(i, j)->setExplored(k, true);
 
-							const Vec2i pos(i,j);
-							Vec2i surfPos= pos;
-
-							//compute max alpha
-							float maxAlpha= 0.0f;
-							if(surfPos.x > 1 && surfPos.y > 1 &&
-                               surfPos.x < map.getSurfaceW() - 2 &&
-                               surfPos.y < map.getSurfaceH() - 2) {
-								maxAlpha= 1.f;
-							}
-							else if(surfPos.x > 0 && surfPos.y > 0 &&
-                                    surfPos.x < map.getSurfaceW() - 1 &&
-                                    surfPos.y < map.getSurfaceH() - 1){
-								maxAlpha= 0.3f;
-							}
-
-							//compute alpha
-							float alpha=maxAlpha;
-							minimap.incFowTextureAlphaSurface(surfPos, alpha);
-						}
-					}
-				}
-			}
-		}
+	// Once we have calculated fog of war texture alpha, will we cache it so that we
+	// can restore it later
+	if(cacheFowAlphaTexture == false && resetFowAlphaFactionCount > 0) {
+		cacheFowAlphaTexture = true;
+		cacheFowAlphaTextureFogOfWarValue = fogOfWar;
+		minimap.copyFowTexAlphaSurface();
 	}
+
+	if(this->game) this->game->addPerformanceCount("world reset cells",chronoGamePerformanceCounts.getMillis());
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s] Line: %d in frame: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,getFrameCount());
 
 	//compute cells
-	for(int i=0; i<getFactionCount(); ++i) {
-		if(factionIdxToTick == -1 || factionIdxToTick == this->thisFactionIndex) {
-			for(int j=0; j<getFaction(i)->getUnitCount(); ++j) {
-				Unit *unit= getFaction(i)->getUnit(j);
+	if(this->game) chronoGamePerformanceCounts.start();
 
-				//exploration
-				unit->exploreCells();
-			}
-		}
-	}
+	for(int factionIndex = 0; factionIndex < getFactionCount(); ++factionIndex) {
+		Faction *faction = getFaction(factionIndex);
+		bool cellVisibleForFaction = showWorldForPlayer(thisFactionIndex);
+		int unitCount = faction->getUnitCount();
+		for(int unitIndex = 0; unitIndex < unitCount; ++unitIndex) {
+			Unit *unit= faction->getUnit(unitIndex);
 
-	//fire
-	for(int i=0; i<getFactionCount(); ++i) {
-		if(factionIdxToTick == -1 || factionIdxToTick == this->thisFactionIndex) {
-			for(int j=0; j<getFaction(i)->getUnitCount(); ++j){
-				Unit *unit= getFaction(i)->getUnit(j);
+			// exploration
+			unit->exploreCells();
 
-				//fire
-				ParticleSystem *fire= unit->getFire();
-				if(fire != NULL) {
-				    bool cellVisible = showWorldForPlayer(thisFactionIndex);
-				    if(cellVisible == false) {
-				        cellVisible = map.getSurfaceCell(Map::toSurfCoords(unit->getPos()))->isVisible(thisTeamIndex);
-				    }
-
-					fire->setActive(cellVisible);
-				}
-			}
-		}
-	}
-
-	//compute texture
-	//printf("Masterserver = %d\n",game->isMasterserverMode());
-
-	//if(fogOfWar == true && game->isMasterserverMode() == false) {
-	if(fogOfWar == true) {
-		for(int i=0; i<getFactionCount(); ++i) {
-			Faction *faction= getFaction(i);
-			if(faction->getTeam() == thisTeamIndex) {
-				//if(thisTeamIndex == GameConstants::maxPlayers + fpt_Observer) {
-				for(int j=0; j<faction->getUnitCount(); ++j){
-					const Unit *unit= faction->getUnit(j);
-					if(unit->isOperative()){
-						int sightRange= unit->getType()->getSight();
-
-						bool foundInCache = false;
-						std::map<Vec2i, std::map<int, FowAlphaCellsLookupItem > >::iterator iterMap = FowAlphaCellsLookupItemCache.find(unit->getPos());
-						if(iterMap != FowAlphaCellsLookupItemCache.end()) {
-							std::map<int, FowAlphaCellsLookupItem>::iterator iterMap2 = iterMap->second.find(sightRange);
-							if(iterMap2 != iterMap->second.end()) {
-								foundInCache = true;
-
-								FowAlphaCellsLookupItem &cellList = iterMap2->second;
-								for(int k = 0; k < cellList.surfPosList.size(); ++k) {
-									Vec2i &surfPos = cellList.surfPosList[k];
-									float &alpha = cellList.alphaList[k];
-
-									minimap.incFowTextureAlphaSurface(surfPos, alpha);
-								}
-							}
-						}
-
-						if(foundInCache == false) {
-							FowAlphaCellsLookupItem itemCache;
-
-							//iterate through all cells
-							PosCircularIterator pci(&map, unit->getPos(), sightRange+indirectSightRange);
-							while(pci.next()){
-								const Vec2i pos= pci.getPos();
-								Vec2i surfPos= Map::toSurfCoords(pos);
-
-								//compute max alpha
-								float maxAlpha= 0.0f;
-								if(surfPos.x>1 && surfPos.y>1 && surfPos.x<map.getSurfaceW()-2 && surfPos.y<map.getSurfaceH()-2){
-									maxAlpha= 1.f;
-								}
-								else if(surfPos.x>0 && surfPos.y>0 && surfPos.x<map.getSurfaceW()-1 && surfPos.y<map.getSurfaceH()-1){
-									maxAlpha= 0.3f;
-								}
-
-								//compute alpha
-								float alpha=maxAlpha;
-								float dist= unit->getPos().dist(pos);
-								if(dist>sightRange){
-									alpha= clamp(1.f-(dist-sightRange)/(indirectSightRange), 0.f, maxAlpha);
-								}
-								minimap.incFowTextureAlphaSurface(surfPos, alpha);
-
-								itemCache.surfPosList.push_back(surfPos);
-								itemCache.alphaList.push_back(alpha);
-							}
-
-							if(itemCache.surfPosList.empty() == false) {
-								FowAlphaCellsLookupItemCache[unit->getPos()][sightRange] = itemCache;
-							}
-						}
+			// fire particle visible
+			ParticleSystem *fire = unit->getFire();
+			if(fire != NULL) {
+				bool cellVisible = cellVisibleForFaction;
+				if(cellVisible == false) {
+					Vec2i sCoords = Map::toSurfCoords(unit->getPos());
+					SurfaceCell *sc = map.getSurfaceCell(sCoords);
+					if(sc != NULL) {
+						cellVisible = sc->isVisible(thisTeamIndex);
 					}
 				}
+
+				fire->setActive(cellVisible);
+			}
+
+			// compute fog of war render texture
+			if(fogOfWar == true &&
+				faction->getTeam() == thisTeamIndex &&
+					unit->isOperative() == true) {
+
+				const FowAlphaCellsLookupItem &cellList = unit->getCachedFow();
+				for(std::map<Vec2i,float>::const_iterator iterMap = cellList.surfPosAlphaList.begin();
+					iterMap != cellList.surfPosAlphaList.end(); ++iterMap) {
+					const Vec2i &surfPos = iterMap->first;
+					const float &alpha = iterMap->second;
+
+					minimap.incFowTextureAlphaSurface(surfPos, alpha, true);
+				}
 			}
 		}
 	}
+
+	if(this->game) this->game->addPerformanceCount("world compute cells",chronoGamePerformanceCounts.getMillis());
 }
 
 GameSettings * World::getGameSettingsPtr() {
@@ -1788,7 +2616,7 @@ const GameSettings * World::getGameSettings() const {
 // Calculates the unit unit ID for each faction
 //
 int World::getNextUnitId(Faction *faction)	{
-	MutexSafeWrapper safeMutex(&mutexFactionNextUnitId,string(__FILE__) + "_" + intToStr(__LINE__));
+	MutexSafeWrapper safeMutex(mutexFactionNextUnitId,string(__FILE__) + "_" + intToStr(__LINE__));
 	if(mapFactionNextUnitId.find(faction->getIndex()) == mapFactionNextUnitId.end()) {
 		mapFactionNextUnitId[faction->getIndex()] = faction->getIndex() * 100000;
 	}
@@ -1800,8 +2628,36 @@ int World::getNextCommandGroupId() {
 	return ++nextCommandGroupId;
 }
 
+void World::playStaticVideo(const string &playVideo) {
+	string calculatedFilePath = playVideo;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nPlay static video changed: %d [%s] [%s]\n\n",changed, playVideo.c_str(),calculatedFilePath.c_str());
+
+	this->game->playStaticVideo(calculatedFilePath);
+}
+
+void World::playStreamingVideo(const string &playVideo) {
+	string calculatedFilePath = playVideo;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nPlay streaming video changed: %d [%s] [%s]\n\n",changed, playVideo.c_str(),calculatedFilePath.c_str());
+
+	this->game->playStreamingVideo(calculatedFilePath);
+}
+
+void World::stopStreamingVideo(const string &playVideo) {
+	string calculatedFilePath = playVideo;
+	bool changed = Properties::applyTagsToValue(calculatedFilePath);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nStop streaming video changed: %d [%s] [%s]\n\n",changed, playVideo.c_str(),calculatedFilePath.c_str());
+
+	this->game->stopStreamingVideo(calculatedFilePath);
+}
+
+void World::stopAllVideo() {
+	this->game->stopAllVideo();
+}
+
 void World::removeResourceTargetFromCache(const Vec2i &pos) {
-	for(int i= 0; i < factions.size(); ++i) {
+	for(int i= 0; i < (int)factions.size(); ++i) {
 		factions[i]->removeResourceTargetFromCache(pos);
 	}
 }
@@ -1814,7 +2670,6 @@ string World::getExploredCellsLookupItemCacheStats() {
 	int exploredCellCount = 0;
 	int visibleCellCount = 0;
 
-	//std::map<Vec2i, std::map<int, ExploredCellsLookupItem > > ExploredCellsLookupItemCache;
 	for(std::map<Vec2i, std::map<int, ExploredCellsLookupItem > >::iterator iterMap1 = ExploredCellsLookupItemCache.begin();
 		iterMap1 != ExploredCellsLookupItemCache.end(); ++iterMap1) {
 		posCount++;
@@ -1823,8 +2678,8 @@ string World::getExploredCellsLookupItemCacheStats() {
 			iterMap2 != iterMap1->second.end(); ++iterMap2) {
 			sightCount++;
 
-			exploredCellCount += iterMap2->second.exploredCellList.size();
-			visibleCellCount += iterMap2->second.visibleCellList.size();
+			exploredCellCount += (int)iterMap2->second.exploredCellList.size();
+			visibleCellCount += (int)iterMap2->second.visibleCellList.size();
 		}
 	}
 
@@ -1833,8 +2688,8 @@ string World::getExploredCellsLookupItemCacheStats() {
 
 	totalBytes /= 1000;
 
-	char szBuf[1024]="";
-	sprintf(szBuf,"pos [%d] sight [%d] [%d][%d] total KB: %s",posCount,sightCount,exploredCellCount,visibleCellCount,formatNumber(totalBytes).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"pos [%d] sight [%d] [%d][%d] total KB: %s",posCount,sightCount,exploredCellCount,visibleCellCount,formatNumber(totalBytes).c_str());
 	result = szBuf;
 	return result;
 }
@@ -1842,32 +2697,26 @@ string World::getExploredCellsLookupItemCacheStats() {
 string World::getFowAlphaCellsLookupItemCacheStats() {
 	string result = "";
 
-	int posCount = 0;
-	int sightCount = 0;
-	int surfPosCount = 0;
-	int alphaListCount = 0;
+	int surfPosAlphaCount = 0;
 
-	//std::map<Vec2i, std::map<int, FowAlphaCellsLookupItem > > FowAlphaCellsLookupItemCache;
-	for(std::map<Vec2i, std::map<int, FowAlphaCellsLookupItem > >::iterator iterMap1 = FowAlphaCellsLookupItemCache.begin();
-		iterMap1 != FowAlphaCellsLookupItemCache.end(); ++iterMap1) {
-		posCount++;
+	for(int factionIndex = 0; factionIndex < getFactionCount(); ++factionIndex) {
+		Faction *faction= getFaction(factionIndex);
+		if(faction->getTeam() == thisTeamIndex) {
+			for(int unitIndex = 0; unitIndex < faction->getUnitCount(); ++unitIndex) {
+				const Unit *unit= faction->getUnit(unitIndex);
+				const FowAlphaCellsLookupItem &cache = unit->getCachedFow();
 
-		for(std::map<int, FowAlphaCellsLookupItem >::iterator iterMap2 = iterMap1->second.begin();
-			iterMap2 != iterMap1->second.end(); ++iterMap2) {
-			sightCount++;
-
-			surfPosCount += iterMap2->second.surfPosList.size();
-			alphaListCount += iterMap2->second.alphaList.size();
+				surfPosAlphaCount += (int)cache.surfPosAlphaList.size();
+			}
 		}
 	}
-
-	uint64 totalBytes = surfPosCount * sizeof(Vec2i);
-	totalBytes += alphaListCount * sizeof(float);
+	uint64 totalBytes = surfPosAlphaCount * sizeof(Vec2i);
+	totalBytes += surfPosAlphaCount * sizeof(float);
 
 	totalBytes /= 1000;
 
-	char szBuf[1024]="";
-	sprintf(szBuf,"pos [%d] sight [%d] [%d][%d] total KB: %s",posCount,sightCount,surfPosCount,alphaListCount,formatNumber(totalBytes).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"surface count [%d] total KB: %s",surfPosAlphaCount,formatNumber(totalBytes).c_str());
 	result = szBuf;
 	return result;
 }
@@ -1878,18 +2727,37 @@ string World::getAllFactionsCacheStats() {
 	uint64 totalBytes = 0;
 	uint64 totalCache1Size = 0;
 	uint64 totalCache2Size = 0;
+	uint64 totalCache3Size = 0;
+	uint64 totalCache4Size = 0;
+	uint64 totalCache5Size = 0;
 	for(int i = 0; i < getFactionCount(); ++i) {
 		uint64 cache1Size = 0;
 		uint64 cache2Size = 0;
-		totalBytes += getFaction(i)->getCacheKBytes(&cache1Size, &cache2Size);
+		uint64 cache3Size = 0;
+		uint64 cache4Size = 0;
+		uint64 cache5Size = 0;
+
+		totalBytes += getFaction(i)->getCacheKBytes(&cache1Size,&cache2Size,&cache3Size,&cache4Size,&cache5Size);
 		totalCache1Size += cache1Size;
 		totalCache2Size += cache2Size;
+		totalCache3Size += cache3Size;
+		totalCache4Size += cache4Size;
+		totalCache5Size += cache5Size;
 	}
 
-	char szBuf[1024]="";
-	sprintf(szBuf,"totalCache1Size [%lu] totalCache1Size [%lu] total KB: %s",totalCache1Size,totalCache2Size,formatNumber(totalBytes).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"Cache1 [%llu] Cache2 [%llu] Cache3 [%llu] Cache4 [%llu] Cache5 [%llu] total KB: %s",
+			(long long unsigned)totalCache1Size,(long long unsigned)totalCache2Size,(long long unsigned)totalCache3Size,
+			(long long unsigned)totalCache4Size,(long long unsigned)totalCache5Size,formatNumber(totalBytes).c_str());
 	result = szBuf;
 	return result;
+}
+
+bool World::factionLostGame(int factionIndex) {
+	if(this->game != NULL) {
+		return this->game->factionLostGame(factionIndex);
+	}
+	return false;
 }
 
 std::string World::DumpWorldToLog(bool consoleBasicInfoOnly) const {
@@ -1915,7 +2783,7 @@ std::string World::DumpWorldToLog(bool consoleBasicInfoOnly) const {
 			std::cout << "Faction detail for index: " << i << std::endl;
 			std::cout << "--------------------------" << std::endl;
 
-			std::cout << "FactionName = " << getFaction(i)->getType()->getName() << std::endl;
+			std::cout << "FactionName = " << getFaction(i)->getType()->getName(false) << std::endl;
 			std::cout << "FactionIndex = " << intToStr(getFaction(i)->getIndex()) << std::endl;
 			std::cout << "teamIndex = " << intToStr(getFaction(i)->getTeam()) << std::endl;
 			std::cout << "startLocationIndex = " << intToStr(getFaction(i)->getStartLocationIndex()) << std::endl;
@@ -1945,12 +2813,12 @@ std::string World::DumpWorldToLog(bool consoleBasicInfoOnly) const {
 		//undertake the dead
 		logFile << "Undertake stats:" << std::endl;
 		for(int i = 0; i < getFactionCount(); ++i){
-			logFile << "Faction: " << getFaction(i)->getType()->getName() << std::endl;
+			logFile << "Faction: " << getFaction(i)->getType()->getName(false) << std::endl;
 			int unitCount = getFaction(i)->getUnitCount();
 			for(int j= unitCount - 1; j >= 0; j--){
 				Unit *unit= getFaction(i)->getUnit(j);
 				if(unit->getToBeUndertaken()) {
-					logFile << "Undertake unit index = " << j << unit->getFullName() << std::endl;
+					logFile << "Undertake unit index = " << j << unit->getFullName(false) << std::endl;
 				}
 			}
 		}
@@ -1962,7 +2830,99 @@ std::string World::DumpWorldToLog(bool consoleBasicInfoOnly) const {
 		}
 #endif
 	}
+
+	//printf("Check savegame\n");
+	if(this->game != NULL) {
+		//printf("Saving...\n");
+		this->game->saveGame(GameConstants::saveGameFileDefault);
+	}
+
     return debugWorldLogFile;
+}
+
+void World::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *worldNode = rootNode->addChild("World");
+
+//	Map map;
+	map.saveGame(worldNode);
+//	Tileset tileset;
+	worldNode->addAttribute("tileset",tileset.getName(), mapTagReplacements);
+//	//TechTree techTree;
+//	TechTree *techTree;
+	if(techTree != NULL) {
+		techTree->saveGame(worldNode);
+	}
+	worldNode->addAttribute("techTree",(techTree != NULL ? techTree->getName() : ""), mapTagReplacements);
+//	TimeFlow timeFlow;
+	timeFlow.saveGame(worldNode);
+//	Scenario scenario;
+//
+//	UnitUpdater unitUpdater;
+	unitUpdater.saveGame(worldNode);
+//    WaterEffects waterEffects;
+//    WaterEffects attackEffects; // onMiniMap
+//	Minimap minimap;
+	minimap.saveGame(worldNode);
+//    Stats stats;	//BattleEnd will delete this object
+	stats.saveGame(worldNode);
+//
+//	Factions factions;
+	for(unsigned int i = 0; i < factions.size(); ++i) {
+		factions[i]->saveGame(worldNode);
+	}
+//	RandomGen random;
+	worldNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	ScriptManager* scriptManager;
+//
+//	int thisFactionIndex;
+	worldNode->addAttribute("thisFactionIndex",intToStr(thisFactionIndex), mapTagReplacements);
+//	int thisTeamIndex;
+	worldNode->addAttribute("thisTeamIndex",intToStr(thisTeamIndex), mapTagReplacements);
+//	int frameCount;
+	worldNode->addAttribute("frameCount",intToStr(frameCount), mapTagReplacements);
+//	//int nextUnitId;
+//	Mutex mutexFactionNextUnitId;
+	MutexSafeWrapper safeMutex(mutexFactionNextUnitId,string(__FILE__) + "_" + intToStr(__LINE__));
+//	std::map<int,int> mapFactionNextUnitId;
+	for(std::map<int,int>::iterator iterMap = mapFactionNextUnitId.begin();
+			iterMap != mapFactionNextUnitId.end(); ++iterMap) {
+		XmlNode *factionNextUnitIdNode = worldNode->addChild("FactionNextUnitId");
+
+		factionNextUnitIdNode->addAttribute("key",intToStr(iterMap->first), mapTagReplacements);
+		factionNextUnitIdNode->addAttribute("value",intToStr(iterMap->second), mapTagReplacements);
+	}
+	safeMutex.ReleaseLock();
+//	//config
+//	bool fogOfWarOverride;
+	worldNode->addAttribute("fogOfWarOverride",intToStr(fogOfWarOverride), mapTagReplacements);
+//	bool fogOfWar;
+	worldNode->addAttribute("fogOfWar",intToStr(fogOfWar), mapTagReplacements);
+//	int fogOfWarSmoothingFrameSkip;
+	worldNode->addAttribute("fogOfWarSmoothingFrameSkip",intToStr(fogOfWarSmoothingFrameSkip), mapTagReplacements);
+//	bool fogOfWarSmoothing;
+	worldNode->addAttribute("fogOfWarSmoothing",intToStr(fogOfWarSmoothing), mapTagReplacements);
+//	Game *game;
+//	Chrono chronoPerfTimer;
+//	bool perfTimerEnabled;
+//
+//	bool unitParticlesEnabled;
+	worldNode->addAttribute("unitParticlesEnabled",intToStr(unitParticlesEnabled), mapTagReplacements);
+//	std::map<string,StaticSound *> staticSoundList;
+//	std::map<string,StrSound *> streamSoundList;
+//
+//	uint32 nextCommandGroupId;
+	worldNode->addAttribute("nextCommandGroupId",intToStr(nextCommandGroupId), mapTagReplacements);
+//	string queuedScenarioName;
+	worldNode->addAttribute("queuedScenarioName",queuedScenarioName, mapTagReplacements);
+//	bool queuedScenarioKeepFactions;
+	worldNode->addAttribute("queuedScenarioKeepFactions",intToStr(queuedScenarioKeepFactions), mapTagReplacements);
+
+	worldNode->addAttribute("disableAttackEffects",intToStr(disableAttackEffects), mapTagReplacements);
+}
+
+void World::loadGame(const XmlNode *rootNode) {
+	loadWorldNode = rootNode;
 }
 
 }}//end namespace

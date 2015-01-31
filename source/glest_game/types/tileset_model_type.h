@@ -11,8 +11,12 @@
 #ifndef _GLEST_GAME_TILESET_MODEL_TYPE_H_
 #define _GLEST_GAME_TILESET_MODEL_TYPE_H_
 
-#include <vector>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <vector>
 #include "model.h"
 #include "vec.h"
 #include "leak_dumper.h"
@@ -39,27 +43,40 @@ private:
 	ModelParticleSystemTypes particleTypes;
 	int height;
 	bool rotationAllowed;
+	bool randomPositionEnabled;
+	bool smoothTwoFrameAnim;
+
+    int animSpeed;
 
 public:
-	TilesetModelType() {
-		model = NULL;
-		height = 0;
-		rotationAllowed = false;
-	}
+	TilesetModelType();
 	~TilesetModelType();
 
 	void addParticleSystem(ObjectParticleSystemType *particleSystem);
-	bool hasParticles()	const		{return !particleTypes.empty();}
-	ModelParticleSystemTypes* getParticleTypes()  { return &particleTypes ;}
+	inline bool hasParticles()	const		{return particleTypes.empty() == false;}
+	inline ModelParticleSystemTypes* getParticleTypes()  { return &particleTypes ;}
 
 
-	Model * getModel() const		{return model;}
-	void setModel(Model *model) 	{this->model=model;}
+	inline Model * getModel() const		{return model;}
+	inline void setModel(Model *model) 	{this->model=model;}
 
-	int getHeight() const			{return height;}
-	void setHeight(int height) 			{this->height=height;}
-	bool getRotationAllowed() const			{return rotationAllowed;}
-	void setRotationAllowed(bool rotationAllowed)	{this->rotationAllowed=rotationAllowed;}
+	inline int getHeight() const			{return height;}
+	inline void setHeight(int height) 			{this->height=height;}
+
+	inline bool getRotationAllowed() const			{return rotationAllowed;}
+	inline void setRotationAllowed(bool rotationAllowed)	{this->rotationAllowed=rotationAllowed;}
+	
+	inline bool getRandomPositionEnabled() const			{return randomPositionEnabled;}
+	inline void setRandomPositionEnabled(bool randomPositionEnabled)	{this->randomPositionEnabled=randomPositionEnabled;}
+
+	inline bool getSmoothTwoFrameAnim() const			{return smoothTwoFrameAnim;}
+	inline void setSmoothTwoFrameAnim(bool smoothTwoFrameAnim)	{this->smoothTwoFrameAnim=smoothTwoFrameAnim;}
+
+	inline int getAnimSpeed() const			{return animSpeed;}
+	inline void setAnimSpeed(int value) {animSpeed = value;}
+
+//	inline int getAnimSpeedVariation() const			{return animVariation;}
+//	inline void setAnimSpeedVariation(int value) {animSpeed = valueVariation;}
 };
 
 }}//end namespace

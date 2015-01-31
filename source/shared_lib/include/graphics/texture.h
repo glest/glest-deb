@@ -12,14 +12,13 @@
 #ifndef _SHARED_GRAPHICS_TEXTURE_H_
 #define _SHARED_GRAPHICS_TEXTURE_H_
 
-#include "types.h"
+#include "data_types.h"
 #include "pixmap.h"
 #include <string>
 #include "leak_dumper.h"
 
 using std::string;
 using Shared::Platform::uint8;
-using Shared::Platform::uint64;
 
 struct SDL_Surface;
 
@@ -66,6 +65,7 @@ protected:
 
 	bool inited;
 	bool forceCompressionDisabled;
+	int textureSystemId;
 
 public:
 	Texture();
@@ -77,6 +77,9 @@ public:
 	Format getFormat() const		{return format;}
 	bool getInited() const 			{return inited;}
 
+	int getTextureSystemId() const { return textureSystemId; }
+	void setTextureSystemId(int id) { textureSystemId = id; }
+
 	void setMipmap(bool mipmap)			{this->mipmap= mipmap;}
 	void setWrapMode(WrapMode wrapMode)	{this->wrapMode= wrapMode;}
 	void setPixmapInit(bool pixmapInit)	{this->pixmapInit= pixmapInit;}
@@ -86,7 +89,7 @@ public:
 	virtual void end(bool deletePixelBuffer=true)=0;
 	virtual string getPath() const = 0;
 	virtual void deletePixels() = 0;
-	virtual uint64 getPixelByteCount() const = 0;
+	virtual std::size_t getPixelByteCount() const = 0;
 
 	virtual void reseInitState() { inited = false; }
 
@@ -112,7 +115,7 @@ public:
 	const Pixmap1D *getPixmap() const	{return &pixmap;}
 	virtual string getPath() const;
 	virtual void deletePixels();
-	virtual uint64 getPixelByteCount() const {return pixmap.getPixelByteCount();}
+	virtual std::size_t getPixelByteCount() const {return pixmap.getPixelByteCount();}
 
 	virtual int getTextureWidth() const {return pixmap.getW();}
 	virtual int getTextureHeight() const {return -1;}
@@ -135,14 +138,14 @@ public:
 	const Pixmap2D *getPixmapConst() const	{return &pixmap;}
 	virtual string getPath() const;
 	virtual void deletePixels();
-	virtual uint64 getPixelByteCount() const {return pixmap.getPixelByteCount();}
+	virtual std::size_t getPixelByteCount() const {return pixmap.getPixelByteCount();}
 
 	virtual int getTextureWidth() const {return pixmap.getW();}
 	virtual int getTextureHeight() const {return pixmap.getH();}
 
 	virtual uint32 getCRC() { return pixmap.getCRC()->getSum(); }
 
-	SDL_Surface* CreateSDLSurface(bool newPixelData) const;
+	std::pair<SDL_Surface*,unsigned char*> CreateSDLSurface(bool newPixelData) const;
 };
 
 // =====================================================
@@ -160,7 +163,7 @@ public:
 	const Pixmap3D *getPixmap() const	{return &pixmap;}
 	virtual string getPath() const;
 	virtual void deletePixels();
-	virtual uint64 getPixelByteCount() const {return pixmap.getPixelByteCount();}
+	virtual std::size_t getPixelByteCount() const {return pixmap.getPixelByteCount();}
 
 	virtual int getTextureWidth() const {return pixmap.getW();}
 	virtual int getTextureHeight() const {return pixmap.getH();}
@@ -183,7 +186,7 @@ public:
 	const PixmapCube *getPixmap() const	{return &pixmap;}
 	virtual string getPath() const;
 	virtual void deletePixels();
-	virtual uint64 getPixelByteCount() const {return pixmap.getPixelByteCount();}
+	virtual std::size_t getPixelByteCount() const {return pixmap.getPixelByteCount();}
 
 	virtual int getTextureWidth() const {return -1;}
 	virtual int getTextureHeight() const {return -1;}

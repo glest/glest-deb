@@ -15,7 +15,7 @@
 #include "base_thread.h"
 #include <vector>
 #include <string>
-
+#include "platform_common.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -30,7 +30,8 @@ enum FTP_Client_ResultType {
     ftp_crt_SUCCESS 	= 0,
     ftp_crt_PARTIALFAIL = 1,
     ftp_crt_FAIL    	= 2,
-    ftp_crt_ABORTED 	= 3
+    ftp_crt_ABORTED 	= 3,
+    ftp_crt_HOST_NOT_ACCEPTING = 4
 };
 
 enum FTP_Client_CallbackType {
@@ -39,12 +40,14 @@ enum FTP_Client_CallbackType {
     ftp_cct_Techtree            = 2,
     ftp_cct_Scenario           	= 3,
     ftp_cct_File           		= 4,
-    ftp_cct_DownloadProgress    = 5
+    ftp_cct_TempFile       		= 5,
+    ftp_cct_DownloadProgress    = 6,
+    ftp_cct_ExtractProgress     = 7
 };
 
 class FTPClientCallbackInterface {
 public:
-
+	virtual ~FTPClientCallbackInterface() {}
     struct FtpProgressStats {
       double download_total;
       double download_now;
@@ -55,10 +58,12 @@ public:
     };
 
     virtual void FTPClient_CallbackEvent(string itemName,
-    		FTP_Client_CallbackType type, pair<FTP_Client_ResultType,string> result, void *userdata) = 0;
+    										 FTP_Client_CallbackType type,
+    										 pair<FTP_Client_ResultType,string> result,
+    										 void *userdata) = 0;
 };
 
-class FTPClientThread : public BaseThread
+class FTPClientThread : public BaseThread, public ShellCommandOutputCallbackInterface
 {
 protected:
     int portNumber;
@@ -68,6 +73,7 @@ protected:
     std::pair<string,string> tilesetsPath;
     std::pair<string,string> techtreesPath;
     std::pair<string,string> scenariosPath;
+    string tempFilesPath;
 
     Mutex mutexMapFileList;
     vector<pair<string,string> > mapFileList;
@@ -84,6 +90,9 @@ protected:
     Mutex mutexFileList;
     vector<pair<string,string> > fileList;
 
+    Mutex mutexTempFileList;
+    vector<pair<string,string> > tempFileList;
+
     void getMapFromServer(pair<string,string> mapFilename);
     pair<FTP_Client_ResultType,string> getMapFromServer(pair<string,string> mapFileName, string ftpUser, string ftpUserPassword);
 
@@ -99,6 +108,9 @@ protected:
     void getFileFromServer(pair<string,string> fileName);
     pair<FTP_Client_ResultType,string> getFileInternalFromServer(pair<string,string> fileName);
 
+    void getTempFileFromServer(pair<string,string> fileName);
+    pair<FTP_Client_ResultType,string> getTempFileInternalFromServer(pair<string,string> fileName);
+
     Mutex mutexProgressMutex;
 
     string fileArchiveExtension;
@@ -111,6 +123,10 @@ protected:
     		string remotePath, string destFileSaveAs, string ftpUser,
     		string ftpUserPassword, vector <string> *wantDirListOnly=NULL);
 
+    string shellCommandCallbackUserData;
+    virtual void * getShellCommandOutput_UserData(string cmd);
+    virtual void ShellCommandOutput_CallbackEvent(string cmd,char *output,void *userdata);
+
 public:
 
     FTPClientThread(int portNumber,string serverUrl,
@@ -122,7 +138,8 @@ public:
     				string fileArchiveExtension,
     				string fileArchiveExtractCommand,
     				string fileArchiveExtractCommandParameters,
-    				int fileArchiveExtractCommandSuccessResult);
+    				int fileArchiveExtractCommandSuccessResult,
+    				string tempFilesPath);
     virtual void execute();
     virtual void signalQuit();
     virtual bool shutdownAndWait();
@@ -132,6 +149,7 @@ public:
     void addTechtreeToRequests(string techtreeName,string URL="");
     void addScenarioToRequests(string fileName,string URL="");
     void addFileToRequests(string fileName,string URL="");
+    void addTempFileToRequests(string fileName,string URL="");
 
     FTPClientCallbackInterface * getCallBackObject();
     void setCallBackObject(FTPClientCallbackInterface *value);

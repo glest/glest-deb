@@ -37,9 +37,8 @@ namespace Shared{ namespace Platform{
 //               WINDOW
 // =======================================
 
-// ========== STATIC INICIALIZATIONS ==========
+// ========== STATIC INITIALIZATIONS ==========
 
-// Matze: hack for now...
 static Window* global_window = 0;
 static int oldX=0,oldY=0;
 int64 Window::lastMouseEvent = 0;	/** for use in mouse hover calculations */
@@ -59,6 +58,8 @@ bool Window::allowAltEnterFullscreenToggle = true;
 int Window::lastShowMouseState = 0;
 
 bool Window::tryVSynch = false;
+
+map<wchar_t,bool> Window::mapAllowedKeys;
 
 //bool Window::masterserverMode = false;
 
@@ -89,7 +90,11 @@ Window::Window()  {
 		lastMouseY[idx]		= 0;
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	assert(global_window == 0);
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	global_window = this;
 	Window::isActive = true;
 
@@ -103,12 +108,16 @@ Window::Window()  {
 }
 
 Window::~Window() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 #ifdef WIN32
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	done_win32();
 #endif
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	assert(global_window == this);
 	global_window = 0;
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 bool Window::handleEvent() {
@@ -117,7 +126,7 @@ bool Window::handleEvent() {
 	SDL_Event event;
 	SDL_GetMouseState(&oldX,&oldY);
 
-	codeLocation = "b";
+	//codeLocation = "b";
 
 	while(SDL_PollEvent(&event)) {
 		try {
@@ -328,12 +337,12 @@ bool Window::handleEvent() {
 		catch(const char *e){
 			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] (a1) Couldn't process event: [%s] codeLocation = %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e,codeLocation.c_str());
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] (a1) Couldn't process event: [%s] codeLocation = %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e,codeLocation.c_str());
-			throw runtime_error(e);
+			throw megaglest_runtime_error(e);
 		}
 		catch(const std::runtime_error& e) {
 			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] (a2) Couldn't process event: [%s] codeLocation = %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what(),codeLocation.c_str());
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] (a2) Couldn't process event: [%s] codeLocation = %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what(),codeLocation.c_str());
-			throw runtime_error(e.what());
+			throw megaglest_runtime_error(e.what());
 		}
 		catch(const std::exception& e) {
 			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] (b) Couldn't process event: [%s] codeLocation = %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what(),codeLocation.c_str());
@@ -352,6 +361,10 @@ void Window::revertMousePos() {
 	SDL_WarpMouse(oldX, oldY);
 }
 
+Vec2i Window::getOldMousePos() {
+	return Vec2i(oldX, oldY);
+}
+
 string Window::getText() {
 	char* c = 0;
 	SDL_WM_GetCaption(&c, 0);
@@ -364,7 +377,9 @@ float Window::getAspect() {
 }
 
 void Window::setText(string text) {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	SDL_WM_SetCaption(text.c_str(), 0);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Window::setSize(int w, int h) {
@@ -401,15 +416,26 @@ void Window::setStyle(WindowStyle windowStyle) {
 
 void Window::create() {
 	// nothing here
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+#ifdef WIN32
+	ontop_win32(this->w,this->h);
+#endif
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Window::destroy() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	SDL_Event event;
 	event.type = SDL_QUIT;
 	SDL_PushEvent(&event);
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Window::setupGraphicsScreen(int depthBits, int stencilBits, bool hardware_acceleration, bool fullscreen_anti_aliasing) {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	static int newDepthBits   = depthBits;
 	static int newStencilBits = stencilBits;
 	if(depthBits >= 0)
@@ -417,7 +443,11 @@ void Window::setupGraphicsScreen(int depthBits, int stencilBits, bool hardware_a
 	if(stencilBits >= 0)
 		newStencilBits = stencilBits;
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		if(fullscreen_anti_aliasing == true) {
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS,1);
 			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 2);
@@ -425,12 +455,17 @@ void Window::setupGraphicsScreen(int depthBits, int stencilBits, bool hardware_a
 		if(hardware_acceleration == true) {
 			SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
 		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 		SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 1);
 		SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 1);
 		SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 1);
 		SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, newStencilBits);
 		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, newDepthBits);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		//const SDL_VideoInfo *info = SDL_GetVideoInfo();
 	#ifdef SDL_GL_SWAP_CONTROL
@@ -440,22 +475,22 @@ void Window::setupGraphicsScreen(int depthBits, int stencilBits, bool hardware_a
 		}
 	#endif
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		// setup LOD bias factor
 		//const float lodBias = std::max(std::min( configHandler->Get("TextureLODBias", 0.0f) , 4.0f), -4.0f);
 		const float lodBias = max(min(0.0f,4.0f),-4.0f);
 		//if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("\n\n\n\n\n$$$$ In [%s::%s Line: %d] lodBias = %f\n\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,lodBias);
-	#ifdef USE_STREFLOP
-		if (streflop::fabs(lodBias) > 0.01f) {
-	#else
-		if (fabs(lodBias) > 0.01f) {
-	#endif
+		if (std::fabs(lodBias) > 0.01f) {
 			glTexEnvf(GL_TEXTURE_FILTER_CONTROL,GL_TEXTURE_LOD_BIAS, lodBias );
 		}
-		}
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	}
 }
 
 void Window::toggleFullscreen() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	Window::isFullScreen = !Window::isFullScreen;
 #ifdef WIN32
@@ -464,15 +499,30 @@ void Window::toggleFullscreen() {
 	width and height of the current video mode (or the desktop mode, if no mode has been set).
 	Use 0 for Height, Width, and Color Depth to keep the current values. */
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	if(Window::allowAltEnterFullscreenToggle == true) {
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 			SDL_Surface *cur_surface = SDL_GetVideoSurface();
 			if(cur_surface != NULL) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 				Window::isFullScreen = !((cur_surface->flags & SDL_FULLSCREEN) == SDL_FULLSCREEN);
 			}
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			SDL_Surface *sf = SDL_GetVideoSurface();
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			SDL_Surface **surface = &sf;
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 			uint32 *flags = NULL;
 			//void *pixels = NULL;
 			//SDL_Color *palette = NULL;
@@ -483,9 +533,11 @@ void Window::toggleFullscreen() {
 			int h = 0;
 			int bpp = 0;
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if ( (!surface) || (!(*surface)) )  // don't bother if there's no surface.
 				return;
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			tmpflags = (*surface)->flags;
@@ -493,10 +545,13 @@ void Window::toggleFullscreen() {
 			h = (*surface)->h;
 			bpp = (*surface)->format->BitsPerPixel;
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n w = %d, h = %d, bpp = %d",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,w,h,bpp);
 
 			if (flags == NULL)  // use the surface's flags.
 				flags = &tmpflags;
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			//
 			if ( *flags & SDL_FULLSCREEN )
@@ -505,25 +560,37 @@ void Window::toggleFullscreen() {
 			else
 				*flags |= SDL_FULLSCREEN;
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 			SDL_GetClipRect(*surface, &clip);
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			*surface = SDL_SetVideoMode(w, h, bpp, (*flags));
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 			if (*surface == NULL) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 				*surface = SDL_SetVideoMode(w, h, bpp, tmpflags);
 			} // if
 
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			SDL_SetClipRect(*surface, &clip);
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 		}
 	}
 	else {
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		HWND handle = GetSDLWindow();
 		if(Window::isFullScreen == true) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] Window::isFullScreen == true [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,handle);
 			ShowWindow(handle, SW_MAXIMIZE);
 			//if(Window::getUseDefaultCursorOnly() == false) {
@@ -531,11 +598,16 @@ void Window::toggleFullscreen() {
 			//}
 		}
 		else {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] Window::isFullScreen == false [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,handle);
 			ShowWindow(handle, SW_RESTORE);
 			//showCursor(true);
 		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	}
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 #else
 	if(Window::allowAltEnterFullscreenToggle == true) {
@@ -552,12 +624,12 @@ void Window::toggleFullscreen() {
 	}
 #endif
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Window::handleMouseDown(SDL_Event event) {
 	static const Uint32 DOUBLECLICKTIME = 500;
-	static const int DOUBLECLICKDELTA = 5;
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
@@ -588,6 +660,7 @@ void Window::handleMouseDown(SDL_Event event) {
 	if(n >= 0 && n < mbCount) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
+		static const int DOUBLECLICKDELTA = 5;
 		if(ticks - lastMouseDown[n] < DOUBLECLICKTIME
 				&& abs(lastMouseX[n] - event.button.x) < DOUBLECLICKDELTA
 				&& abs(lastMouseY[n] - event.button.y) < DOUBLECLICKDELTA) {
@@ -631,7 +704,92 @@ MouseButton Window::getMouseButton(int sdlButton) {
 	}
 }
 
+wchar_t Window::convertStringtoSDLKey(const string &value) {
+	wchar_t result = SDLK_UNKNOWN;
+
+	if(value.length() >= 1) {
+		if(value.length() == 3 && value[0] == '\'' && value[2] == '\'') {
+			result = (SDLKey)value[1];
+		}
+		else {
+			bool foundKey = false;
+			if(value.length() > 1) {
+				for(int i = SDLK_UNKNOWN; i < SDLK_LAST; ++i) {
+					SDLKey key = static_cast<SDLKey>(i);
+					string keyName = SDL_GetKeyName(key);
+					if(value == keyName) {
+						result = key;
+						foundKey = true;
+						break;
+					}
+				}
+			}
+
+			if(foundKey == false) {
+				result = (SDLKey)value[0];
+			}
+		}
+	}
+	else {
+		string sError = "Unsupported key name: [" + value + "]";
+		throw megaglest_runtime_error(sError.c_str());
+	}
+
+	// Because SDL is based on lower Ascii
+	//result = tolower(result);
+	return result;
+}
+
+void Window::addAllowedKeys(string keyList) {
+	clearAllowedKeys();
+
+	if(keyList.empty() == false) {
+		vector<string> keys;
+		Tokenize(keyList,keys,",");
+		if(keys.empty() == false) {
+			for(unsigned int keyIndex = 0; keyIndex < keys.size(); ++keyIndex) {
+				string key = trim(keys[keyIndex]);
+
+				wchar_t sdl_key = convertStringtoSDLKey(key);
+				if(sdl_key != SDLK_UNKNOWN) {
+					mapAllowedKeys[sdl_key] = true;
+				}
+
+				if(SystemFlags::VERBOSE_MODE_ENABLED)  printf("key: %d [%s] IS ALLOWED\n",sdl_key, key.c_str());
+				//printf("key: %d [%s] IS ALLOWED\n",sdl_key, key.c_str());
+			}
+		}
+	}
+}
+void Window::clearAllowedKeys() {
+	mapAllowedKeys.clear();
+}
+
+bool Window::isAllowedKey(wchar_t key) {
+	map<wchar_t,bool>::const_iterator iterFind = mapAllowedKeys.find(key);
+	bool result =(iterFind != mapAllowedKeys.end());
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) {
+		string keyName = SDL_GetKeyName((SDLKey)key);
+		printf("key: %d [%s] allowed result: %d\n",key,keyName.c_str(),result);
+	}
+
+	return result;
+}
+
 bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input,bool modifiersAllowed) {
+	vector<int> modifiersToCheck;
+	if(modifiersAllowed == false) {
+		modifiersToCheck.push_back(KMOD_LCTRL);
+		modifiersToCheck.push_back(KMOD_RCTRL);
+		modifiersToCheck.push_back(KMOD_LALT);
+		modifiersToCheck.push_back(KMOD_RALT);
+	}
+
+	bool result = isKeyPressed(compareKey, input, modifiersToCheck);
+	return result;
+}
+bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input,vector<int> modifiersToCheck) {
 	Uint16 c = SDLK_UNKNOWN;
 	//if(input.keysym.unicode > 0 && input.keysym.unicode < 0x80) {
 	if(input.keysym.unicode > 0) {
@@ -732,6 +890,9 @@ bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input,bool modifiersAllow
 		else if(compareKey == SDLK_KP_MULTIPLY) {
 			result = (c == SDLK_ASTERISK);
 		}
+		else if(compareKey == SDLK_BACKSPACE) {
+			result = (c == SDLK_DELETE);
+		}
 		else if( compareKey >= SDLK_0 && compareKey <= SDLK_9) {
 			switch(compareKey) {
 				case SDLK_0:
@@ -802,15 +963,16 @@ bool isKeyPressed(SDLKey compareKey, SDL_KeyboardEvent input,bool modifiersAllow
 		}
 	}
 
-	if(result == true && modifiersAllowed == false) {
+	if(result == true) {
 		//printf("input.keysym.mod = %d\n",input.keysym.mod);
 
-		if( input.keysym.mod & (KMOD_LCTRL | KMOD_RCTRL) ||
-			input.keysym.mod & (KMOD_LALT | KMOD_RALT)) {
-			//input.keysym.mod & (KMOD_LSHIFT | KMOD_RSHIFT)) {
-				if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("In [%s::%s Line: %d] result *WOULD HAVE BEEN TRUE* but is false due to: modifiersAllowed = %d input.keysym.mod = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,modifiersAllowed,input.keysym.mod);
+		for(unsigned int i = 0; i < modifiersToCheck.size(); ++i) {
+			if( (input.keysym.mod & modifiersToCheck[i])) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("In [%s::%s Line: %d] result *WOULD HAVE BEEN TRUE* but is false due to: input.keysym.mod = %d modifiersToCheck[i] = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,input.keysym.mod,modifiersToCheck[i]);
 				result = false;
+				break;
 			}
+		}
 	}
 	string compareKeyName = SDL_GetKeyName(compareKey);
 	string pressKeyName = SDL_GetKeyName((SDLKey)c);
@@ -853,7 +1015,7 @@ wchar_t extractKeyPressedUnicode(SDL_KeyboardEvent input) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] returning key [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c);
 
 	string pressKeyName = SDL_GetKeyName((SDLKey)c);
-	string inputKeyName = SDL_GetKeyName(input.keysym.sym);
+	//string inputKeyName = SDL_GetKeyName(input.keysym.sym);
 
 	//printf ("PRESS pressed key [%d - %s] input.keysym.sym [%d] input.keysym.unicode [%d] mod = %d\n",
 	//		c,pressKeyName.c_str(),input.keysym.sym,input.keysym.unicode,input.keysym.mod);
@@ -862,6 +1024,34 @@ wchar_t extractKeyPressedUnicode(SDL_KeyboardEvent input) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] pressed key [%d - %s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c,pressKeyName.c_str());
 
 	return c;
+}
+
+vector<int> extractKeyPressedUnicodeLength(string text) {
+	vector<int> result;
+	unsigned int i = 0;
+	for(i = 0; i < text.length();) {
+		char c = text[i];
+		wchar_t keyW = c;
+		wchar_t textAppend[] = { keyW, 0 };
+
+		if(*textAppend) {
+			wchar_t newKey = textAppend[0];
+			if (newKey < 0x80) {
+				result.push_back(1);
+				//printf("1 char, textCharLength = %d\n",textCharLength.size());
+			}
+			else if (newKey < 0x800) {
+				result.push_back(2);
+				//printf("2 char, textCharLength = %d\n",textCharLength.size());
+			}
+			else {
+				result.push_back(3);
+				//printf("3 char, textCharLength = %d\n",textCharLength.size());
+			}
+			i += result[result.size()-1];
+		}
+	}
+	return result;
 }
 
 SDLKey extractKeyPressed(SDL_KeyboardEvent input) {
@@ -891,7 +1081,7 @@ SDLKey extractKeyPressed(SDL_KeyboardEvent input) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] returning key [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c);
 
 	string pressKeyName = SDL_GetKeyName((SDLKey)c);
-	string inputKeyName = SDL_GetKeyName(input.keysym.sym);
+	//string inputKeyName = SDL_GetKeyName(input.keysym.sym);
 
 	//printf ("PRESS pressed key [%d - %s] input.keysym.sym [%d] input.keysym.unicode [%d] mod = %d\n",
 	//		c,pressKeyName.c_str(),input.keysym.sym,input.keysym.unicode,input.keysym.mod);
@@ -903,6 +1093,10 @@ SDLKey extractKeyPressed(SDL_KeyboardEvent input) {
 }
 
 bool isAllowedInputTextKey(wchar_t &key) {
+	if(Window::isAllowedKey(key) == true) {
+		return true;
+	}
+
 	bool result = (
 	key != SDLK_DELETE &&
 	key != SDLK_BACKSPACE &&
@@ -963,6 +1157,10 @@ bool isAllowedInputTextKey(wchar_t &key) {
 }
 
 bool isAllowedInputTextKey(SDLKey key) {
+	if(Window::isAllowedKey(key) == true) {
+		return true;
+	}
+
 	bool result = (
 	key != SDLK_DELETE &&
 	key != SDLK_BACKSPACE &&
@@ -1021,5 +1219,54 @@ bool isAllowedInputTextKey(SDLKey key) {
 
 	return result;
 }
+
+bool Window::isKeyStateModPressed(int mod) {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("isKeyStateModPressed mod = %d, keystate.mod = %d, keystate.mod & mod = %d\n",mod,keystate.mod,(keystate.mod & mod));
+
+	if(keystate.mod & mod) {
+		return true;
+	}
+	return false;
+}
+
+wchar_t Window::extractLastKeyPressed() {
+	wchar_t c = SDLK_UNKNOWN;
+	//if(input.keysym.unicode > 0 && input.keysym.unicode < 0x80) {
+	if(keystate.unicode > 0) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] input.keysym.unicode = %d input.keysym.mod = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,keystate.unicode,keystate.mod);
+
+		c = keystate.unicode;
+//		if(c <= SDLK_UNKNOWN || c >= SDLK_LAST) {
+//			c = SDLKey(c & 0xFF);
+//		}
+
+		//c = toupper(c);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("In [%s::%s Line: %d] #1 (c & 0xFF) [%d] c = [%lc]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,(c & 0xFF),c);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] #1 (c & 0xFF) [%d] c = [%lc]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,(c & 0xFF),c);
+	}
+	if(c == SDLK_UNKNOWN) {
+		c = keystate.sym;
+	}
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %u] c = [%d][%lc]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c);
+
+	//c = (SDLKey)(c & 0xFF);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("In [%s::%s Line: %d] returning key [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] returning key [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c);
+
+	string pressKeyName = SDL_GetKeyName((SDLKey)c);
+	//string inputKeyName = SDL_GetKeyName(keystate.sym);
+
+	//printf ("PRESS pressed key [%d - %s] input.keysym.sym [%d] input.keysym.unicode [%d] mod = %d\n",
+	//		c,pressKeyName.c_str(),input.keysym.sym,input.keysym.unicode,input.keysym.mod);
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("In [%s::%s Line: %d] pressed key [%d - %s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c,pressKeyName.c_str());
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] pressed key [%d - %s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c,pressKeyName.c_str());
+
+	return c;
+}
+
+
 
 }}//end namespace

@@ -12,7 +12,7 @@
 #ifndef _SHARED_GRAPHICTYPES_MODELHEADER_H_
 #define _SHARED_GRAPHICTYPES_MODELHEADER_H_
 
-#include "types.h"
+#include "data_types.h"
 #include "leak_dumper.h"
 
 using Shared::Platform::uint8;
@@ -42,7 +42,8 @@ enum ModelType{
 
 enum MeshPropertyFlag{
 	mpfCustomColor= 1,
-	mpfTwoSided= 2
+	mpfTwoSided= 2,
+	mpfNoSelect= 4
 };
 
 enum MeshTexture{

@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_PROGRAM_H_
 #define _GLEST_GAME_PROGRAM_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "context.h"
 #include "platform_util.h"
 #include "window_gl.h"
@@ -60,6 +65,9 @@ protected:
     int lastFps;
 
 public:
+
+    static const char *MAIN_PROGRAM_RENDER_KEY;
+
 	ProgramState(Program *program);
 	virtual ~ProgramState(){};
 
@@ -95,10 +103,12 @@ public:
 	virtual bool quitTriggered() { return false; }
 	virtual Stats quitAndToggleState() { return Stats(); };
 	virtual Program * getProgram() { return program; }
+	virtual const Program * getProgramConstPtr() { return program; }
 	virtual void setForceMouseRender(bool value) { forceMouseRender=value;}
 	virtual void consoleAddLine(string line) { };
 
 	virtual void reloadUI() {};
+	virtual void addPerformanceCount(string key,int64 value) {};
 
 protected:
 	virtual void incrementFps();
@@ -108,7 +118,7 @@ protected:
 // 	class Program
 // ===============================
 
-class Program : public SimpleTaskCallbackInterface {
+class Program {
 private:
 	static const int maxTimes;
 	SimpleTaskThread *soundThreadManager;
@@ -146,15 +156,24 @@ private:
     GraphicMessageBox msgBox;
     int skipRenderFrameCount;
 
+    bool messageBoxIsSystemError;
+    ProgramState *programStateOldSystemError;
+
     //bool masterserverMode;
     bool shutdownApplicationEnabled;
     static bool wantShutdownApplicationAfterGame;
 
+    static bool tryingRendererInit;
+    static bool rendererInitOk;
+
 public:
     Program();
-    ~Program();
+    virtual ~Program();
 
-    static Program *getInstance()	{return singleton;}
+    static bool getTryingRendererInit() { return tryingRendererInit; }
+    static bool getRendererInitOk() { return rendererInitOk; }
+
+    static Program *getInstance()	{ return singleton;      }
 
     static void setWantShutdownApplicationAfterGame(bool value) { wantShutdownApplicationAfterGame = value; }
     static bool getWantShutdownApplicationAfterGame() { return wantShutdownApplicationAfterGame; }
@@ -167,7 +186,9 @@ public:
 	void initNormal(WindowGl *window);
 	void initServer(WindowGl *window,bool autostart=false,bool openNetworkSlots=false,bool masterserverMode=false);
 	void initServer(WindowGl *window, GameSettings *settings);
-	void initClient(WindowGl *window, const Ip &serverIp);
+	void initSavedGame(WindowGl *window,bool masterserverMode=false,string saveGameFile="");
+	void initClient(WindowGl *window, const Ip &serverIp,int portNumber=-1);
+	void initClientAutoFindHost(WindowGl *window);
 	void initScenario(WindowGl *window, string autoloadScenarioName);
 
 	//main
@@ -185,10 +206,11 @@ public:
 	void setState(ProgramState *programStateNew,bool cleanupOldState=true);
 	ProgramState * getState() { return programState;}
 	WindowGl * getWindow() { return window; }
+	const WindowGl * getWindowConstPtr() const { return window; }
 	void init(WindowGl *window, bool initSound=true, bool toggleFullScreen=false);
 	void exit();
 
-	virtual void simpleTask(BaseThread *callingThread);
+	virtual void simpleTask(BaseThread *callingThread,void *userdata);
 
 	void mouseDownLeft(int x, int y);
 	void eventMouseMove(int x, int y, const MouseState *ms);
@@ -210,6 +232,7 @@ private:
 
 	void setDisplaySettings();
 	void restoreDisplaySettings();
+	void restoreStateFromSystemError();
 };
 
 }} //end namespace

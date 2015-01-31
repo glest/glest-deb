@@ -11,7 +11,7 @@
 
 #include "PNGReader.h"
 
-#include "types.h"
+#include "data_types.h"
 #include "pixmap.h"
 #include <stdexcept>
 #include <png.h>
@@ -22,8 +22,6 @@
 using std::runtime_error;
 using std::ios;
 
-/**Used things from CImageLoaderJPG.cpp from Irrlicht*/
-
 namespace Shared{ namespace Graphics{
 
 // =====================================================
@@ -33,15 +31,19 @@ namespace Shared{ namespace Graphics{
 static void user_read_data(png_structp read_ptr, png_bytep data, png_size_t length) {
 	ifstream& is = *((ifstream*)png_get_io_ptr(read_ptr));
 	is.read((char*)data,(std::streamsize)length);
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		Shared::PlatformByteOrder::fromEndianTypeArray<png_byte>(data,length);
+	}
+
 	if (!is.good()) {
 		png_error(read_ptr,"Could not read from png-file");
 	}
 }
 
-static void user_write_data(png_structp png_ptr, png_bytep data, png_size_t length) {
-}
+//static void user_write_data(png_structp png_ptr, png_bytep data, png_size_t length) {}
 
-static void user_flush_data(png_structp png_ptr) {}
+//static void user_flush_data(png_structp png_ptr) {}
 
 /**Get Extension array, initialised*/
 //static inline const string* getExtensionsPng() {
@@ -61,34 +63,43 @@ static inline std::vector<string> getExtensionsPng() {
 PNGReader::PNGReader(): FileReader<Pixmap2D>(getExtensionsPng()) {}
 
 Pixmap2D* PNGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	//Read file
 	is.seekg(0, ios::end);
 	//size_t length = is.tellg();
 	is.seekg(0, ios::beg);
 	uint8 *buffer = new uint8[8];
 	is.read((char*)buffer, 8);
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		Shared::PlatformByteOrder::fromEndianTypeArray<uint8>(buffer,8);
+	}
 
 	if (png_sig_cmp(buffer, 0, 8) != 0) {
 		delete [] buffer;
-		return NULL; //This is not a PNG file - could be used for fast checking whether file is supported or not
+		//This is not a PNG file - could be used for fast checking whether file is supported or not
+		throw megaglest_runtime_error(path +" is not a png",true);
 	}
 
 	png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	if (!png_ptr) {
 		delete [] buffer;
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(1) png",true);
 	}
 	png_infop info_ptr = png_create_info_struct(png_ptr);
 	if (!info_ptr) {
 		png_destroy_read_struct(&png_ptr, (png_infopp)NULL,(png_infopp)NULL);
 		delete [] buffer;
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(2) png",true);
 	}
 	if (setjmp(png_jmpbuf(png_ptr))) {
 		png_destroy_read_struct(&png_ptr, &info_ptr,(png_infopp)NULL);
 		delete [] buffer;
-		return NULL; //Error during init_io
+		//Error during init_io
+		throw megaglest_runtime_error(path +" is a corrupt(3) png",true);
 	}
 	png_set_read_fn(png_ptr, &is, user_read_data); 
 	png_set_sig_bytes(png_ptr, 8);
@@ -119,7 +130,8 @@ Pixmap2D* PNGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 	if (setjmp(png_jmpbuf(png_ptr))) {
 		delete[] row_pointers;
 		delete [] buffer;
-		return NULL; //error during read_image
+		//error during read_image
+		throw megaglest_runtime_error(path +" is a corrupt(4) png",true);
 	}
 	for (int y = 0; y < height; ++y) {
 		row_pointers[y] = new png_byte[png_get_rowbytes(png_ptr, info_ptr)];
@@ -156,7 +168,7 @@ Pixmap2D* PNGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 						a = row_pointers[y][xFile+3];	
 						break;
 					default:
-						//TODO: Error
+						// Possible Error
 					case 1:
 						r = g = b = l = row_pointers[y][xFile];
 						a = 255;
@@ -178,7 +190,8 @@ Pixmap2D* PNGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 						for (unsigned int i = 0; i < picComponents; ++i) {
 							pixels[location+xPic+i] = l;
 						}
-						//TODO: Error
+						break;
+						// Possible Error
 				}
 			}
 		}
@@ -208,27 +221,33 @@ Pixmap3D* PNGReader3D::read(ifstream& is, const string& path, Pixmap3D* ret) con
 	is.seekg(0, ios::beg);
 	uint8 *buffer = new uint8[8];
 	is.read((char*)buffer, 8);
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		Shared::PlatformByteOrder::fromEndianTypeArray<uint8>(buffer,8);
+	}
 
 	if (png_sig_cmp(buffer, 0, 8) != 0) {
 		delete [] buffer;
-		return NULL; //This is not a PNG file - could be used for fast checking whether file is supported or not
+		//This is not a PNG file - could be used for fast checking whether file is supported or not
+		throw megaglest_runtime_error(path +" is not a png(2)",true);
 	}
 
 	png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	if (!png_ptr) {
 		delete [] buffer;
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(5) png",true);
 	}
 	png_infop info_ptr = png_create_info_struct(png_ptr);
 	if (!info_ptr) {
 		png_destroy_read_struct(&png_ptr, (png_infopp)NULL,(png_infopp)NULL);
 		delete [] buffer;
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(6) png",true);
 	}
 	if (setjmp(png_jmpbuf(png_ptr))) {
 		png_destroy_read_struct(&png_ptr, &info_ptr,(png_infopp)NULL);
 		delete [] buffer;
-		return NULL; //Error during init_io
+		//Error during init_io
+		throw megaglest_runtime_error(path +" is a corrupt(7) png",true);
 	}
 	png_set_read_fn(png_ptr, &is, user_read_data);
 	png_set_sig_bytes(png_ptr, 8);
@@ -258,7 +277,8 @@ Pixmap3D* PNGReader3D::read(ifstream& is, const string& path, Pixmap3D* ret) con
 	if (setjmp(png_jmpbuf(png_ptr))) {
 		delete[] row_pointers;
 		delete [] buffer;
-		return NULL; //error during read_image
+		//error during read_image
+		throw megaglest_runtime_error(path +" is a corrupt(8) png",true);
 	}
 	for (int y = 0; y < height; ++y) {
 		row_pointers[y] = new png_byte[png_get_rowbytes(png_ptr, info_ptr)];
@@ -305,7 +325,7 @@ Pixmap3D* PNGReader3D::read(ifstream& is, const string& path, Pixmap3D* ret) con
 						a = row_pointers[y][xFile+3];
 						break;
 					default:
-						//TODO: Error
+						// Possible Error
 					case 1:
 						r = g = b = l = row_pointers[y][xFile];
 						a = 255;
@@ -327,7 +347,8 @@ Pixmap3D* PNGReader3D::read(ifstream& is, const string& path, Pixmap3D* ret) con
 						for (unsigned int i = 0; i < picComponents; ++i) {
 							pixels[location+xPic+i] = l;
 						}
-						//TODO: Error
+						break;
+						// Possible Error
 				}
 			}
 		}

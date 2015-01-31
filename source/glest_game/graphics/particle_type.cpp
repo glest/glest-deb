@@ -20,6 +20,7 @@
 #include "game_constants.h"
 #include "util.h"
 #include "platform_common.h"
+#include "conversion.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Xml;
@@ -51,6 +52,16 @@ ParticleSystemType::ParticleSystemType() {
     minHp=0;
     maxHp=0;
     minmaxIsPercent=false;
+
+    modelCycle=0;
+    size=0;
+    sizeNoEnergy=0;
+    speed=0;
+	gravity=0;
+	emissionRate=0;
+	energyMax=0;
+	energyVar=0;
+
 }
 
 ParticleSystemType::ParticleSystemType(const ParticleSystemType &src) {
@@ -78,8 +89,10 @@ ParticleSystemType::~ParticleSystemType() {
 		memoryObjectList[this]--;
 		assert(memoryObjectList[this] == 0);
 	}
-	for(Children::iterator it = children.begin(); it != children.end(); ++it)
+	for(Children::iterator it = children.begin(); it != children.end(); ++it) {
 		delete *it;
+	}
+	children.clear();
 }
 
 void ParticleSystemType::copyAll(const ParticleSystemType &src) {
@@ -157,16 +170,13 @@ void ParticleSystemType::load(const XmlNode *particleSystemNode, const string &d
 			endPathWithSlash(currentPath);
 
 			string path= modelNode->getAttribute("path")->getRestrictedValue(currentPath);
-			model= renderer->newModel(rsGame);
-			if(model) {
-				model->load(path, false, &loadedFileList, &parentLoader);
-			}
+			model= renderer->newModel(rsGame,path, false, &loadedFileList, &parentLoader);
 			loadedFileList[path].push_back(make_pair(parentLoader,modelNode->getAttribute("path")->getRestrictedValue()));
 			
 			if(modelNode->hasChild("cycles")) {
 				modelCycle = modelNode->getChild("cycles")->getAttribute("value")->getFloatValue();
 				if(modelCycle < 0.0)
-					throw runtime_error("negative model cycle value is bad");
+					throw megaglest_runtime_error("negative model cycle value is bad");
 			}
 		}
 	}
@@ -259,7 +269,7 @@ void ParticleSystemType::load(const XmlNode *particleSystemNode, const string &d
 	if(particleSystemNode->hasChild("child-particles")) {
     		const XmlNode *childrenNode= particleSystemNode->getChild("child-particles");
     		if(childrenNode->getAttribute("value")->getBoolValue()) {
-			for(int i = 0; i < childrenNode->getChildCount(); ++i) {
+			for(unsigned int i = 0; i < childrenNode->getChildCount(); ++i) {
 				const XmlNode *particleFileNode= childrenNode->getChild("particle-file",i);
 				string path= particleFileNode->getAttribute("path")->getRestrictedValue();
 				UnitParticleSystemType *unitParticleSystemType= new UnitParticleSystemType();
@@ -279,6 +289,7 @@ void ParticleSystemType::setValues(AttackParticleSystem *ats){
 	// add instances of all children; some settings will cascade to all children
 	for(Children::iterator i=children.begin(); i!=children.end(); ++i){
 		UnitParticleSystem *child = new UnitParticleSystem();
+		child->setParticleOwner(ats->getParticleOwner());
 		(*i)->setValues(child);
 		ats->addChild(child);
 		child->setState(ParticleSystem::sPlay);
@@ -302,6 +313,103 @@ void ParticleSystemType::setValues(AttackParticleSystem *ats){
     ats->setAlternations(alternations);
     ats->setParticleSystemStartDelay(particleSystemStartDelay);
 	ats->setBlendMode(ParticleSystem::strToBlendMode(mode));
+}
+
+void ParticleSystemType::loadGame(const XmlNode *rootNode) {
+	const XmlNode *particleSystemTypeNode = rootNode->getChild("ParticleSystemType");
+
+	type = particleSystemTypeNode->getAttribute("type")->getIntValue();
+
+	modelCycle = particleSystemTypeNode->getAttribute("modelCycle")->getFloatValue();
+	primitive = particleSystemTypeNode->getAttribute("primitive")->getValue();
+	offset = Vec3f::strToVec3(particleSystemTypeNode->getAttribute("offset")->getValue());
+	color = Vec4f::strToVec4(particleSystemTypeNode->getAttribute("color")->getValue());
+	colorNoEnergy = Vec4f::strToVec4(particleSystemTypeNode->getAttribute("colorNoEnergy")->getValue());
+	size = particleSystemTypeNode->getAttribute("size")->getFloatValue();
+	sizeNoEnergy = particleSystemTypeNode->getAttribute("sizeNoEnergy")->getFloatValue();
+	speed = particleSystemTypeNode->getAttribute("speed")->getFloatValue();
+	gravity = particleSystemTypeNode->getAttribute("gravity")->getFloatValue();
+	emissionRate = particleSystemTypeNode->getAttribute("emissionRate")->getFloatValue();
+	energyMax = particleSystemTypeNode->getAttribute("energyMax")->getIntValue();
+	energyVar = particleSystemTypeNode->getAttribute("energyVar")->getIntValue();
+	mode = particleSystemTypeNode->getAttribute("mode")->getValue();
+	teamcolorNoEnergy = (particleSystemTypeNode->getAttribute("teamcolorNoEnergy")->getIntValue() != 0);
+	teamcolorEnergy = (particleSystemTypeNode->getAttribute("teamcolorEnergy")->getIntValue() != 0);
+	alternations = particleSystemTypeNode->getAttribute("alternations")->getIntValue();
+	particleSystemStartDelay = particleSystemTypeNode->getAttribute("particleSystemStartDelay")->getIntValue();
+
+	if(particleSystemTypeNode->hasChild("UnitParticleSystemType")) {
+		vector<XmlNode *> particleSystemTypeNodeList = particleSystemTypeNode->getChildList("UnitParticleSystemType");
+		for(unsigned int i = 0; i < particleSystemTypeNodeList.size(); ++i) {
+			XmlNode *node = particleSystemTypeNodeList[i];
+
+			UnitParticleSystemType *child = new UnitParticleSystemType();
+			child->loadGame(node);
+			children.push_back(child);
+		}
+	}
+
+	minmaxEnabled = (particleSystemTypeNode->getAttribute("minmaxEnabled")->getIntValue() != 0);
+	minHp = particleSystemTypeNode->getAttribute("minHp")->getIntValue();
+	maxHp = particleSystemTypeNode->getAttribute("maxHp")->getIntValue();
+	minmaxIsPercent = (particleSystemTypeNode->getAttribute("minmaxIsPercent")->getIntValue() != 0);
+}
+
+void ParticleSystemType::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *particleSystemTypeNode = rootNode->addChild("ParticleSystemType");
+
+//	string type;
+	particleSystemTypeNode->addAttribute("type",type, mapTagReplacements);
+//	Texture2D *texture;
+//	Model *model;
+//	float modelCycle;
+	particleSystemTypeNode->addAttribute("modelCycle",floatToStr(modelCycle,6), mapTagReplacements);
+//	string primitive;
+	particleSystemTypeNode->addAttribute("primitive",primitive, mapTagReplacements);
+//	Vec3f offset;
+	particleSystemTypeNode->addAttribute("offset",offset.getString(), mapTagReplacements);
+//	Vec4f color;
+	particleSystemTypeNode->addAttribute("color",color.getString(), mapTagReplacements);
+//	Vec4f colorNoEnergy;
+	particleSystemTypeNode->addAttribute("colorNoEnergy",colorNoEnergy.getString(), mapTagReplacements);
+//	float size;
+	particleSystemTypeNode->addAttribute("size",floatToStr(size,6), mapTagReplacements);
+//	float sizeNoEnergy;
+	particleSystemTypeNode->addAttribute("sizeNoEnergy",floatToStr(sizeNoEnergy,6), mapTagReplacements);
+//	float speed;
+	particleSystemTypeNode->addAttribute("speed",floatToStr(speed,6), mapTagReplacements);
+//	float gravity;
+	particleSystemTypeNode->addAttribute("gravity",floatToStr(gravity,6), mapTagReplacements);
+//	float emissionRate;
+	particleSystemTypeNode->addAttribute("emissionRate",floatToStr(emissionRate,6), mapTagReplacements);
+//	int energyMax;
+	particleSystemTypeNode->addAttribute("energyMax",intToStr(energyMax), mapTagReplacements);
+//	int energyVar;
+	particleSystemTypeNode->addAttribute("energyVar",intToStr(energyVar), mapTagReplacements);
+//	string mode;
+	particleSystemTypeNode->addAttribute("mode",mode, mapTagReplacements);
+//	bool teamcolorNoEnergy;
+	particleSystemTypeNode->addAttribute("teamcolorNoEnergy",intToStr(teamcolorNoEnergy), mapTagReplacements);
+//    bool teamcolorEnergy;
+	particleSystemTypeNode->addAttribute("teamcolorEnergy",intToStr(teamcolorEnergy), mapTagReplacements);
+//    int alternations;
+	particleSystemTypeNode->addAttribute("alternations",intToStr(alternations), mapTagReplacements);
+//    int particleSystemStartDelay;
+	particleSystemTypeNode->addAttribute("particleSystemStartDelay",intToStr(particleSystemStartDelay), mapTagReplacements);
+//	typedef std::list<UnitParticleSystemType*> Children;
+//	Children children;
+	for(Children::iterator it = children.begin(); it != children.end(); ++it) {
+		(*it)->saveGame(particleSystemTypeNode);
+	}
+//    bool minmaxEnabled;
+	particleSystemTypeNode->addAttribute("minmaxEnabled",intToStr(minmaxEnabled), mapTagReplacements);
+//    int minHp;
+	particleSystemTypeNode->addAttribute("minHp",intToStr(minHp), mapTagReplacements);
+//    int maxHp;
+	particleSystemTypeNode->addAttribute("maxHp",intToStr(maxHp), mapTagReplacements);
+//    bool minmaxIsPercent;
+	particleSystemTypeNode->addAttribute("minmaxIsPercent",intToStr(minmaxIsPercent), mapTagReplacements);
 }
 
 // ===========================================================
@@ -342,7 +450,8 @@ void ParticleSystemTypeProjectile::load(const XmlNode* particleFileNode, const s
 
 		//trajectory speed
 		const XmlNode *tajectorySpeedNode= tajectoryNode->getChild("speed");
-		trajectorySpeed= tajectorySpeedNode->getAttribute("value")->getFloatValue()/GameConstants::updateFps;
+		trajectorySpeed= tajectorySpeedNode->getAttribute("value")->getFloatValue() / (float)GameConstants::updateFps;
+		//printf("[%s] trajectorySpeed = %f\n",path.c_str(),trajectorySpeed);
 
 		if(trajectory=="parabolic" || trajectory=="spiral"){
 			//trajectory scale
@@ -364,16 +473,18 @@ void ParticleSystemTypeProjectile::load(const XmlNode* particleFileNode, const s
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
+		throw megaglest_runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
 	}
 }
 
-ProjectileParticleSystem *ParticleSystemTypeProjectile::create() {
+ProjectileParticleSystem *ParticleSystemTypeProjectile::create(ParticleOwner *owner) {
 	ProjectileParticleSystem *ps=  new ProjectileParticleSystem();
-
+	ps->setParticleOwner(owner);
 	ParticleSystemType::setValues(ps);
 
 	ps->setTrajectory(ProjectileParticleSystem::strToTrajectory(trajectory));
+
+	//printf("Setting trajectorySpeed = %f\n",trajectorySpeed);
 	ps->setTrajectorySpeed(trajectorySpeed);
 	ps->setTrajectoryScale(trajectoryScale);
 	ps->setTrajectoryFrequency(trajectoryFrequency);
@@ -381,6 +492,22 @@ ProjectileParticleSystem *ParticleSystemTypeProjectile::create() {
 	ps->initParticleSystem();
 
 	return ps;
+}
+
+void ParticleSystemTypeProjectile::saveGame(XmlNode *rootNode) {
+	ParticleSystemType::saveGame(rootNode);
+
+	std::map<string,string> mapTagReplacements;
+	XmlNode *particleSystemTypeProjectileNode = rootNode->addChild("ParticleSystemTypeProjectile");
+
+//	string trajectory;
+	particleSystemTypeProjectileNode->addAttribute("trajectory",trajectory, mapTagReplacements);
+//	float trajectorySpeed;
+	particleSystemTypeProjectileNode->addAttribute("trajectorySpeed",floatToStr(trajectorySpeed,6), mapTagReplacements);
+//	float trajectoryScale;
+	particleSystemTypeProjectileNode->addAttribute("trajectoryScale",floatToStr(trajectoryScale,6), mapTagReplacements);
+//	float trajectoryFrequency;
+	particleSystemTypeProjectileNode->addAttribute("trajectoryFrequency",floatToStr(trajectoryFrequency,6), mapTagReplacements);
 }
 
 // ===========================================================
@@ -432,13 +559,13 @@ void ParticleSystemTypeSplash::load(const XmlNode* particleFileNode, const strin
 	}
 	catch(const exception &e){
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
+		throw megaglest_runtime_error("Error loading ParticleSystem: "+ path + "\n" +e.what());
 	}
 }
 
-SplashParticleSystem *ParticleSystemTypeSplash::create(){
+SplashParticleSystem *ParticleSystemTypeSplash::create(ParticleOwner *owner) {
 	SplashParticleSystem *ps=  new SplashParticleSystem();
-
+	ps->setParticleOwner(owner);
 	ParticleSystemType::setValues(ps);
 
 	ps->setEmissionRateFade(emissionRateFade);
@@ -450,6 +577,24 @@ SplashParticleSystem *ParticleSystemTypeSplash::create(){
 	ps->initParticleSystem();
 
 	return ps;
+}
+
+void ParticleSystemTypeSplash::saveGame(XmlNode *rootNode) {
+	ParticleSystemType::saveGame(rootNode);
+
+	std::map<string,string> mapTagReplacements;
+	XmlNode *particleSystemTypeSplashNode = rootNode->addChild("ParticleSystemTypeSplash");
+
+//	float emissionRateFade;
+	particleSystemTypeSplashNode->addAttribute("emissionRateFade",floatToStr(emissionRateFade,6), mapTagReplacements);
+//	float verticalSpreadA;
+	particleSystemTypeSplashNode->addAttribute("verticalSpreadA",floatToStr(verticalSpreadA,6), mapTagReplacements);
+//	float verticalSpreadB;
+	particleSystemTypeSplashNode->addAttribute("verticalSpreadB",floatToStr(verticalSpreadB,6), mapTagReplacements);
+//	float horizontalSpreadA;
+	particleSystemTypeSplashNode->addAttribute("horizontalSpreadA",floatToStr(horizontalSpreadA,6), mapTagReplacements);
+//	float horizontalSpreadB;
+	particleSystemTypeSplashNode->addAttribute("horizontalSpreadB",floatToStr(horizontalSpreadB,6), mapTagReplacements);
 }
 
 }}//end mamespace

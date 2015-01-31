@@ -12,27 +12,20 @@
 #ifndef _SHARED_PLATFORM_SOCKET_H_
 #define _SHARED_PLATFORM_SOCKET_H_
 
-#include <string>
-
-#include <errno.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <map>
-#include <vector>
-#include "base_thread.h"
-#include "simple_threads.h"
-#include "types.h"
-
-using std::string;
-
 #ifdef WIN32
     #ifdef __MINGW32__
 	   #include <winsock2.h>
     #else
+       #include <winsock2.h>
        #include <winsock.h>
     #endif
 
 	typedef SOCKET PLATFORM_SOCKET;
+	#if defined(_WIN64)
+		#define PLATFORM_SOCKET_FORMAT_TYPE MG_I64U_SPECIFIER
+	#else
+		#define PLATFORM_SOCKET_FORMAT_TYPE "%d"
+	#endif
 #else
 	#include <unistd.h>
 	#include <sys/socket.h>
@@ -41,8 +34,20 @@ using std::string;
 	#include <netdb.h>
 
 	typedef int PLATFORM_SOCKET;
-
+	#define PLATFORM_SOCKET_FORMAT_TYPE "%d"
 #endif
+
+#include <string>
+#include <errno.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <map>
+#include <vector>
+#include "base_thread.h"
+#include "simple_threads.h"
+#include "data_types.h"
+
+using std::string;
 
 #include "leak_dumper.h"
 
@@ -50,11 +55,27 @@ using namespace Shared::PlatformCommon;
 
 namespace Shared { namespace Platform {
 
+#ifdef WIN32
+
+	#define PLATFORM_SOCKET_TRY_AGAIN WSAEWOULDBLOCK
+    #define PLATFORM_SOCKET_INPROGRESS WSAEINPROGRESS
+	#define PLATFORM_SOCKET_INTERRUPTED WSAEWOULDBLOCK
+
+#else
+
+	#define PLATFORM_SOCKET_TRY_AGAIN EAGAIN
+	#define PLATFORM_SOCKET_INPROGRESS EINPROGRESS
+	#define PLATFORM_SOCKET_INTERRUPTED EINTR
+
+#endif
+
 // The callback Interface used by the UPNP discovery process
 class FTPClientValidationInterface {
 public:
 	virtual int isValidClientType(uint32 clientIp) = 0;
 	virtual int isClientAllowedToGetFile(uint32 clientIp, const char *username, const char *filename) = 0;
+
+	virtual ~FTPClientValidationInterface() {}
 };
 
 
@@ -62,6 +83,8 @@ public:
 class UPNPInitInterface {
 public:
 	virtual void UPNPInitStatus(bool result) = 0;
+
+	virtual ~UPNPInitInterface() {}
 };
 
 //
@@ -71,6 +94,7 @@ public:
 class DiscoveredServersInterface {
 public:
 	virtual void DiscoveredServers(std::vector<string> serverList) = 0;
+	virtual ~DiscoveredServersInterface() {}
 };
 
 // =====================================================
@@ -102,7 +126,6 @@ public:
 };
 #endif
 
-//class Socket : public SimpleTaskCallbackInterface {
 class Socket {
 
 protected:
@@ -126,16 +149,21 @@ protected:
 	Mutex *inSocketDestructorSynchAccessor;
 	bool inSocketDestructor;
 
+	bool isSocketBlocking;
+	time_t lastSocketError;
+
 public:
 	Socket(PLATFORM_SOCKET sock);
 	Socket();
 	virtual ~Socket();
 
+	static int getLastSocketError();
+	static const char * getLastSocketErrorText(int *errNumber=NULL);
+	static string getLastSocketErrorFormattedText(int *errNumber=NULL);
+
 	static bool disableNagle;
 	static int DEFAULT_SOCKET_SENDBUF_SIZE;
 	static int DEFAULT_SOCKET_RECVBUF_SIZE;
-
-	//virtual void simpleTask(BaseThread *callingThread);
 
 	static int getBroadCastPort() 			{ return broadcast_portno; }
 	static void setBroadCastPort(int value) { broadcast_portno = value; }
@@ -146,8 +174,8 @@ public:
     static bool hasDataToRead(PLATFORM_SOCKET socket);
     bool hasDataToRead();
 
-    static bool hasDataToReadWithWait(PLATFORM_SOCKET socket,int waitMilliseconds);
-    bool hasDataToReadWithWait(int waitMilliseconds);
+    static bool hasDataToReadWithWait(PLATFORM_SOCKET socket,int waitMicroseconds);
+    bool hasDataToReadWithWait(int waitMicroseconds);
 
     virtual void disconnectSocket();
 
@@ -156,13 +184,14 @@ public:
 	int getDataToRead(bool wantImmediateReply=false);
 	int send(const void *data, int dataSize);
 	int receive(void *data, int dataSize, bool tryReceiveUntilDataSizeMet);
-	int peek(void *data, int dataSize, bool mustGetData=true);
+	int peek(void *data, int dataSize, bool mustGetData=true,int *pLastSocketError=NULL);
 
 	void setBlock(bool block);
 	static void setBlock(bool block, PLATFORM_SOCKET socket);
+	bool getBlock();
 
-	bool isReadable();
-	bool isWritable();
+	bool isReadable(bool lockMutex=false);
+	bool isWritable(struct timeval *timeVal=NULL,bool lockMutex=false);
 	bool isConnected();
 
 	static string getHostName();
@@ -180,6 +209,17 @@ public:
 
 protected:
 	static void throwException(string str);
+};
+
+class SafeSocketBlockToggleWrapper {
+protected:
+	Socket *socket;
+	bool originallyBlocked;
+	bool newBlocked;
+public:
+	SafeSocketBlockToggleWrapper(Socket *socket, bool toggle);
+	~SafeSocketBlockToggleWrapper();
+	void Restore();
 };
 
 class BroadCastClientSocketThread : public BaseThread
@@ -216,9 +256,10 @@ class BroadCastSocketThread : public BaseThread
 private:
 	Mutex *mutexPauseBroadcast;
 	bool pauseBroadcast;
+	int boundPort;
 
 public:
-	BroadCastSocketThread();
+	BroadCastSocketThread(int boundPort);
 	virtual ~BroadCastSocketThread();
     virtual void execute();
     virtual bool canShutdown(bool deleteSelfIfShutdownDelayed=false);
@@ -235,6 +276,7 @@ protected:
 
 	bool portBound;
 	int boundPort;
+	string bindSpecificAddress;
 
 	static int externalPort;
 	static int ftpServerPort;
@@ -248,8 +290,10 @@ protected:
 	bool isBroadCastThreadRunning();
 	vector<string> blockIPList;
 
+	bool basicMode;
+
 public:
-	ServerSocket();
+	ServerSocket(bool basicMode = false);
 	virtual ~ServerSocket();
 	void bind(int port);
 	void listen(int connectionQueueSize= SOMAXCONN);
@@ -268,6 +312,8 @@ public:
 	int getBindPort() const { return boundPort; }
 	bool isPortBound() const { return portBound; }
 
+	void setBindSpecificAddress(string value) { bindSpecificAddress = value;}
+
 	static void setExternalPort(int port) { externalPort = port; }
 	static int getExternalPort() { return externalPort; }
 
@@ -282,6 +328,7 @@ public:
 
 	static Mutex mutexUpnpdiscoverThread;
 	static SDL_Thread *upnpdiscoverThread;
+	static bool cancelUpnpdiscoverThread;
 };
 
 // =====================================================

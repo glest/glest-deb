@@ -17,7 +17,6 @@
 #include "miniftpclient.h"
 #include <map>
 #include <vector>
-#include "miniftpclient.h"
 #include "leak_dumper.h"
 
 namespace Glest { namespace Game {
@@ -37,34 +36,14 @@ enum FTPMessageType {
 	ftpmsg_Quit
 };
 
-enum ModType {
-    mt_None,
-    mt_Map,
-    mt_Tileset,
-    mt_Techtree,
-    mt_Scenario
+enum ModMenuState {
+    mmst_None,
+    mmst_Loading,
+    mmst_CalculatingCRC
 };
 
 typedef vector<GraphicButton*> UserButtons;
 typedef vector<GraphicLabel*> GraphicLabels;
-
-// ===============================
-// 	class ModInfo
-// ===============================
-
-class ModInfo {
-public:
-	string name;
-	string url;
-	string imageUrl;
-	string description;
-	string count; // used for faction count for example
-	string crc;
-	string localCRC;
-	ModType type;
-public:
-	ModInfo();
-};
 
 // ===============================
 // 	class MenuStateMods
@@ -128,6 +107,16 @@ private:
 	GraphicButton buttonConflict;
 	GraphicButton buttonOnlyLocal;
 
+	GraphicLabel pleaseWaitLabel;
+	ModMenuState modMenuState;
+	ModMenuState oldMenuState;
+
+	bool enableMapPreview;
+	bool validMapPreview;
+	MapInfo mapInfo;
+	MapPreview mapPreview;
+	Texture2D *mapPreviewTexture;
+
 	int keyButtonsToRender;
 	int keyButtonsYBase;
 	int keyButtonsXBase;
@@ -185,15 +174,17 @@ private:
 	void refreshScenarios();
 
 	void showLocalDescription(string name);
+	void loadMapPreview(string name);
 	void showRemoteDesription(ModInfo *modInfo);
 
-	std::map<string,int32> mapCRCUpdateList;
+	std::map<string,bool> mapCRCUpdateList;
 public:
 
 	MenuStateMods(Program *program, MainMenu *mainMenu);
 	virtual ~MenuStateMods();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
+	void mouseUp(int x, int y, const MouseButton mouseButton);
 	void mouseMove(int x, int y, const MouseState *mouseState);
 	void render();
 	void update();
@@ -202,7 +193,7 @@ public:
     virtual void keyPress(SDL_KeyboardEvent c);
     virtual void keyUp(SDL_KeyboardEvent key);
 
-    virtual void simpleTask(BaseThread *callingThread);
+    virtual void simpleTask(BaseThread *callingThread,void *userdata);
 
     virtual void reloadUI();
 
@@ -217,6 +208,7 @@ private:
 
     string getPreviewImageFileForMod(const ModInfo *modInfo);
     void cleanupPreviewTexture();
+    void cleanupMapPreviewTexture();
 };
 
 }}//end namespace

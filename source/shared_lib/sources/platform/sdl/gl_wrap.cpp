@@ -33,30 +33,45 @@ using namespace Shared::PlatformCommon;
 
 namespace Shared{ namespace Platform{
 
+// Example values:
+// DEFAULT_CHARSET (English) = 1
+// GB2312_CHARSET (Chinese)  = 134
+#ifdef WIN32
+DWORD PlatformContextGl::charSet = DEFAULT_CHARSET;
+#else
+int PlatformContextGl::charSet = 1;
+#endif
+
 // ======================================
 //	class PlatformContextGl
 // ======================================
 PlatformContextGl::PlatformContextGl() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	icon = NULL;
 	screen = NULL;
 }
 
 PlatformContextGl::~PlatformContextGl() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	end();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
-void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,bool hardware_acceleration, bool fullscreen_anti_aliasing) {
+void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,
+		                     bool hardware_acceleration,
+		                     bool fullscreen_anti_aliasing, float gammaValue) {
 	
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	Window::setupGraphicsScreen(depthBits, stencilBits, hardware_acceleration, fullscreen_anti_aliasing);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//printf("In [%s::%s %d] PlatformCommon::Private::shouldBeFullscreen = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,PlatformCommon::Private::shouldBeFullscreen);
 
 	int flags = SDL_OPENGL;
 	if(PlatformCommon::Private::shouldBeFullscreen) {
@@ -74,9 +89,78 @@ void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,bool 
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
 
-	#ifndef WIN32
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] about to set resolution: %d x %d, colorBits = %d.\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,resW,resH,colorBits);
+
+		if(screen != NULL) {
+			SDL_FreeSurface(screen);
+			screen = NULL;
+		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		screen = SDL_SetVideoMode(resW, resH, colorBits, flags);
+		if(screen == 0) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+			std::ostringstream msg;
+			msg << "Couldn't set video mode "
+				<< resW << "x" << resH << " (" << colorBits
+				<< "bpp " << stencilBits << " stencil "
+				<< depthBits << " depth-buffer). SDL Error is: " << SDL_GetError();
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugError).enabled) SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,msg.str().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,msg.str().c_str());
+
+			for(int i = 32; i >= 8; i-=8) {
+				// try different color bits
+				screen = SDL_SetVideoMode(resW, resH, i, flags);
+				if(screen != 0) {
+					glViewport( 0, 0, resW, resH ) ;
+
+					break;
+				}
+			}
+
+			if(screen == 0) {
+				for(int i = 32; i >= 8; i-=8) {
+					// try to revert to 800x600
+					screen = SDL_SetVideoMode(800, 600, i, flags);
+					if(screen != 0) {
+						resW = 800;
+						resH = 600;
+
+						glViewport( 0, 0, resW, resH ) ;
+						break;
+					}
+				}
+			}
+			if(screen == 0) {
+				for(int i = 32; i >= 8; i-=8) {
+					// try to revert to 640x480
+					screen = SDL_SetVideoMode(640, 480, i, flags);
+					if(screen != 0) {
+						resW = 640;
+						resH = 480;
+
+						glViewport( 0, 0, resW, resH ) ;
+						break;
+					}
+				}
+			}
+
+			if(screen == 0) {
+				throw std::runtime_error(msg.str());
+			}
+		}
+		else {
+			glViewport( 0, 0, resW, resH ) ;
+			//printf("Reset resolution to [%d] x [%d]\n",resW, resH);
+		}
+
+#ifndef WIN32
 		string mg_icon_file = "";
-	#if defined(CUSTOM_DATA_INSTALL_PATH_VALUE)
+#if defined(CUSTOM_DATA_INSTALL_PATH_VALUE)
 		if(fileExists(formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH_VALUE)) + "megaglest.png")) {
 			mg_icon_file = formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH_VALUE)) + "megaglest.png";
 		}
@@ -84,7 +168,7 @@ void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,bool 
 			mg_icon_file = formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH_VALUE)) + "megaglest.bmp";
 		}
 
-	#endif
+#endif
 
 		if(mg_icon_file == "" && fileExists("megaglest.png")) {
 			mg_icon_file = "megaglest.png";
@@ -111,10 +195,13 @@ void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,bool 
 				icon = SDL_LoadBMP(mg_icon_file.c_str());
 			}
 			else {
+				//printf("Loadng png icon\n");
 				Texture2D *texture2D = GraphicsInterface::getInstance().getFactory()->newTexture2D();
 				texture2D->load(mg_icon_file);
-				icon = texture2D->CreateSDLSurface(true);
+				std::pair<SDL_Surface*,unsigned char*> result = texture2D->CreateSDLSurface(true);
+				icon = result.first;
 				delete texture2D;
+				delete [] result.second;
 			}
 
 		//SDL_Surface *icon = IMG_Load("megaglest.ico");
@@ -129,111 +216,85 @@ void PlatformContextGl::init(int colorBits, int depthBits, int stencilBits,bool 
 	//	SDL_Surface* icon= SDL_CreateRGBSurfaceFrom((void*)logo,32,32,32,128,0x000000ff,0x0000ff00,0x00ff0000,0xff000000);
 	//#endif
 
-			//printf("In [%s::%s Line: %d] icon = %p\n",__FILE__,__FUNCTION__,__LINE__,icon);
+			//printf("In [%s::%s Line: %d] icon = %p\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,icon);
 			if(icon == NULL) {
-				printf("Error: %s\n", SDL_GetError());
+				printf("Icon Load Error #1: %s\n", SDL_GetError());
 			}
 			if(icon != NULL) {
 
 				//uint32 colorkey = SDL_MapRGB(icon->format, 255, 0, 255);
 				//SDL_SetColorKey(icon, SDL_SRCCOLORKEY, colorkey);
-				SDL_SetColorKey(icon, SDL_SRCCOLORKEY, SDL_MapRGB(icon->format, 255, 0, 255));
-
-				SDL_WM_SetIcon(icon, NULL);
-			}
-		}
-	#endif
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] about to set resolution: %d x %d, colorBits = %d.\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,resW,resH,colorBits);
-
-		if(screen != NULL) {
-			SDL_FreeSurface(screen);
-			screen = NULL;
-		}
-
-
-		screen = SDL_SetVideoMode(resW, resH, colorBits, flags);
-		if(screen == 0) {
-			std::ostringstream msg;
-			msg << "Couldn't set video mode "
-				<< resW << "x" << resH << " (" << colorBits
-				<< "bpp " << stencilBits << " stencil "
-				<< depthBits << " depth-buffer). SDL Error is: " << SDL_GetError();
-
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugError).enabled) SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,msg.str().c_str());
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,msg.str().c_str());
-
-			for(int i = 32; i >= 8; i-=8) {
-				// try different color bits
-				screen = SDL_SetVideoMode(resW, resH, i, flags);
-				if(screen != 0) {
-					break;
+				if(SDL_SetColorKey(icon, SDL_SRCCOLORKEY, SDL_MapRGB(icon->format, 255, 0, 255))) {
+					printf("Icon Load Error #2: %s\n", SDL_GetError());
+				}
+				else {
+					SDL_WM_SetIcon(icon, NULL);
 				}
 			}
-
-			if(screen == 0) {
-				for(int i = 32; i >= 8; i-=8) {
-					// try to revert to 800x600
-					screen = SDL_SetVideoMode(800, 600, i, flags);
-					if(screen != 0) {
-						resW = 800;
-						resH = 600;
-						break;
-					}
-				}
-			}
-			if(screen == 0) {
-				for(int i = 32; i >= 8; i-=8) {
-					// try to revert to 640x480
-					screen = SDL_SetVideoMode(640, 480, i, flags);
-					if(screen != 0) {
-						resW = 640;
-						resH = 480;
-						break;
-					}
-				}
-			}
-
-			if(screen == 0) {
-				throw std::runtime_error(msg.str());
-			}
 		}
+#endif
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 		SDL_WM_GrabInput(SDL_GRAB_OFF);
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d] BEFORE glewInit call\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		
 		GLuint err = glewInit();
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d] AFTER glewInit call err = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,err);
+
 		if (GLEW_OK != err) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 			fprintf(stderr, "Error [main]: glewInit failed: %s\n", glewGetErrorString(err));
 			//return 1;
 			throw std::runtime_error((char *)glewGetErrorString(err));
 		}
 		//fprintf(stdout, "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION));
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		int bufferSize = (resW * resH * BaseColorPickEntity::COLOR_COMPONENTS);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		BaseColorPickEntity::init(bufferSize);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		if(gammaValue != 0.0) {
+			//printf("Attempting to call SDL_SetGamma using value %f\n", gammaValue);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+			if (SDL_SetGamma(gammaValue, gammaValue, gammaValue) < 0) {
+				printf("WARNING, SDL_SetGamma failed using value %f [%s]\n", gammaValue,SDL_GetError());
+			}
+		}
+
+        SDL_WM_GrabInput(SDL_GRAB_ON);
+        SDL_WM_GrabInput(SDL_GRAB_OFF);
 	}
 }
 
 void PlatformContextGl::end() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(icon != NULL) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		SDL_FreeSurface(icon);
 		icon = NULL;
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(screen != NULL) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		SDL_FreeSurface(screen);
 		screen = NULL;
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void PlatformContextGl::makeCurrent() {

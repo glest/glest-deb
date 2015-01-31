@@ -12,9 +12,13 @@
 #ifndef _GLEST_GAME_GAMEUTIL_H_
 #define _GLEST_GAME_GAMEUTIL_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include <vector>
-
 #include "util.h"
 #include "leak_dumper.h"
 
@@ -30,10 +34,11 @@ extern const string networkVersionString;
 void initSpecialStrings();
 string getCrashDumpFileName();
 string getPlatformNameString();
-string getSVNRevisionString();
+string getGITRevisionString();
+string getRAWGITRevisionString();
 string getCompilerNameString();
 string getNetworkVersionString();
-string getNetworkVersionSVNString();
+string getNetworkVersionGITString();
 string getNetworkPlatformFreeVersionString();
 string getAboutString1(int i);
 string getAboutString2(int i);

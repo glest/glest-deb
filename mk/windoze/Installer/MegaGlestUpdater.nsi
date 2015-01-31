@@ -2,10 +2,10 @@
 ; General Attributes
 
 !define APNAME MegaGlest
-!define APVER 3.6.0.3
+!define APVER 3.9.1
 !define APNAME_OLD Mega-Glest
-!define APVER_OLD 3.6.0.2
-!define APVER_UPDATE 3.6.0.3
+!define APVER_OLD 3.9.0
+!define APVER_UPDATE 3.9.1
 
 Name "${APNAME} ${APVER_UPDATE}"
 SetCompressor /FINAL /SOLID lzma
@@ -174,7 +174,6 @@ Section "${APNAME} (required)"
   ; Put file there
   File "..\..\..\data\glest_game\megaglest.exe"
   File "..\..\..\data\glest_game\megaglest_editor.exe"
-  File "..\..\..\data\glest_game\megaglest_configurator.exe"
   File "..\..\..\data\glest_game\megaglest_g3dviewer.exe"
   File "..\..\..\data\glest_game\7z.exe"
   File "..\..\..\data\glest_game\7z.dll"
@@ -196,10 +195,10 @@ Section "Start Menu Shortcuts"
   Delete "$SMPROGRAMS\${APNAME}\*.*"
 
   CreateDirectory "$SMPROGRAMS\${APNAME}"
+  CreateDirectory "$APPDATA\megaglest"
   CreateShortCut "$SMPROGRAMS\${APNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME}.lnk" "$INSTDIR\megaglest.exe" "" "$INSTDIR\megaglest.exe" 0 "" "" "${APNAME}"
 
-;  CreateShortCut "$SMPROGRAMS\${APNAME} ${APVER}\${APNAME} Configurator.lnk" "$INSTDIR\glest_configurator.exe" "" "$INSTDIR\glest_configurator.exe" 0 "" "" "${APNAME} Config Editor"
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} Map Editor.lnk" "$INSTDIR\megaglest_editor.exe" "" "$INSTDIR\megaglest_editor.exe" 0 "" "" "${APNAME} MegaGlest Map Editor"
   CreateShortCut "$SMPROGRAMS\${APNAME}\${APNAME} G3D Viewer.lnk" "$INSTDIR\megaglest_g3dviewer.exe" "" "$INSTDIR\megaglest_g3dviewer.exe" 0 "" "" "${APNAME} MegaGlest G3D Viewer"
 
@@ -222,9 +221,7 @@ Section "Uninstall"
 
   Delete "$INSTDIR\megaglest.exe"
   Delete "$INSTDIR\megaglest_editor.exe"
-  Delete "$INSTDIR\megaglest_configurator.exe"
   Delete "$INSTDIR\megaglest_g3dviewer.exe"
-  Delete "$INSTDIR\configuration.xml"
   Delete "$INSTDIR\megaglest.ico"
   Delete "$INSTDIR\glest.ini"
   Delete "$INSTDIR\glestkeys.ini"

@@ -13,10 +13,11 @@
 #define _MAPPREVIEW_MAP_H_
 
 #include "util.h"
-#include "types.h"
+#include "data_types.h"
 #include "randomgen.h"
 #include "vec.h"
 #include <vector>
+#include <string>
 
 using Shared::Platform::int8;
 using Shared::Platform::int32;
@@ -90,6 +91,9 @@ struct MapFileHeader {
 	};
 };
 
+void toEndianMapFileHeader(MapFileHeader &header);
+void fromEndianMapFileHeader(MapFileHeader &header);
+
 class MapInfo {
 public:
 
@@ -148,10 +152,15 @@ private:
 
 	bool fileLoaded;
 	string mapFileLoaded;
+	bool hasChanged;
 
 public:
 	MapPreview();
 	~MapPreview();
+
+	bool getHasChanged() const { return hasChanged; }
+	void setHasChanged(bool value) { hasChanged = value; }
+
 	float getHeight(int x, int y) const;
 	bool isCliff(int x,int y);
 	MapSurfaceType getSurface(int x, int y) const;

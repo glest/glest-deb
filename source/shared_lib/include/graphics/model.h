@@ -14,12 +14,13 @@
 
 #include <string>
 #include <map>
-#include "types.h"
+#include "data_types.h"
 #include "pixmap.h"
 #include "texture_manager.h"
 #include "texture.h"
 #include "model_header.h"
 #include <memory>
+#include "byte_order.h"
 #include "leak_dumper.h"
 
 using std::string;
@@ -70,6 +71,7 @@ private:
 	//properties
 	bool twoSided;
 	bool customColor;
+	bool noSelect;
 
 	uint32 textureFlags;
 
@@ -89,6 +91,8 @@ public:
 	~Mesh();
 	void init();
 	void end();
+
+	void copyInto(Mesh *dest, bool ignoreInterpolationData, bool destinationOwnsTextures);
 
 	//maps
 	const Texture2D *getTexture(int i) const	{return textures[i];}
@@ -114,6 +118,11 @@ public:
 	const Vec3f *getTangents() const	{return tangents;}
 	const uint32 *getIndices() const 	{return indices;}
 
+	void setVertices(Vec3f *data, uint32 count);
+	void setNormals(Vec3f *data, uint32 count);
+	void setTexCoords(Vec2f *data, uint32 count);
+	void setIndices(uint32 *data, uint32 count);
+
 	//material
 	const Vec3f &getDiffuseColor() const	{return diffuseColor;}
 	const Vec3f &getSpecularColor() const	{return specularColor;}
@@ -123,35 +132,45 @@ public:
 	//properties
 	bool getTwoSided() const		{return twoSided;}
 	bool getCustomTexture() const	{return customColor;}
+	bool getNoSelect() const		{return noSelect;}
+	string getName() const		{return name;}
+
+	uint32 getTextureFlags() const { return textureFlags; }
 
 	//external data
 	const InterpolationData *getInterpolationData() const	{return interpolationData;}
 
 	//interpolation
 	void buildInterpolationData();
+	void cleanupInterpolationData();
+
 	void updateInterpolationData(float t, bool cycle);
 	void updateInterpolationVertices(float t, bool cycle);
 
 	Texture2D *loadMeshTexture(int meshIndex, int textureIndex, TextureManager *textureManager, string textureFile,
 								int textureChannelCount, bool &textureOwned,
 								bool deletePixMapAfterLoad, std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,
-								string sourceLoader="");
+								string sourceLoader="",string modelFile="");
 
 	//load
 	void loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
-			bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="");
+			bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="",string modelFile="");
 	void loadV3(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
-			bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="");
-	void load(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="");
+			bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="",string modelFile="");
+	void load(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL,string sourceLoader="",string modelFile="");
 	void save(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
 			string convertTextureToFormat, std::map<string,int> &textureDeleteList,
-			bool keepsmallest);
+			bool keepsmallest,string modelFile);
 
 	void deletePixels();
+
+	void toEndian();
+	void fromEndian();
 
 private:
 	string findAlternateTexture(vector<string> conversionList, string textureFile);
 	void computeTangents();
+
 };
 
 // =====================================================
@@ -203,9 +222,7 @@ public:
 	uint32 getVertexCount() const;
 
 	//io
-	void load(const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string *sourceLoader=NULL);
 	void save(const string &path, string convertTextureToFormat,bool keepsmallest);
-	void loadG3d(const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string sourceLoader="");
 	void saveG3d(const string &path, string convertTextureToFormat,bool keepsmallest);
 
 	void setTextureManager(TextureManager *textureManager)	{this->textureManager= textureManager;}
@@ -213,8 +230,17 @@ public:
 
 	string getFileName() const { return fileName; }
 
+	void toEndian();
+	void fromEndian();
+
+protected:
+    void load(const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string *sourceLoader=NULL);
+	void loadG3d(const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string sourceLoader="");
+
+    
 private:
 	void buildInterpolationData() const;
+	void autoJoinMeshFrames();
 };
 
 class PixelBufferWrapper {
@@ -239,7 +265,11 @@ class BaseColorPickEntity {
 
 public:
     BaseColorPickEntity();
+    virtual ~BaseColorPickEntity() {
+    	recycleUniqueColor();
+    }
 
+    //static const int COLOR_COMPONENTS = 3;
     static const int COLOR_COMPONENTS = 4;
     static void init(int bufferSize);
     static void beginPicking();
@@ -252,17 +282,43 @@ public:
     string getColorDescription() const;
     virtual string getUniquePickName() const = 0;
 
-    ~BaseColorPickEntity() {};
+    static void resetUniqueColors();
+
+    static void setUsingLoopMethod(bool value) { using_loop_method = value; }
+
+    static void setTrackColorUse(bool value) { trackColorUse = value; }
+    unsigned char * getUniqueColorID() { return &uniqueColorID[0]; }
+    bool get_next_assign_color(unsigned char *assign_to);
+
+    static int getUsedColorIDListSize() { return (int)usedColorIDList.size(); }
+
+    static void cleanupPBO();
 
 private:
-	unsigned char uniqueColorID[COLOR_COMPONENTS];
+
+    static int bufferSizeRequired;
+    unsigned char uniqueColorID[COLOR_COMPONENTS];
 
     static unsigned char nextColorID[COLOR_COMPONENTS];
-    static Mutex mutexNextColorID;
+    static unsigned int nextColorRGB;
+    static const unsigned int k, p;
+
+    static bool using_loop_method;
+
+    static bool trackColorUse;
+    static map<string,bool> usedColorIDList;
+
+    static vector<vector<unsigned char> > nextColorIDReuseList;
 
     static auto_ptr<PixelBufferWrapper> pbo;
-};
 
+    void assign_color();
+
+    void assign_color_using_prime(unsigned char *assign_to);
+    void assign_color_using_loop(unsigned char *assign_to);
+
+    void recycleUniqueColor();
+};
 
 }}//end namespace
 

@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -31,7 +31,7 @@
 
 namespace Glest{ namespace Game{
 
-using namespace Shared::Util;
+using namespace ::Shared::Util;
 
 // ===============================
 // 	class MenuStateJoinGame
@@ -43,9 +43,30 @@ const int MenuStateJoinGame::foundServersIndex= 2;
 
 const string MenuStateJoinGame::serverFileName= "servers.ini";
 
-MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool connect, Ip serverIp):
-	MenuState(program, mainMenu, "join-game")
-{
+MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool *autoFindHost) :
+			MenuState(program, mainMenu, "join-game") {
+	CommonInit(false,Ip(),-1);
+
+	if(autoFindHost != NULL && *autoFindHost == true) {
+		//if(clientInterface->isConnected() == false) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+			buttonAutoFindServers.setEnabled(false);
+			buttonConnect.setEnabled(false);
+
+			NetworkManager &networkManager= NetworkManager::getInstance();
+			ClientInterface* clientInterface= networkManager.getClientInterface();
+			clientInterface->discoverServers(this);
+		//}
+	}
+}
+MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu,
+		bool connect, Ip serverIp,int portNumberOverride) :
+	MenuState(program, mainMenu, "join-game") {
+	CommonInit(connect, serverIp,portNumberOverride);
+}
+
+void MenuStateJoinGame::CommonInit(bool connect, Ip serverIp,int portNumberOverride) {
 	containerName = "JoinGame";
 	abortAutoFind = false;
 	autoConnectToServer = false;
@@ -69,37 +90,37 @@ MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool 
 	//buttons
 	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
 	buttonReturn.init(300, 300, 125);
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
 	buttonConnect.registerGraphicComponent(containerName,"buttonConnect");
 	buttonConnect.init(450, 300, 125);
-	buttonConnect.setText(lang.get("Connect"));
+	buttonConnect.setText(lang.getString("Connect"));
 
 	buttonCreateGame.registerGraphicComponent(containerName,"buttonCreateGame");
 	buttonCreateGame.init(450, 250, 125);
-	buttonCreateGame.setText(lang.get("HostGame"));
+	buttonCreateGame.setText(lang.getString("HostGame"));
 
 	buttonAutoFindServers.registerGraphicComponent(containerName,"buttonAutoFindServers");
 	buttonAutoFindServers.init(595, 300, 225);
-	buttonAutoFindServers.setText(lang.get("FindLANGames"));
+	buttonAutoFindServers.setText(lang.getString("FindLANGames"));
 	buttonAutoFindServers.setEnabled(true);
 
 	//server type label
 	labelServerType.registerGraphicComponent(containerName,"labelServerType");
 	labelServerType.init(330, 490);
-	labelServerType.setText(lang.get("ServerType") + ":");
+	labelServerType.setText(lang.getString("ServerType") + ":");
 
 	//server type list box
 	listBoxServerType.registerGraphicComponent(containerName,"listBoxServerType");
 	listBoxServerType.init(465, 490);
-	listBoxServerType.pushBackItem(lang.get("ServerTypeNew"));
-	listBoxServerType.pushBackItem(lang.get("ServerTypePrevious"));
-	listBoxServerType.pushBackItem(lang.get("ServerTypeFound"));
+	listBoxServerType.pushBackItem(lang.getString("ServerTypeNew"));
+	listBoxServerType.pushBackItem(lang.getString("ServerTypePrevious"));
+	listBoxServerType.pushBackItem(lang.getString("ServerTypeFound"));
 
 	//server label
 	labelServer.registerGraphicComponent(containerName,"labelServer");
 	labelServer.init(330, 460);
-	labelServer.setText(lang.get("Server") + ": ");
+	labelServer.setText(lang.getString("Server") + ": ");
 
 	//server listbox
 	listBoxServers.registerGraphicComponent(containerName,"listBoxServers");
@@ -114,22 +135,30 @@ MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool 
 
 	//server ip
 	labelServerIp.registerGraphicComponent(containerName,"labelServerIp");
+	labelServerIp.setEditable(true);
+	labelServerIp.setMaxEditWidth(15);
+	labelServerIp.setMaxEditRenderWidth(220);
 	labelServerIp.init(465, 460);
 
 	// server port
 	labelServerPortLabel.registerGraphicComponent(containerName,"labelServerPortLabel");
 	labelServerPortLabel.init(330,430);
-	labelServerPortLabel.setText(lang.get("ServerPort"));
+	labelServerPortLabel.setText(lang.getString("ServerPort"));
 
 	labelServerPort.registerGraphicComponent(containerName,"labelServerPort");
 	labelServerPort.init(465,430);
-	string port=intToStr(config.getInt("ServerPort"));
-	if(port != intToStr(GameConstants::serverPort)){
-		port=port +" ("+lang.get("NonStandardPort")+")";
+
+	string host = labelServerIp.getText();
+	int portNumber = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+	std::vector<std::string> hostPartsList;
+	Tokenize(host,hostPartsList,":");
+	if(hostPartsList.size() > 1) {
+		host = hostPartsList[0];
+		replaceAll(hostPartsList[1],"_","");
+		portNumber = strToInt(hostPartsList[1]);
 	}
-	else {
-		port=port +" ("+lang.get("StandardPort")+")";
-	}
+
+	string port = " ("+intToStr(portNumber)+")";
 	labelServerPort.setText(port);
 
 	labelStatus.registerGraphicComponent(containerName,"labelStatus");
@@ -144,16 +173,37 @@ MenuStateJoinGame::MenuStateJoinGame(Program *program, MainMenu *mainMenu, bool 
 	playerIndex= -1;
 
 	//server ip
-	if(connect)
-	{
-		labelServerIp.setText(serverIp.getString() + "_");
+	if(connect == true) 	{
+		string hostIP = serverIp.getString();
+		if(portNumberOverride > 0) {
+			hostIP += ":" + intToStr(portNumberOverride);
+		}
+
+		labelServerIp.setText(hostIP + "_");
 
 		autoConnectToServer = true;
 	}
-	else
-	{
-		labelServerIp.setText(config.getString("ServerIp") + "_");
+	else {
+		string hostIP = config.getString("ServerIp");
+		if(portNumberOverride > 0) {
+			hostIP += ":" + intToStr(portNumberOverride);
+		}
+
+		labelServerIp.setText(hostIP + "_");
 	}
+
+	host = labelServerIp.getText();
+	portNumber = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+	hostPartsList.clear();
+	Tokenize(host,hostPartsList,":");
+	if(hostPartsList.size() > 1) {
+		host = hostPartsList[0];
+		replaceAll(hostPartsList[1],"_","");
+		portNumber = strToInt(hostPartsList[1]);
+	}
+
+	port = " ("+intToStr(portNumber)+")";
+	labelServerPort.setText(port);
 
 	GraphicComponent::applyAllCustomProperties(containerName);
 
@@ -166,29 +216,33 @@ void MenuStateJoinGame::reloadUI() {
 
 	console.resetFonts();
 
-	buttonReturn.setText(lang.get("Return"));
-	buttonConnect.setText(lang.get("Connect"));
-	buttonCreateGame.setText(lang.get("HostGame"));
-	buttonAutoFindServers.setText(lang.get("FindLANGames"));
-	labelServerType.setText(lang.get("ServerType") + ":");
+	buttonReturn.setText(lang.getString("Return"));
+	buttonConnect.setText(lang.getString("Connect"));
+	buttonCreateGame.setText(lang.getString("HostGame"));
+	buttonAutoFindServers.setText(lang.getString("FindLANGames"));
+	labelServerType.setText(lang.getString("ServerType") + ":");
 
 	std::vector<string> listboxData;
-	listboxData.push_back(lang.get("ServerTypeNew"));
-	listboxData.push_back(lang.get("ServerTypePrevious"));
-	listboxData.push_back(lang.get("ServerTypeFound"));
+	listboxData.push_back(lang.getString("ServerTypeNew"));
+	listboxData.push_back(lang.getString("ServerTypePrevious"));
+	listboxData.push_back(lang.getString("ServerTypeFound"));
 	listBoxServerType.setItems(listboxData);
 
-	labelServer.setText(lang.get("Server") + ": ");
+	labelServer.setText(lang.getString("Server") + ": ");
 
-	labelServerPortLabel.setText(lang.get("ServerPort"));
+	labelServerPortLabel.setText(lang.getString("ServerPort"));
 
-	string port=intToStr(config.getInt("ServerPort"));
-	if(port != intToStr(GameConstants::serverPort)) {
-		port = port +" ("+lang.get("NonStandardPort")+")";
+	string host = labelServerIp.getText();
+	int portNumber = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+	std::vector<std::string> hostPartsList;
+	Tokenize(host,hostPartsList,":");
+	if(hostPartsList.size() > 1) {
+		host = hostPartsList[0];
+		replaceAll(hostPartsList[1],"_","");
+		portNumber = strToInt(hostPartsList[1]);
 	}
-	else {
-		port = port +" ("+lang.get("StandardPort")+")";
-	}
+
+	string port = " ("+intToStr(portNumber)+")";
 	labelServerPort.setText(port);
 
 	chatManager.init(&console, -1);
@@ -198,10 +252,12 @@ void MenuStateJoinGame::reloadUI() {
 
 MenuStateJoinGame::~MenuStateJoinGame() {
 	abortAutoFind = true;
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
 void MenuStateJoinGame::DiscoveredServers(std::vector<string> serverList) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	if(abortAutoFind == true) {
 		return;
@@ -211,14 +267,27 @@ void MenuStateJoinGame::DiscoveredServers(std::vector<string> serverList) {
 	//serverList.push_back("test2");
 	//
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
 	autoConnectToServer = false;
 	buttonAutoFindServers.setEnabled(true);
 	buttonConnect.setEnabled(true);
 	if(serverList.empty() == false) {
+		Config &config= Config::getInstance();
 		string bestIPMatch = "";
+		int serverGamePort = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
 		std::vector<std::string> localIPList = Socket::getLocalIPAddressList();
 
-		for(int idx = 0; idx < serverList.size(); idx++) {
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		for(int idx = 0; idx < (int)serverList.size(); idx++) {
+
+			vector<string> paramPartPortsTokens;
+			Tokenize(serverList[idx],paramPartPortsTokens,":");
+			if(paramPartPortsTokens.size() >= 2 && paramPartPortsTokens[1].length() > 0) {
+				serverGamePort = strToInt(paramPartPortsTokens[1]);
+			}
+
 			bestIPMatch = serverList[idx];
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] bestIPMatch = [%s] localIPList[0] = [%s]\n",__FILE__,__FUNCTION__,__LINE__,bestIPMatch.c_str(),localIPList[0].c_str());
@@ -228,7 +297,14 @@ void MenuStateJoinGame::DiscoveredServers(std::vector<string> serverList) {
 			}
 		}
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		if(bestIPMatch != "") {
+			bestIPMatch += ":" + intToStr(serverGamePort);
+		}
 		labelServerIp.setText(bestIPMatch);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		if(serverList.size() > 1) {
 			listBoxServerType.setSelectedItemIndex(MenuStateJoinGame::foundServersIndex);
@@ -239,6 +315,7 @@ void MenuStateJoinGame::DiscoveredServers(std::vector<string> serverList) {
 		}
 	}
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
 void MenuStateJoinGame::mouseClick(int x, int y, MouseButton mouseButton) {
@@ -267,6 +344,21 @@ void MenuStateJoinGame::mouseClick(int x, int y, MouseButton mouseButton) {
 				labelServerIp.setText(listBoxFoundServers.getText());
 			}
 		}
+
+		string host = labelServerIp.getText();
+		Config &config= Config::getInstance();
+		int portNumber = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+		std::vector<std::string> hostPartsList;
+		Tokenize(host,hostPartsList,":");
+		if(hostPartsList.size() > 1) {
+			host = hostPartsList[0];
+			replaceAll(hostPartsList[1],"_","");
+			portNumber = strToInt(hostPartsList[1]);
+		}
+
+		string port = " ("+intToStr(portNumber)+")";
+		labelServerPort.setText(port);
+
 	}
 
 	//return
@@ -284,41 +376,43 @@ void MenuStateJoinGame::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
 		abortAutoFind = true;
 		mainMenu->setState(new MenuStateNewGame(program, mainMenu));
+		return;
     }
 
 	//connect
 	else if(buttonConnect.mouseClick(x, y) && buttonConnect.getEnabled() == true) {
 		ClientInterface* clientInterface= networkManager.getClientInterface();
 
-		soundRenderer.playFx(coreData.getClickSoundA());
+		soundRenderer.playFx(coreData.getClickSoundB());
 		labelInfo.setText("");
 
-		if(clientInterface->isConnected())
-		{
+		if(clientInterface->isConnected()) {
 			clientInterface->reset();
 		}
-		else
-		{
-			connectToServer();
+		else {
+			if(connectToServer() == true) {
+				return;
+			}
 		}
 	}
     else if(buttonCreateGame.mouseClick(x, y)){
     	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		soundRenderer.playFx(coreData.getClickSoundB());
+
 		clientInterface->stopServerDiscovery();
 		if(clientInterface->getSocket() != NULL) {
 		    clientInterface->close();
 		}
 		abortAutoFind = true;
 		mainMenu->setState(new MenuStateCustomGame(program, mainMenu,true,pLanGame));
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		return;
     }
 
 	else if(buttonAutoFindServers.mouseClick(x, y) && buttonAutoFindServers.getEnabled() == true) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		ClientInterface* clientInterface= networkManager.getClientInterface();
-		soundRenderer.playFx(coreData.getClickSoundA());
+		soundRenderer.playFx(coreData.getClickSoundB());
 
 		// Triggers a thread which calls back into MenuStateJoinGame::DiscoveredServers
 		// with the results
@@ -394,11 +488,11 @@ void MenuStateJoinGame::update()
 	//update status label
 	if(clientInterface->isConnected())
 	{
-		buttonConnect.setText(lang.get("Disconnect"));
+		buttonConnect.setText(lang.getString("Disconnect"));
 
 		if(clientInterface->getAllowDownloadDataSynch() == false)
 		{
-		    string label = lang.get("ConnectedToServer");
+		    string label = lang.getString("ConnectedToServer");
 
             if(!clientInterface->getServerName().empty())
             {
@@ -430,7 +524,7 @@ void MenuStateJoinGame::update()
 		}
 		else
 		{
-		    string label = lang.get("ConnectedToServer");
+		    string label = lang.getString("ConnectedToServer");
 
             if(!clientInterface->getServerName().empty())
             {
@@ -464,8 +558,8 @@ void MenuStateJoinGame::update()
 	}
 	else
 	{
-		buttonConnect.setText(lang.get("Connect"));
-		string connectedStatus = lang.get("NotConnected");
+		buttonConnect.setText(lang.getString("Connect"));
+		string connectedStatus = lang.getString("NotConnected");
 		if(buttonAutoFindServers.getEnabled() == false) {
 			connectedStatus += " - searching for servers, please wait...";
 		}
@@ -487,10 +581,22 @@ void MenuStateJoinGame::update()
 			console.update();
 
 			//intro
-			if(clientInterface->getIntroDone())
-			{
-				labelInfo.setText(lang.get("WaitingHost"));
-				servers.setString(clientInterface->getServerName(), Ip(labelServerIp.getText()).getString());
+			if(clientInterface->getIntroDone()) {
+				labelInfo.setText(lang.getString("WaitingHost"));
+
+				string host = labelServerIp.getText();
+				std::vector<std::string> hostPartsList;
+				Tokenize(host,hostPartsList,":");
+				if(hostPartsList.size() > 1) {
+					host = hostPartsList[0];
+					replaceAll(hostPartsList[1],"_","");
+				}
+				string saveHost = Ip(host).getString();
+				if(hostPartsList.size() > 1) {
+					saveHost += ":" + hostPartsList[1];
+				}
+
+				servers.setString(clientInterface->getServerName(), saveHost);
 			}
 
 			//launch
@@ -505,14 +611,15 @@ void MenuStateJoinGame::update()
 				abortAutoFind = true;
 				clientInterface->stopServerDiscovery();
 				program->setState(new Game(program, clientInterface->getGameSettings(),false));
-
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] clientInterface->getLaunchGame() - C\n",__FILE__,__FUNCTION__);
+				return;
 			}
 		}
 	}
 	else if(autoConnectToServer == true) {
 		autoConnectToServer = false;
-		connectToServer();
+		if(connectToServer() == true) {
+			return;
+		}
 	}
 
     if(clientInterface != NULL && clientInterface->getLaunchGame()) if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] clientInterface->getLaunchGame() - D\n",__FILE__,__FUNCTION__);
@@ -527,13 +634,17 @@ void MenuStateJoinGame::keyDown(SDL_KeyboardEvent key) {
 
 		Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
 
-		//if(key == vkBack) {
-		if(isKeyPressed(SDLK_BACKSPACE,key) == true) {
+		string text = labelServerIp.getText();
+		if(isKeyPressed(SDLK_BACKSPACE,key) == true && text.length() > 0) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-			string text= labelServerIp.getText();
-
-			if(text.size() > 1) {
-				text.erase(text.end()-2);
+			size_t found = text.find_last_of("_");
+			if (found == string::npos) {
+				text.erase(text.end() - 1);
+			}
+			else {
+				if(text.size() > 1) {
+					text.erase(text.end() - 2);
+				}
 			}
 
 			labelServerIp.setText(text);
@@ -542,7 +653,7 @@ void MenuStateJoinGame::keyDown(SDL_KeyboardEvent key) {
 		else if(isKeyPressed(configKeys.getSDLKey("SaveGUILayout"),key) == true) {
 			bool saved = GraphicComponent::saveAllCustomProperties(containerName);
 			Lang &lang= Lang::getInstance();
-			console.addLine(lang.get("GUILayoutSaved") + " [" + (saved ? lang.get("Yes") : lang.get("No"))+ "]");
+			console.addLine(lang.getString("GUILayoutSaved") + " [" + (saved ? lang.getString("Yes") : lang.getString("No"))+ "]");
 		}
 	}
 	else {
@@ -557,7 +668,7 @@ void MenuStateJoinGame::keyDown(SDL_KeyboardEvent key) {
         	if(isKeyPressed(configKeys.getSDLKey("SaveGUILayout"),key) == true) {
 				bool saved = GraphicComponent::saveAllCustomProperties(containerName);
 				Lang &lang= Lang::getInstance();
-				console.addLine(lang.get("GUILayoutSaved") + " [" + (saved ? lang.get("Yes") : lang.get("No"))+ "]");
+				console.addLine(lang.getString("GUILayoutSaved") + " [" + (saved ? lang.getString("Yes") : lang.getString("No"))+ "]");
 			}
         }
 	}
@@ -576,13 +687,19 @@ void MenuStateJoinGame::keyPress(SDL_KeyboardEvent c) {
 		//if(c>='0' && c<='9') {
 		if( (key >= SDLK_0 && key <= SDLK_9) ||
 			(key >= SDLK_KP0 && key <= SDLK_KP9)) {
-			if(labelServerIp.getText().size() < maxTextSize) {
+			if((int)labelServerIp.getText().size() < maxTextSize) {
 				string text= labelServerIp.getText();
 				//text.insert(text.end()-1, key);
 				char szCharText[20]="";
-				sprintf(szCharText,"%c",key);
-				char *utfStr = String::ConvertToUTF8(&szCharText[0]);
-				text.insert(text.end() -1, utfStr[0]);
+				snprintf(szCharText,20,"%c",key);
+				char *utfStr = ConvertToUTF8(&szCharText[0]);
+				if(text.size() > 0) {
+					text.insert(text.end() -1, utfStr[0]);
+				}
+				else {
+					text = utfStr[0];
+				}
+
 				delete [] utfStr;
 
 				labelServerIp.setText(text);
@@ -590,9 +707,15 @@ void MenuStateJoinGame::keyPress(SDL_KeyboardEvent c) {
 		}
 		//else if (c=='.') {
 		else if (key == SDLK_PERIOD) {
-			if(labelServerIp.getText().size() < maxTextSize) {
+			if((int)labelServerIp.getText().size() < maxTextSize) {
 				string text= labelServerIp.getText();
-				text.insert(text.end()-1, '.');
+				if(text.size() > 0) {
+					text.insert(text.end() -1, '.');
+				}
+				else {
+					text = ".";
+				}
+
 				labelServerIp.setText(text);
 			}
 		}
@@ -602,18 +725,27 @@ void MenuStateJoinGame::keyPress(SDL_KeyboardEvent c) {
 	}
 }
 
-void MenuStateJoinGame::connectToServer() {
+bool MenuStateJoinGame::connectToServer() {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] START\n",__FILE__,__FUNCTION__);
 
-	ClientInterface* clientInterface= NetworkManager::getInstance().getClientInterface();
 	Config& config= Config::getInstance();
-	Ip serverIp(labelServerIp.getText());
+	string host = labelServerIp.getText();
+	int port = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+	std::vector<std::string> hostPartsList;
+	Tokenize(host,hostPartsList,":");
+	if(hostPartsList.size() > 1) {
+		host = hostPartsList[0];
+		replaceAll(hostPartsList[1],"_","");
+		port = strToInt(hostPartsList[1]);
+	}
+	Ip serverIp(host);
 
-	clientInterface->connect(serverIp, Config::getInstance().getInt("ServerPort",intToStr(GameConstants::serverPort).c_str()));
+	ClientInterface* clientInterface= NetworkManager::getInstance().getClientInterface();
+	clientInterface->connect(serverIp, port);
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] server - [%s]\n",__FILE__,__FUNCTION__,serverIp.getString().c_str());
 
-	labelServerIp.setText(serverIp.getString()+'_');
+	labelServerIp.setText(serverIp.getString() + '_');
 	labelInfo.setText("");
 
 	//save server ip
@@ -625,22 +757,32 @@ void MenuStateJoinGame::connectToServer() {
 	for(time_t elapsedWait = time(NULL);
 		clientInterface->getIntroDone() == false &&
 		clientInterface->isConnected() &&
-		difftime(time(NULL),elapsedWait) <= 5;) {
+		difftime(time(NULL),elapsedWait) <= 10;) {
 		if(clientInterface->isConnected()) {
 			//update lobby
 			clientInterface->updateLobby();
 			sleep(0);
+			//this->render();
 		}
 	}
 	if( clientInterface->isConnected() == true &&
 		clientInterface->getIntroDone() == true) {
 
+		string saveHost = Ip(host).getString();
+		if(hostPartsList.size() > 1) {
+			saveHost += ":" + hostPartsList[1];
+		}
+		servers.setString(clientInterface->getServerName(), saveHost);
+		servers.save(serversSavedFile);
+
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] Using FTP port #: %d\n",__FILE__,__FUNCTION__,__LINE__,clientInterface->getServerFTPPort());
 		abortAutoFind = true;
 		clientInterface->stopServerDiscovery();
 		mainMenu->setState(new MenuStateConnectedGame(program, mainMenu));
+		return true;
 	}
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] END\n",__FILE__,__FUNCTION__);
+	return false;
 }
 
 }}//end namespace

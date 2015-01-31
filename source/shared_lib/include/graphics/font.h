@@ -13,6 +13,7 @@
 #define _SHARED_GRAPHICS_FONT_H_
 
 #include <string>
+#include <vector>
 #include "font_text.h"
 #include "leak_dumper.h"
 
@@ -52,6 +53,9 @@ public:
 
 	float getTextWidth(const string &str);
 	float getHeight(const string &str) const;
+
+	string wordWrapText(string text, int maxWidth);
+
 };
 
 // =====================================================
@@ -66,6 +70,7 @@ public:
 	static bool forceLegacyFonts;
 	static bool forceFTGLFonts;
 	static bool fontIsRightToLeft;
+	static bool fontSupportMixedRightToLeft;
 	static float scaleFontValue;
 	static float scaleFontValueCenterHFactor;
 	static int baseSize;
@@ -106,6 +111,8 @@ public:
 
 	int getSize() const;
 	void setSize(int size);
+
+	static void bidi_cvt(string &str_);
 
 	static void resetToDefaults();
 };

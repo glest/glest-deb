@@ -12,12 +12,22 @@
 #ifndef _GLEST_GAME_BATTLEEND_H_
 #define _GLEST_GAME_BATTLEEND_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "program.h"
 #include "stats.h"
 #include "leak_dumper.h"
 
+namespace Shared { namespace Graphics {
+	class VideoPlayer;
+}}
+
 namespace Glest{ namespace Game{
 
+class GameSettings;
 // =====================================================
 // 	class BattleEnd  
 //
@@ -29,13 +39,16 @@ private:
 	Stats stats;
 
 	GraphicButton buttonExit;
-	int mouseX;
-	int mouseY;
 	int mouse2d;
 	GraphicMessageBox mainMessageBox;
 	Texture2D *renderToTexture;
+	uint64 renderToTextureCount;
 	ProgramState *originState;
 	const char *containerName;
+
+	::Shared::Graphics::VideoPlayer *menuBackgroundVideo;
+	GameSettings *gameSettings;
+	StrSound battleEndMusic;
 
 	void showMessageBox(const string &text, const string &header, bool toggle);
 
@@ -50,6 +63,13 @@ public:
 	virtual void mouseMove(int x, int y, const MouseState *ms);
 	//virtual void tick();
 	virtual void reloadUI();
+
+private:
+
+	void initBackgroundVideo();
+	std::pair<string,string> getBattleEndVideo(bool won);
+	string getBattleEndMusic(bool won);
+	void initBackgroundMusic();
 };
 
 }}//end namespace

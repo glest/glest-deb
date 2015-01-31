@@ -130,10 +130,10 @@ int g3d2xml(FILE *infile, FILE *outfile)
 	struct ModelHeader modelHeader;
 	struct MeshHeader meshHeader;
 	size_t nBytes;
-	uint8 textureName[NAMESIZE];
+	uint8 textureName[NAMESIZE+1];
 	float32 *fdata;
 	uint32 *idata;
-	int ii, jj, kk;
+	unsigned int ii, jj, kk;
 
 	/* read in the FileHeader */
 	nBytes = sizeof(struct FileHeader);
@@ -185,13 +185,13 @@ int g3d2xml(FILE *infile, FILE *outfile)
 			printf("Could not read mesh header!\n");
 			return FALSE;
 		}
-		
+		meshHeader.name[NAMESIZE-1] = 0;
 		/* write out XML mesh header */
 		fprintf(outfile, "\t<Mesh name=\"%s\" ", meshHeader.name);
-		fprintf(outfile, "frameCount=\"%d\" ", meshHeader.frameCount);
-		fprintf(outfile, "vertexCount=\"%d\" ",
+		fprintf(outfile, "frameCount=\"%u\" ", meshHeader.frameCount);
+		fprintf(outfile, "vertexCount=\"%u\" ",
 			meshHeader.vertexCount);
-		fprintf(outfile, "indexCount=\"%d\" ", meshHeader.indexCount);
+		fprintf(outfile, "indexCount=\"%u\" ", meshHeader.indexCount);
 		fprintf(outfile, "specularPower=\"%f\" ",
 			meshHeader.specularPower);
 		fprintf(outfile, "opacity=\"%f\" ", meshHeader.opacity);
@@ -226,12 +226,13 @@ int g3d2xml(FILE *infile, FILE *outfile)
 		/* read / write the texture name if present */
 		if (meshHeader.textures)
 		{
-			nBytes = sizeof(textureName);
-			if (fread(&textureName, nBytes, 1, infile) != 1)
-			{
+			memset(&textureName[0],0,NAMESIZE+1);
+			nBytes = NAMESIZE;
+			if (fread(&textureName, nBytes, 1, infile) != 1) {
 				printf("Could not read texture name!\n");
 				return FALSE;
 			}
+			textureName[NAMESIZE] = 0;
 			fprintf(outfile, "\t\t<Texture name=\"%s\"/>\n",
 				textureName);
 		}
@@ -252,7 +253,7 @@ int g3d2xml(FILE *infile, FILE *outfile)
 				free(fdata);
 				return FALSE;
 			}
-			fprintf(outfile, "\t\t<Vertices frame=\"%d\">\n",
+			fprintf(outfile, "\t\t<Vertices frame=\"%u\">\n",
 				jj);
 			for (kk=0; kk < meshHeader.vertexCount; kk++)
 			{
@@ -286,7 +287,7 @@ int g3d2xml(FILE *infile, FILE *outfile)
 				free(fdata);
 				return FALSE;
 			}
-			fprintf(outfile, "\t\t<Normals frame=\"%d\">\n",
+			fprintf(outfile, "\t\t<Normals frame=\"%u\">\n",
 				jj);
 			for (kk=0; kk < meshHeader.vertexCount; kk++)
 			{
@@ -352,7 +353,7 @@ int g3d2xml(FILE *infile, FILE *outfile)
 		fprintf(outfile, "\t\t<Indices>\n");
 		for (kk=0; kk < meshHeader.indexCount; kk++)
 		{
-			fprintf(outfile, "\t\t\t<Ix i=\"%d\"/>\n",
+			fprintf(outfile, "\t\t\t<Ix i=\"%u\"/>\n",
 				idata[kk]);
 		}
 		fprintf(outfile, "\t\t</Indices>\n");

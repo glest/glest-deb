@@ -48,7 +48,7 @@ class UndoPoint {
 	private:
 		// Only keep a certain number of undo points in memory otherwise
 		// Big projects could hog a lot of memory
-		const static int MAX_UNDO_LIST_SIZE = 100; // TODO get feedback on this value
+		const static int MAX_UNDO_LIST_SIZE = 100;
 		static int undoCount;
 
 		ChangeType change;
@@ -76,6 +76,7 @@ class ChangeStack : public std::stack<UndoPoint> {
 public:
 	static const unsigned int maxSize = 100;
 
+	ChangeStack() : std::stack<UndoPoint>() { }
 	void clear() { c.clear(); }
 
 	void push(UndoPoint p) {
@@ -97,15 +98,27 @@ private:
 	int ofsetX, ofsetY;
 	int cellSize;
 	bool grid; // show grid option
+	bool heightmap;
+	bool hideWater;
 	//static Map *map;
 	static MapPreview *map;
 	friend class UndoPoint;
 
 	ChangeStack undoStack, redoStack;
 
+	void init();
 public:
 	Program(int w, int h);
 	~Program();
+
+	Program(const Program& obj) {
+		init();
+		throw runtime_error("class Program is NOT safe to copy!");
+	}
+	Program & operator=(const Program& obj) {
+		init();
+		throw runtime_error("class Program is NOT safe to assign!");
+	}
 
 	//map cell change
 	void glestChangeMapHeight(int x, int y, int Height, int radius);
@@ -157,9 +170,13 @@ public:
 	void incCellSize(int i);
 	void resetOfset();
 	bool setGridOnOff();
+	bool setHeightMapOnOff();
+	bool setHideWaterOnOff();
 
 	int getObject(int x, int y);
 	int getResource(int x, int y);
+	int getCellX(int x);
+	int getCellY(int y);
 	static const MapPreview *getMap() {return map;}
 };
 

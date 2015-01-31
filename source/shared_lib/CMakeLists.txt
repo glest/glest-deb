@@ -12,10 +12,15 @@ ENDIF()
 SET(EXTERNAL_LIBS "")
 SET(TARGET_NAME "libmegaglest")
 
-IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST_CONFIGURATOR OR BUILD_MEGAGLEST)
+IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST)
 	MESSAGE(STATUS "Will try to build MegaGlest shared library")
 
 	INCLUDE (CheckIncludeFiles)
+
+#Game options
+option(ENABLE_FRIBIDI "Enable FriBIDi support" ON)
+option(FORCE_LUA_5_1 "Force looking for LUA 5.1" OFF)
+option(FORCE_LUA_5_2 "Force looking for LUA 5.2" OFF)
 
 	IF(WIN32)
 		SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
@@ -101,19 +106,11 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${OPENAL_LIBRARY})
 	ENDIF()
 
-	# FIND_PACKAGE(OGG REQUIRED)
-	# INCLUDE_DIRECTORIES(${OGG_INCLUDE_DIR})
-	# IF(UNIX)
-		# SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${OGG_LIBRARY})
-		# SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${VORBIS_LIBRARY})
-		# SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${VORBIS_FILE_LIBRARY})
-	# ENDIF()
-
-	FIND_PACKAGE(LUA REQUIRED)
-	INCLUDE_DIRECTORIES(${LUA_INCLUDE_DIR})
-	IF(UNIX)
-		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${LUA_LIBRARIES})
-	ENDIF()
+        FIND_PACKAGE(LUA REQUIRED)
+        INCLUDE_DIRECTORIES(${LUA_INCLUDE_DIR})
+        IF(UNIX)
+	        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${LUA_LIBRARIES} ${CMAKE_DL_LIBS})
+        ENDIF()
 
 	OPTION(WANT_STATIC_LIBS "builds as many static libs as possible" OFF)
 
@@ -136,15 +133,18 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${PNG_LIBRARY})
 	ENDIF()
 
-	FIND_PACKAGE(FontConfig)
-	IF(FONTCONFIG_FOUND)
-            MESSAGE(STATUS "**NOTE: FontConfig support was detected and enabled.")
-	    SET(HAVE_FONTCONFIG 1)
-            ADD_DEFINITIONS(-DHAVE_FONTCONFIG)
+        OPTION(WANT_FONTCONFIG "use the library fontconfig" ON)
+	IF(WANT_FONTCONFIG)
+	        FIND_PACKAGE(FontConfig)
+	        IF(FONTCONFIG_FOUND)
+                    MESSAGE(STATUS "**NOTE: FontConfig support was detected and enabled.")
+	            SET(HAVE_FONTCONFIG 1)
+                    ADD_DEFINITIONS(-DHAVE_FONTCONFIG)
 
-	    INCLUDE_DIRECTORIES( ${FONTCONFIG_INCLUDE_DIR} ) 
-	    SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${FONTCONFIG_LIBRARIES} )
-	ENDIF(FONTCONFIG_FOUND)
+	            INCLUDE_DIRECTORIES( ${FONTCONFIG_INCLUDE_DIR} ) 
+	            SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${FONTCONFIG_LIBRARIES} )
+	        ENDIF(FONTCONFIG_FOUND)
+        ENDIF()
 
 	OPTION(USE_FTGL "Use FTGL for on-screen fonts (found on your system)" ON)
 
@@ -185,18 +185,7 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		        MESSAGE(STATUS "**NOTE:  Warning: FTGL font support was not detected. Visit http://ftgl.wiki.sourceforge.net/ for help on installing FTGL.")
 		ENDIF()
 	
-		# todo: change this because its obscure and probably not being used
-		#set (FTGL_INCLUDE_DIRS )
-		#set (FTGL_LINK_DIRS )
-		#set (FTGL_LINK_TARGETS )
 	ENDIF(USE_FTGL)
-
-	IF(MINIUPNPC_VERSION_PRE1_5)
-		ADD_DEFINITIONS(-DMINIUPNPC_VERSION_PRE1_5)
-	ENDIF()
-	IF(MINIUPNPC_VERSION_PRE1_6)
-		ADD_DEFINITIONS(-DMINIUPNPC_VERSION_PRE1_6)
-	ENDIF()
 
 	OPTION(USE_FREETYPEGL "Use Freetype-GL for on-screen fonts" OFF)
 	if(USE_FREETYPEGL)
@@ -215,16 +204,69 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${GLEW_LIBRARY})
 	ENDIF()
 
+        SET(LIBVLC_MIN_VERSION "1.1.0")
+	FIND_PACKAGE(LIBVLC)
+
+        MESSAGE(STATUS "LIBVLC version: ${LIBVLC_VERSION} WITH_VLC macro: ${WITH_VLC}")
+
+        IF(LIBVLC_FOUND AND WITH_VLC AND NOT LIBVLC_VERSION STRLESS "${LIBVLC_MIN_VERSION}")
+                MESSAGE(STATUS "**NOTE: LIBVLC found so videos are supported.")
+	        INCLUDE_DIRECTORIES(${LIBVLC_INCLUDE_DIR})
+	        IF(UNIX)
+		        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${LIBVLCCORE_LIBRARY} ${LIBVLC_LIBRARY})
+                        ADD_DEFINITIONS(-DHAS_LIBVLC)
+	        ENDIF()
+		IF(LIBVLC_VERSION_PRE_V2)
+			ADD_DEFINITIONS(-DLIBVLC_VERSION_PRE_2)
+		ENDIF()
+		IF(LIBVLC_VERSION_PRE_1_1_13)
+			ADD_DEFINITIONS(-DLIBVLC_VERSION_PRE_1_1_13)
+		ENDIF()
+		
+        ELSE()
+                MESSAGE(STATUS "**WARNING: LIBVLC NOT found so videos are NOT supported.")
+                
+                IF(WITH_VLC)
+	                MESSAGE(STATUS "**WARNING: LIBVLC NOT found so videos are NOT supported.")
+		ELSE()
+			MESSAGE(STATUS "LIBVLC disabled so videos are NOT supported.")
+		ENDIF()
+        ENDIF()
+
+
+	find_package( FriBiDi )
+	if(ENABLE_FRIBIDI AND FRIBIDI_LIBRARIES)
+	        add_definitions(-DHAVE_FRIBIDI)
+
+        	include_directories( ${FRIBIDI_INCLUDE_DIR} )
+                SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${FRIBIDI_LIBRARIES})
+
+	elseif(ENABLE_FRIBIDI AND NOT FRIBIDI_LIBRARIES)
+		message("Could not find FriBiDi. Disabling FriBiDi support.")
+	endif()
+
+	find_package( GoogleBreakpad )
+	if(BREAKPAD_EXCEPTION_HANDLER_FOUND AND BREAKPAD_EXCEPTION_HANDLER_LIBRARIES)
+	        add_definitions(-DHAVE_GOOGLE_BREAKPAD)
+
+        	#include_directories( ${BREAKPAD_EXCEPTION_HANDLER_INCLUDE_DIR} )
+                #SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${BREAKPAD_EXCEPTION_HANDLER_LIBRARIES})
+
+	else()
+		message("** WARNING: Could not find GoogleBreakpad. Disabling GoogleBreakpad support.")
+	endif()
+
 	#########################################################################################
 	# megaglest lib
 
 	SET(DIRS_WITH_SRC
+                compression
 		feathery_ftp	
 		glew
 		graphics
 		graphics/freetype-gl
 		graphics/gl
-		graphics/md5
+		graphics/iqm
 		lua
 		map	
 		platform/common
@@ -237,24 +279,54 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		SET(DIRS_WITH_SRC
 			${DIRS_WITH_SRC}
 			streflop
-			streflop/libm_flt32_source)
+			streflop/libm_flt32_source
+                        streflop/softfloat)
 	ENDIF()
 
-	IF(NOT WANT_STATIC_LIBS)
-		MESSAGE(STATUS "*** Searching for miniupnpc since WANT_STATIC_LIBS is off ...")
-		FIND_PACKAGE(Miniupnpc)
-	ENDIF()
+	#IF(NOT WANT_STATIC_LIBS)
+	#MESSAGE(STATUS "*** Searching for miniupnpc since WANT_STATIC_LIBS is off ...")
+        MESSAGE(STATUS "*** Searching for miniupnpc ...")
+	FIND_PACKAGE(Miniupnpc)
+	#ENDIF()
 
 	if(NOT MINIUPNP_FOUND)
 		MESSAGE(STATUS "*** Using EMBEDDED miniupnpc since dev system does not have it... MINIUPNP_FOUND [${MINIUPNP_FOUND}]")
 
+                if (NOT WIN32)
+                   add_definitions (-DMINIUPNPC_SET_SOCKET_TIMEOUT)
+                   add_definitions (-D_BSD_SOURCE)
+
+                   if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+                      add_definitions (-DMACOSX -D_DARWIN_C_SOURCE)
+                   else()
+                      add_definitions (-D_POSIX_C_SOURCE=1)
+                   endif ()
+                endif()
+
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} platform/miniupnpc)
 	else()
-		MESSAGE(STATUS "*** Using SHARED miniupnpc found in [${MINIUPNP_INCLUDE_DIR}] MINIUPNP_FOUND [${MINIUPNP_FOUND}] MINIUPNP_LIBRARY [${MINIUPNP_LIBRARY}]")
+		MESSAGE(STATUS "*** Using miniupnpc lib found in [${MINIUPNP_INCLUDE_DIR}] MINIUPNP_FOUND [${MINIUPNP_FOUND}] MINIUPNP_LIBRARY [${MINIUPNP_LIBRARY}]")
 
 		INCLUDE_DIRECTORIES(${MINIUPNP_INCLUDE_DIR})
 		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${MINIUPNP_LIBRARY})
 	endif()
+
+	IF(MINIUPNPC_VERSION_PRE1_5)
+	        ADD_DEFINITIONS(-DMINIUPNPC_VERSION_PRE1_5)
+                message(STATUS "Adding macro for miniupnpc version: pre v1.5")
+	ENDIF()
+	IF(MINIUPNPC_VERSION_PRE1_6)
+		ADD_DEFINITIONS(-DMINIUPNPC_VERSION_PRE1_6)
+                message(STATUS "Adding macro for miniupnpc version: pre v1.6")
+	ENDIF()
+	IF(MINIUPNPC_VERSION_PRE1_7)
+		ADD_DEFINITIONS(-DMINIUPNPC_VERSION_PRE1_7)
+                message(STATUS "Adding macro for miniupnpc version: pre v1.7")
+	ENDIF()
+
+        IF(NOT MINIUPNPC_VERSION_PRE1_5 AND NOT MINIUPNPC_VERSION_PRE1_6 AND NOT MINIUPNPC_VERSION_PRE1_7)
+                message(STATUS "**No macros required for miniupnpc version")
+        ENDIF()
 
 	IF(APPLE)
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} platform/sdl)
@@ -262,7 +334,6 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} platform/macosx)
 	ELSEIF(WIN32)
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} platform/win32)
-		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} sound/ds8)
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} ${PROJECT_SOURCE_DIR}/source/win32_deps/src)
 	ELSE()
 		SET(DIRS_WITH_SRC ${DIRS_WITH_SRC} platform/sdl)
@@ -275,47 +346,58 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 	SET(MG_INCLUDE_FILES "")
 	SET(MG_SOURCE_FILES "")
 	INCLUDE_DIRECTORIES( ${MG_INCLUDES_ROOT}platform/sdl )
+        INCLUDE_DIRECTORIES( ${MG_INCLUDES_ROOT}xml/rapidxml )
+        INCLUDE_DIRECTORIES("sources/")
 
-	IF(NOT WANT_STATIC_LIBS)
-		MESSAGE(STATUS "*** Searching for libircclient since WANT_STATIC_LIBS is off ...")
-		FIND_PACKAGE(Ircclient)
-	ENDIF()
+        option(DISABLE_IRCCLIENT "Disable libircclient support" OFF)
 
-	if(NOT IRCCLIENT_FOUND)
-		MESSAGE(STATUS "*** Using EMBEDDED libircclient since dev system does not have it... IRCCLIENT_FOUND [${IRCCLIENT_FOUND}]")
+        IF(NOT DISABLE_IRCCLIENT)
+	        #IF(NOT WANT_STATIC_LIBS)
+		        MESSAGE(STATUS "*** Searching for libircclient since WANT_STATIC_LIBS is: ${WANT_STATIC_LIBS} ...")
+		        FIND_PACKAGE(Ircclient)
+	        #ENDIF()
 
-		SET(MG_SOURCE_FILES ${MG_SOURCE_FILES} ${PROJECT_SOURCE_DIR}/source/shared_lib/sources/libircclient/src/libircclient.c)
-		INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/shared_lib/include/libircclient/include)
-	else()
-		MESSAGE(STATUS "*** Using SHARED libircclient found in [${IRCCLIENT_INCLUDE_DIR}] IRCCLIENT_FOUND [${IRCCLIENT_FOUND}] IRCCLIENT_LIBRARY [${IRCCLIENT_LIBRARY}]")
+	        if(NOT IRCCLIENT_FOUND)
+		        MESSAGE(STATUS "*** Using EMBEDDED libircclient since this system does not have it... IRCCLIENT_FOUND [${IRCCLIENT_FOUND}]")
 
-		INCLUDE_DIRECTORIES(${IRCCLIENT_INCLUDE_DIR})
-		SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${IRCCLIENT_LIBRARY})
-	endif()
+		        SET(MG_SOURCE_FILES ${MG_SOURCE_FILES} ${PROJECT_SOURCE_DIR}/source/shared_lib/sources/libircclient/src/libircclient.c)
+		        INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/source/shared_lib/include/libircclient/include)
+	        else()
+		        MESSAGE(STATUS "*** Using libircclient found in [${IRCCLIENT_INCLUDE_DIR}] IRCCLIENT_FOUND [${IRCCLIENT_FOUND}] IRCCLIENT_LIBRARY [${IRCCLIENT_LIBRARY}]")
 
-        set(CMAKE_REQUIRED_INCLUDES "${IRCCLIENT_INCLUDE_DIR}")
-        set(CMAKE_REQUIRED_LIBRARIES "${IRCCLIENT_LIBRARY}")
-        check_cxx_source_runs("
-        #include <stdio.h>
-        #include <stdlib.h>
-        #include <libircclient.h>
-        int main()
-        {
-        unsigned int high = 0;
-        unsigned int low = 0;
-        irc_get_version(&high,&low);
-        if( (high == 1 && low >= 6) || (high > 1)) {
-          return 0;
-        }
-        throw 1;
-        }"
-        HAS_LIBIRCCLIENT_1_6)
+		        INCLUDE_DIRECTORIES(${IRCCLIENT_INCLUDE_DIR})
+		        SET(EXTERNAL_LIBS ${EXTERNAL_LIBS} ${IRCCLIENT_LIBRARY})
+	        endif()
 
-        IF(HAS_LIBIRCCLIENT_1_6)
-                message(STATUS "Found HAS_LIBIRCCLIENT_1_6: ${HAS_LIBIRCCLIENT_1_6}")
-        ELSE()
-                ADD_DEFINITIONS(-DLIBIRCCLIENT_PRE1_6)
-        ENDIF()
+                set(CMAKE_REQUIRED_INCLUDES "${IRCCLIENT_INCLUDE_DIR}")
+                set(CMAKE_REQUIRED_LIBRARIES "${IRCCLIENT_LIBRARY}")
+                include(CheckCXXSourceRuns)
+
+                check_cxx_source_runs("
+                #include <stdio.h>
+                #include <stdlib.h>
+                #include <libircclient.h>
+                int main()
+                {
+                unsigned int high = 0;
+                unsigned int low = 0;
+                irc_get_version(&high,&low);
+                if( (high == 1 && low >= 6) || (high > 1)) {
+                  return 0;
+                }
+                throw 1;
+                }"
+                HAS_LIBIRCCLIENT_1_6)
+
+                IF(HAS_LIBIRCCLIENT_1_6)
+                        message(STATUS "Found HAS_LIBIRCCLIENT_1_6: ${HAS_LIBIRCCLIENT_1_6}")
+                ELSE()
+                        ADD_DEFINITIONS(-DLIBIRCCLIENT_PRE1_6)
+                ENDIF()
+        else()
+                message(STATUS "****WARNING DISABLING libircclient!!")
+                ADD_DEFINITIONS(-DDISABLE_IRCCLIENT)
+        endif()
 
 	IF(WIN32)
 		SET(MG_SOURCE_FILES ${MG_SOURCE_FILES} ${PROJECT_SOURCE_DIR}/source/shared_lib/sources/platform/posix/socket.cpp)
@@ -365,7 +447,6 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 	#MESSAGE(STATUS "Source files: ${MG_SOURCE_FILES}")
 	#MESSAGE(STATUS "Include dirs: ${INCLUDE_DIRECTORIES}")
 
-	# FIXME: hackish, should be tested for
 	IF(APPLE)
 		SET(PLATFORM_SPECIFIC_DEFINES "-DHAVE_SYS_IOCTL_H")
 	ELSEIF(WIN32)
@@ -373,11 +454,6 @@ IF(BUILD_MEGAGLEST_MODEL_VIEWER OR BUILD_MEGAGLEST_MAP_EDITOR OR BUILD_MEGAGLEST
 	ELSE()
 		SET(PLATFORM_SPECIFIC_DEFINES "-DX11_AVAILABLE -DHAVE_SYS_IOCTL_H")
 	ENDIF()
-
-	# FIXME: hackish...
-#	IF(WANT_STREFLOP)
-#		SET(STREFLOP_PROPERTIES "-DSTREFLOP_SSE -DLIBM_COMPILING_FLT32")
-#	ENDIF()
 
 	SET_SOURCE_FILES_PROPERTIES(${MG_SOURCE_FILES} PROPERTIES COMPILE_FLAGS 
 		"${PLATFORM_SPECIFIC_DEFINES} ${STREFLOP_PROPERTIES} ${CXXFLAGS}")

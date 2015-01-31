@@ -12,7 +12,7 @@
 #include "JPGReader.h"
 #include "FileReader.h"
 
-#include "types.h"
+#include "data_types.h"
 #include "pixmap.h"
 #include <stdexcept>
 #include <jpeglib.h>
@@ -23,8 +23,6 @@
 
 using std::runtime_error;
 using std::ios;
-
-/**Used things from CImageLoaderJPG.cpp from Irrlicht*/
 
 namespace Shared{ namespace Graphics{
 
@@ -39,7 +37,7 @@ static void init_source(j_decompress_ptr cinfo) {
 }
 static boolean fill_input_buffer (j_decompress_ptr cinfo) {
 	//it is already filled
-	return true;
+	return boolean(true);
 }
 static void skip_input_data (j_decompress_ptr cinfo, long num_bytes) {
 	if (num_bytes > 0) {
@@ -72,23 +70,33 @@ static inline std::vector<string> getExtensions() {
 JPGReader::JPGReader(): FileReader<Pixmap2D>(getExtensions()) {}
 
 Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	//Read file
 	is.seekg(0, ios::end);
-	size_t length = is.tellg();
+	streampos length = is.tellg();
 	if (length < 8) {
 		return NULL;
 	}
 	is.seekg(0, ios::beg);
-	uint8 *buffer = new uint8[length];
+	uint8 *buffer = new uint8[(unsigned int)length];
 	is.read((char*)buffer, (std::streamsize)length);
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		Shared::PlatformByteOrder::fromEndianTypeArray<uint8>(buffer,(size_t)length);
+	}
+	if(length < 2) {
+		throw megaglest_runtime_error("length < 2",true);
+	}
 	//Check buffer (weak jpeg check)
 	//if (buffer[0] != 0x46 || buffer[1] != 0xA0) {
 	// Proper header check found from: http://www.fastgraph.com/help/jpeg_header_format.html
 	if (buffer[0] != 0xFF || buffer[1] != 0xD8) {
 	    std::cout << "0 = [" << std::hex << (int)buffer[0] << "] 1 = [" << std::hex << (int)buffer[1] << "]" << std::endl;
 		delete[] buffer;
-		return NULL;
+		throw megaglest_runtime_error(path +" is not a jpeg",true);
 	}
 
 	struct jpeg_decompress_struct cinfo;
@@ -102,7 +110,7 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 
 	jmp_buf error_buffer; //Used for saving/restoring context
 	// Set up data pointer
-	source.bytes_in_buffer = length;
+	source.bytes_in_buffer = (size_t)length;
 	source.next_input_byte = (JOCTET*)buffer;
 	cinfo.src = &source;
 
@@ -112,7 +120,7 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 		if (row_pointer[0] != NULL) {
 			delete[] row_pointer[0];
 		}
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(1) jpeg",true);
 	}
 
 	source.init_source = init_source;
@@ -125,7 +133,7 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 	if (jpeg_read_header( &cinfo, TRUE ) != JPEG_HEADER_OK) {
 		delete[] buffer;
 		jpeg_destroy_decompress(&cinfo);
-		return NULL;
+		throw megaglest_runtime_error(path +" is a corrupt(1) jpeg",true);
 	}
 
 
@@ -137,21 +145,21 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 	int picComponents = (ret->getComponents() == -1)?cinfo.num_components:ret->getComponents();
 	//std::cout << "JPG-Components: Pic: " << picComponents << " old: " << (ret->getComponents()) << " File: " << cinfo.num_components << std::endl;
 	//picComponents = 4;
-	//TODO: Irrlicht has some special CMYK-handling - maybe needed too?
-	/* Start decompression jpeg here */
+
+	// Start decompression jpeg here
 	jpeg_start_decompress( &cinfo );
 	ret->init(cinfo.image_width, cinfo.image_height, picComponents);
 	uint8* pixels = ret->getPixels();
 	//std::cout << "output width and height: " << cinfo.output_width <<" pixels and " << cinfo.output_height <<" pixels." << std::endl;
 	/* now actually read the jpeg into the raw buffer */
 	row_pointer[0] = new unsigned char[cinfo.output_width*cinfo.num_components];
-	size_t location = 0; //Current pixel
 	/* read one scan line at a time */
 	/* Again you need to invert the lines unfortunately*/
 	while( cinfo.output_scanline < cinfo.output_height )
 	{
 		jpeg_read_scanlines( &cinfo, row_pointer, 1 );
-		location = (cinfo.output_height - cinfo.output_scanline)*cinfo.output_width*picComponents;
+		//Current pixel
+		size_t location = (cinfo.output_height - cinfo.output_scanline) * cinfo.output_width * picComponents;
 		if (picComponents == cinfo.num_components) {
 			memcpy(pixels+location,row_pointer[0],cinfo.output_width*cinfo.num_components);
 		} else {
@@ -173,7 +181,7 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 						a = row_pointer[0][xFile+3];
 						break;
 					default:
-						//TODO: Error
+						// Possible Error
 					case 1:
 						r = g = b = l = row_pointer[0][xFile];
 						a = 255;
@@ -195,7 +203,8 @@ Pixmap2D* JPGReader::read(ifstream& is, const string& path, Pixmap2D* ret) const
 						for (int i = 0; i < picComponents; ++i) {
 							pixels[location+xPic+i] = l;
 						}
-						//TODO: Error
+						break;
+						// Possible Error
 				}
 			}
 		}

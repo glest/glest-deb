@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 #include <stdexcept>
+#include "platform_util.h"
 #include "leak_dumper.h"
 
 using namespace std;
@@ -48,7 +49,7 @@ protected:
 	template <typename T>
 	static Mutex & manageCachedItemMutex(string cacheKey) {
 		if(itemCacheMutexList.find(cacheKey) == itemCacheMutexList.end()) {
-			itemCacheMutexList[cacheKey] = new Mutex();
+			itemCacheMutexList[cacheKey] = new Mutex(CODE_AT_LINE);
 		}
 		Mutex *mutex = itemCacheMutexList[cacheKey];
 		return *mutex;
@@ -69,18 +70,20 @@ protected:
 					safeMutex.ReleaseLock();
 				}
 				catch(const std::exception &ex) {
-					throw runtime_error(ex.what());
+					throw megaglest_runtime_error(ex.what());
 				}
 
 			}
-			try {
-				Mutex &mutexCache = manageCachedItemMutex<T>(cacheKey);
-				MutexSafeWrapper safeMutex(&mutexCache);
-				itemCache[cacheKey] = *value;
-				safeMutex.ReleaseLock();
-			}
-			catch(const std::exception &ex) {
-				throw runtime_error(ex.what());
+			if(value != NULL) {
+				try {
+					Mutex &mutexCache = manageCachedItemMutex<T>(cacheKey);
+					MutexSafeWrapper safeMutex(&mutexCache);
+					itemCache[cacheKey] = *value;
+					safeMutex.ReleaseLock();
+				}
+				catch(const std::exception &ex) {
+					throw megaglest_runtime_error(ex.what());
+				}
 			}
 		}
 		// If this is the first access we return a default object of the type

@@ -289,9 +289,9 @@ static Simple pS2[5] = {
 #endif
 {
 #ifdef __STDC__
-	const Simple *p,*q;
+	const Simple *p=0,*q=0;
 #else
-	Simple *p,*q;
+	Simple *p=0,*q=0;
 #endif
 	Simple z,r,s;
 	int32_t ix;
@@ -301,6 +301,8 @@ static Simple pS2[5] = {
 	else if(ix>=0x40f71c58){p = pR5; q= pS5;}
 	else if(ix>=0x4036db68){p = pR3; q= pS3;}
 	else if(ix>=0x40000000){p = pR2; q= pS2;}
+	//else throw std::exception("unknown state for pointers p and q!");
+	else throw "unknown state for pointers p and q!";
 	z = one/(x*x);
 	r = p[0]+z*(p[1]+z*(p[2]+z*(p[3]+z*(p[4]+z*p[5]))));
 	s = one+z*(q[0]+z*(q[1]+z*(q[2]+z*(q[3]+z*q[4]))));
@@ -425,9 +427,9 @@ static Simple qS2[6] = {
 #endif
 {
 #ifdef __STDC__
-	const Simple *p,*q;
+	const Simple *p=0,*q=0;
 #else
-	Simple *p,*q;
+	Simple *p=0,*q=0;
 #endif
 	Simple s,r,z;
 	int32_t ix;
@@ -437,6 +439,8 @@ static Simple qS2[6] = {
 	else if(ix>=0x40f71c58){p = qR5; q= qS5;}
 	else if(ix>=0x4036db68){p = qR3; q= qS3;}
 	else if(ix>=0x40000000){p = qR2; q= qS2;}
+	//else throw std::exception("unknown state for pointer p!");
+	else throw "unknown state for pointers p and q!";
 	z = one/(x*x);
 	r = p[0]+z*(p[1]+z*(p[2]+z*(p[3]+z*(p[4]+z*p[5]))));
 	s = one+z*(q[0]+z*(q[1]+z*(q[2]+z*(q[3]+z*(q[4]+z*q[5])))));

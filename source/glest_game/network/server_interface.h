@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_SERVERINTERFACE_H_
 #define _GLEST_GAME_SERVERINTERFACE_H_
 
-#include <vector>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <vector>
 #include "game_constants.h"
 #include "network_interface.h"
 #include "connection_slot.h"
@@ -25,16 +29,16 @@ using Shared::Platform::ServerSocket;
 
 namespace Shared {  namespace PlatformCommon {  class FTPServerThread;  }}
 
-//using Shared::PlatformCommon::FTPServerThread;
-
 namespace Glest{ namespace Game{
 
+class Stats;
 // =====================================================
 //	class ServerInterface
 // =====================================================
 
 class ServerInterface: public GameNetworkInterface,
                        public ConnectionSlotCallbackInterface,
+                       // This is for publishing game status to the masterserver
                        public SimpleTaskCallbackInterface,
                        public FTPClientValidationInterface {
 
@@ -51,9 +55,10 @@ private:
 	Mutex *slotAccessorMutexes[GameConstants::maxPlayers];
 
 	ServerSocket serverSocket;
-	bool gameHasBeenInitiated;
-	int gameSettingsUpdateCount;
+
+	Mutex *switchSetupRequestsSynchAccessor;
 	SwitchSetupRequest* switchSetupRequests[GameConstants::maxPlayers];
+
 	Mutex *serverSynchAccessor;
 	int currentFrameCount;
 
@@ -66,7 +71,7 @@ private:
 	time_t lastMasterserverHeartbeatTime;
 	bool needToRepublishToMasterserver;
 
-    Shared::PlatformCommon::FTPServerThread *ftpServer;
+    ::Shared::PlatformCommon::FTPServerThread *ftpServer;
     bool exitServer;
     int64 nextEventId;
 
@@ -74,7 +79,7 @@ private:
     vector<TextMessageQueue> textMessageQueue;
 
     Mutex *broadcastMessageQueueThreadAccessor;
-    vector<pair<const NetworkMessage *,int> > broadcastMessageQueue;
+    vector<pair<NetworkMessage *,int> > broadcastMessageQueue;
 
     Mutex *inBroadcastMessageThreadAccessor;
     bool inBroadcastMessage;
@@ -87,41 +92,87 @@ private:
 
 	map<string,pair<uint64,time_t> > badClientConnectIPList;
 
+	ServerSocket *serverSocketAdmin;
+	MasterSlaveThreadController masterController;
+
+	bool gameHasBeenInitiated;
+	int gameSettingsUpdateCount;
+
+	bool allowInGameConnections;
+	bool gameLaunched;
+	time_t lastListenerSlotCheckTime;
+
+	time_t resumeGameStartTime;
+
+	Mutex *gameStatsThreadAccessor;
+	Stats *gameStats;
+
+	bool clientsAutoPausedDueToLag;
+	Chrono clientsAutoPausedDueToLagTimer;
+	Chrono lastBroadcastCommandsTimer;
+	ClientLagCallbackInterface *clientLagCallbackInterface;
+
 public:
-	ServerInterface(bool publishEnabled);
+	ServerInterface(bool publishEnabled, ClientLagCallbackInterface *clientLagCallbackInterface);
 	virtual ~ServerInterface();
+
+	bool getClientsAutoPausedDueToLag();
+	void setClientLagCallbackInterface(ClientLagCallbackInterface *intf);
+	void setGameStats(Stats *gameStats);
 
 	virtual Socket* getSocket(bool mutexLock=true)				{return &serverSocket;}
 
-    //const virtual Socket *getSocket() const {
-    //    return &serverSocket;
-    //}
+	time_t getGameStartTime() const { return gameStartTime; }
+
+	virtual bool getAllowInGameConnections() const { return allowInGameConnections; }
+	void setAllowInGameConnections(bool value) { allowInGameConnections = value; }
+
+	bool getStartInGameConnectionLaunch();
+	bool getPauseForInGameConnection();
+	bool getUnPauseForInGameConnection();
+
+	void shutdownFTPServer();
 
     virtual void close();
     virtual void update();
     virtual void updateLobby()  { };
     virtual void updateKeyframe(int frameCount);
+    virtual void setKeyframe(int frameCount) { currentFrameCount = frameCount; }
+
     virtual void waitUntilReady(Checksum *checksum);
     virtual void sendTextMessage(const string & text, int teamIndex, bool echoLocal, string targetLanguage);
     void sendTextMessage(const string & text, int teamIndex, bool echoLocal, string targetLanguage, int lockedSlotIndex);
+
     void queueTextMessage(const string & text, int teamIndex, bool echoLocal, string targetLanguage);
+
+    virtual void sendMarkCellMessage(Vec2i targetPos, int factionIndex, string note,int playerIndex);
+    void sendMarkCellMessage(Vec2i targetPos, int factionIndex, string note, int playerIndex, int lockedSlotIndex);
+
+	virtual void sendHighlightCellMessage(Vec2i targetPos, int factionIndex);
+    void sendHighlightCellMessage(Vec2i targetPos, int factionIndex, int lockedSlotIndex);
+
+    virtual void sendUnMarkCellMessage(Vec2i targetPos, int factionIndex);
+    void sendUnMarkCellMessage(Vec2i targetPos, int factionIndex, int lockedSlotIndex);
+
     virtual void quitGame(bool userManuallyQuit);
     virtual string getNetworkStatus();
-    ServerSocket *getServerSocket()
-    {
+    ServerSocket *getServerSocket() {
         return &serverSocket;
     }
 
-    SwitchSetupRequest **getSwitchSetupRequests()
-    {
-        return &switchSetupRequests[0];
-    }
+    SwitchSetupRequest **getSwitchSetupRequests();
+    SwitchSetupRequest *getSwitchSetupRequests(int index);
+    void setSwitchSetupRequests(int index,SwitchSetupRequest *ptr);
+    Mutex * getSwitchSetupRequestsMutex() { return switchSetupRequestsSynchAccessor; }
 
     void addSlot(int playerIndex);
     bool switchSlot(int fromPlayerIndex, int toPlayerIndex);
     void removeSlot(int playerIndex, int lockedSlotIndex = -1);
-    ConnectionSlot *getSlot(int playerIndex);
-    int getConnectedSlotCount();
+    virtual ConnectionSlot *getSlot(int playerIndex, bool lockMutex);
+    virtual Mutex *getSlotMutex(int playerIndex);
+    int getSlotCount();
+    int getConnectedSlotCount(bool authenticated);
+
     int getOpenSlotCount();
     bool launchGame(const GameSettings *gameSettings);
 	void validateGameSettings(GameSettings *serverGameSettings);
@@ -134,77 +185,93 @@ public:
     void setMasterserverAdminRequestLaunch(bool value) { masterserverAdminRequestLaunch = value; }
 
     void updateListen();
-    virtual bool getConnectHasHandshaked() const
-    {
+    virtual bool getConnectHasHandshaked() const {
         return false;
     }
 
-    virtual void slotUpdateTask(ConnectionSlotEvent *event);
+    virtual void slotUpdateTask(ConnectionSlotEvent *event) { };
     bool hasClientConnection();
-    bool isClientConnected(int index);
+    virtual bool isClientConnected(int index);
 
-    int getCurrentFrameCount() const
-    {
+    int getCurrentFrameCount() const {
         return currentFrameCount;
     }
 
     std::pair<bool,bool> clientLagCheck(ConnectionSlot *connectionSlot, bool skipNetworkBroadCast = false);
     bool signalClientReceiveCommands(ConnectionSlot *connectionSlot, int slotIndex, bool socketTriggered, ConnectionSlotEvent & event);
     void updateSocketTriggeredList(std::map<PLATFORM_SOCKET,bool> & socketTriggeredList);
-    bool isPortBound() const
-    {
+    bool isPortBound() const {
         return serverSocket.isPortBound();
     }
 
-    int getBindPort() const
-    {
+    int getBindPort() const {
         return serverSocket.getBindPort();
     }
 
-    void broadcastPing(const NetworkMessagePing *networkMessage, int excludeSlot = -1)
-    {
+    void broadcastPing(NetworkMessagePing *networkMessage, int excludeSlot = -1) {
         this->broadcastMessage(networkMessage, excludeSlot);
     }
 
-    void queueBroadcastMessage(const NetworkMessage *networkMessage, int excludeSlot = -1);
+    void queueBroadcastMessage(NetworkMessage *networkMessage, int excludeSlot = -1);
     virtual string getHumanPlayerName(int index = -1);
     virtual int getHumanPlayerIndex() const;
-    bool getNeedToRepublishToMasterserver() const
-    {
+    bool getNeedToRepublishToMasterserver() const {
         return needToRepublishToMasterserver;
     }
 
-    void setNeedToRepublishToMasterserver(bool value)
-    {
+    void setNeedToRepublishToMasterserver(bool value) {
         needToRepublishToMasterserver = value;
     }
 
     void setPublishEnabled(bool value);
 
-    bool getGameHasBeenInitiated() const { return gameHasBeenInitiated; }
+    bool getGameHasBeenInitiated() const {
+    	return gameHasBeenInitiated;
+    }
 
 public:
     Mutex *getServerSynchAccessor() {
         return serverSynchAccessor;
     }
 
-    virtual void simpleTask(BaseThread *callingThread);
+    virtual void simpleTask(BaseThread *callingThread,void *userdata);
     void addClientToServerIPAddress(uint32 clientIp, uint32 ServerIp);
     virtual int isValidClientType(uint32 clientIp);
     virtual int isClientAllowedToGetFile(uint32 clientIp, const char *username, const char *filename);
 
     void notifyBadClientConnectAttempt(string ipAddress);
+    std::string DumpStatsToLog(bool dumpToStringOnly) const;
+
+    virtual void saveGame(XmlNode *rootNode);
+
+    void broadcastMessage(NetworkMessage *networkMessage, int excludeSlot = -1, int lockedSlotIndex = -1);
+
+    ConnectionSlot * findSlotForUUID(string uuid, bool unConnectedOnly=true);
 
 private:
-    void broadcastMessage(const NetworkMessage *networkMessage, int excludeSlot = -1, int lockedSlotIndex = -1);
-    void broadcastMessageToConnectedClients(const NetworkMessage *networkMessage, int excludeSlot = -1);
+
+    void broadcastMessageToConnectedClients(NetworkMessage *networkMessage, int excludeSlot = -1);
     bool shouldDiscardNetworkMessage(NetworkMessageType networkMessageType, ConnectionSlot *connectionSlot);
     void updateSlot(ConnectionSlotEvent *event);
     void validateConnectedClients();
+
     std::map<string,string> publishToMasterserver();
+    std::map<string,string> publishToMasterserverStats();
+
     int64 getNextEventId();
     void processTextMessageQueue();
     void processBroadCastMessageQueue();
+    void checkListenerSlots();
+	void checkForCompletedClientsUsingThreadManager(
+			std::map<int, bool>& mapSlotSignalledList,
+			std::vector<string>& errorMsgList);
+	void checkForCompletedClientsUsingLoop(
+			std::map<int, bool>& mapSlotSignalledList,
+			std::vector<string>& errorMsgList,
+			std::map<int, ConnectionSlotEvent>& eventList);
+	void checkForAutoPauseForLaggingClient(int index,
+			ConnectionSlot* connectionSlot);
+	void checkForAutoResumeForLaggingClients();
 
 protected:
     void signalClientsToRecieveData(std::map<PLATFORM_SOCKET,bool> & socketTriggeredList, std::map<int,ConnectionSlotEvent> & eventList, std::map<int,bool> & mapSlotSignalledList);
@@ -212,6 +279,13 @@ protected:
     void checkForLaggingClients(std::map<int,bool> &mapSlotSignalledList, std::map<int,ConnectionSlotEvent> &eventList, std::map<PLATFORM_SOCKET,bool> &socketTriggeredList,std::vector <string> &errorMsgList);
     void executeNetworkCommandsFromClients();
     void dispatchPendingChatMessages(std::vector <string> &errorMsgList);
+    void dispatchPendingMarkCellMessages(std::vector <string> &errorMsgList);
+    void dispatchPendingUnMarkCellMessages(std::vector <string> &errorMsgList);
+    void dispatchPendingHighlightCellMessages(std::vector <string> &errorMsgList);
+
+    void shutdownMasterserverPublishThread();
+
+
 };
 
 }}//end namespace

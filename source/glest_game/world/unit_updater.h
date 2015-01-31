@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_UNITUPDATER_H_
 #define _GLEST_GAME_UNITUPDATER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "gui.h"
 #include "particle.h"
 #include "randomgen.h"
@@ -27,7 +32,6 @@ class Unit;
 class Map;
 class ScriptManager;
 class PathFinder;
-class RoutePlanner;
 
 // =====================================================
 //	class UnitUpdater
@@ -74,13 +78,13 @@ private:
 	Console *console;
 	ScriptManager *scriptManager;
 	PathFinder *pathFinder;
-	RoutePlanner *routePlanner;
 	Game *game;
-	RandomGen random;
+	//RandomGen random;
+	Mutex *mutexAttackWarnings;
 	float attackWarnRange;
 	AttackWarnings attackWarnings;
 
-	Mutex mutexUnitRangeCellsLookupItemCache;
+	Mutex *mutexUnitRangeCellsLookupItemCache;
 	std::map<Vec2i, std::map<int, std::map<int, UnitRangeCellsLookupItem > > > UnitRangeCellsLookupItemCache;
 	//std::map<int,ExploredCellsLookupKey> ExploredCellsLookupItemCacheTimer;
 	//int UnitRangeCellsLookupItemCacheTimerCount;
@@ -98,7 +102,7 @@ public:
     ~UnitUpdater();
 
 	//update skills
-    void updateUnit(Unit *unit);
+    bool updateUnit(Unit *unit);
 
     //update commands
     void updateUnitCommand(Unit *unit, int frameIndex);
@@ -108,6 +112,7 @@ public:
     void updateAttackStopped(Unit *unit, int frameIndex);
     void updateBuild(Unit *unit, int frameIndex);
     void updateHarvest(Unit *unit, int frameIndex);
+    void updateHarvestEmergencyReturn(Unit *unit, int frameIndex);
     void updateRepair(Unit *unit, int frameIndex);
     void updateProduce(Unit *unit, int frameIndex);
     void updateUpgrade(Unit *unit, int frameIndex);
@@ -117,7 +122,7 @@ public:
 	void clearUnitPrecache(Unit *unit);
 	void removeUnitPrecache(Unit *unit);
 
-	unsigned int getAttackWarningCount() const { return attackWarnings.size(); }
+	inline unsigned int getAttackWarningCount() const { return (unsigned int)attackWarnings.size(); }
 	std::pair<bool,Unit *> unitBeingAttacked(const Unit *unit);
 	void unitBeingAttacked(std::pair<bool,Unit *> &result, const Unit *unit, const AttackSkillType *ast,float *currentDistToUnit=NULL);
 	vector<Unit*> enemyUnitsOnRange(const Unit *unit,const AttackSkillType *ast);
@@ -128,6 +133,11 @@ public:
 
 	string getUnitRangeCellsLookupItemCacheStats();
 
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
+
+	void clearCaches();
+
 private:
     //attack
     void hit(Unit *attacker);
@@ -137,10 +147,10 @@ private:
 
 	//misc
     bool searchForResource(Unit *unit, const HarvestCommandType *hct);
-    bool attackerOnSight(const Unit *unit, Unit **enemyPtr);
-    bool attackableOnSight(const Unit *unit, Unit **enemyPtr, const AttackSkillType *ast);
-    bool attackableOnRange(const Unit *unit, Unit **enemyPtr, const AttackSkillType *ast);
-	bool unitOnRange(const Unit *unit, int range, Unit **enemyPtr, const AttackSkillType *ast);
+    bool attackerOnSight(Unit *unit, Unit **enemyPtr, bool evalMode=false);
+    bool attackableOnSight(Unit *unit, Unit **enemyPtr, const AttackSkillType *ast, bool evalMode=false);
+    bool attackableOnRange(Unit *unit, Unit **enemyPtr, const AttackSkillType *ast, bool evalMode=false);
+	bool unitOnRange(Unit *unit, int range, Unit **enemyPtr, const AttackSkillType *ast,bool evalMode=false);
 	void enemiesAtDistance(const Unit *unit, const Unit *priorityUnit, int distance, vector<Unit*> &enemies);
 
 	Unit * findPeerUnitBuilder(Unit *unit);
@@ -154,7 +164,8 @@ private:
 //	class ParticleDamager
 // =====================================================
 
-class ParticleDamager: public ParticleObserver{
+class ParticleDamager: public ParticleObserver {
+
 public:
 	UnitReference attackerRef;
 	const AttackSkillType* ast;
@@ -166,6 +177,9 @@ public:
 public:
 	ParticleDamager(Unit *attacker, UnitUpdater *unitUpdater, const GameCamera *gameCamera);
 	virtual void update(ParticleSystem *particleSystem);
+
+	virtual void saveGame(XmlNode *rootNode);
+	virtual void loadGame(const XmlNode *rootNode,void *genericData);
 };
 
 }}//end namespace

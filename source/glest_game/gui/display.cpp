@@ -56,20 +56,21 @@ void Display::calculateUpDimensions(int index) {
 
 Vec4f Display::getColor() const {
 	if(currentColor < 0 || currentColor >= colorCount) {
-		throw runtime_error("currentColor >= colorCount");
+		throw megaglest_runtime_error("currentColor >= colorCount");
 	}
 	return colors[currentColor];
 }
 
 void Display::setUpImage(int i, const Texture2D *image)
 {
-	if(i>=upCellCount) throw runtime_error("i>=upCellCount in Display::setUpImage");
+	if(i>=upCellCount) throw megaglest_runtime_error("i>=upCellCount in Display::setUpImage");
 	upImages[i]= image;
 	calculateUpDimensions(i);
 }
 
 //misc
 void Display::clear(){
+	downSelectedPos= invalidPos;
 	for(int i=0; i<upCellCount; ++i){
 		upImages[i]= NULL;
 	}
@@ -81,7 +82,6 @@ void Display::clear(){
 		commandClasses[i]= ccNull;
 	}
 
-	downSelectedPos= invalidPos;
 	title.clear();
 	text.clear();
 	progressBar= -1;
@@ -126,6 +126,59 @@ int Display::computeUpX(int index) const{
 
 int Display::computeUpY(int index) const{
 	return Metrics::getInstance().getDisplayH() - (index/upCellSideCount)*upImageSize - upImageSize;
+}
+
+void Display::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *displayNode = rootNode->addChild("Display");
+
+//	string title;
+	displayNode->addAttribute("title",title, mapTagReplacements);
+//	string text;
+	displayNode->addAttribute("text",text, mapTagReplacements);
+//	string infoText;
+	displayNode->addAttribute("infoText",infoText, mapTagReplacements);
+//	const Texture2D *upImages[upCellCount];
+//	const Texture2D *downImages[downCellCount];
+//	bool downLighted[downCellCount];
+//	const CommandType *commandTypes[downCellCount];
+//	CommandClass commandClasses[downCellCount];
+//	int progressBar;
+	displayNode->addAttribute("progressBar",intToStr(progressBar), mapTagReplacements);
+//	int downSelectedPos;
+	displayNode->addAttribute("downSelectedPos",intToStr(downSelectedPos), mapTagReplacements);
+//	Vec4f colors[colorCount];
+//	int currentColor;
+	displayNode->addAttribute("currentColor",intToStr(currentColor), mapTagReplacements);
+//	int upCellSideCount;
+//	int upImageSize;
+//	int maxUpIndex;
+}
+
+void Display::loadGame(const XmlNode *rootNode) {
+	const XmlNode *displayNode = rootNode->getChild("Display");
+
+	//	string title;
+	title = displayNode->getAttribute("title")->getValue();
+	//	string text;
+	text = displayNode->getAttribute("text")->getValue();
+	//	string infoText;
+	infoText = displayNode->getAttribute("infoText")->getValue();
+	//	const Texture2D *upImages[upCellCount];
+	//	const Texture2D *downImages[downCellCount];
+	//	bool downLighted[downCellCount];
+	//	const CommandType *commandTypes[downCellCount];
+	//	CommandClass commandClasses[downCellCount];
+	//	int progressBar;
+	progressBar = displayNode->getAttribute("progressBar")->getIntValue();
+	//	int downSelectedPos;
+	//displayNode->addAttribute("downSelectedPos",intToStr(downSelectedPos), mapTagReplacements);
+	//	Vec4f colors[colorCount];
+	//	int currentColor;
+	//currentColor = displayNode->getAttribute("progressBar")->getIntValue();
+	//	int upCellSideCount;
+	//	int upImageSize;
+	//	int maxUpIndex;
 }
 
 }}//end namespace

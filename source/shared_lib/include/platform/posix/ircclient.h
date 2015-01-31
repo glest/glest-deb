@@ -12,6 +12,11 @@
 #ifndef _SHARED_PLATFORMCOMMON_IRCTHREAD_H_
 #define _SHARED_PLATFORMCOMMON_IRCTHREAD_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "base_thread.h"
 #include <vector>
 #include <string>
@@ -41,12 +46,20 @@ void normalizeNick(char *nick);
 class IRCCallbackInterface {
 public:
     virtual void IRC_CallbackEvent(IRCEventType evt, const char* origin, const char **params, unsigned int count) = 0;
+
+    virtual ~IRCCallbackInterface() {}
 };
 
 class IRCThread : public BaseThread
 {
+public:
+	static bool debugEnabled;
 protected:
+	static const char *globalCacheContainerName;
+
     std::vector<string> argv;
+
+    Mutex mutexIRCSession;
     irc_session_t *ircSession;
 
     string execute_cmd_onconnect;
@@ -55,8 +68,13 @@ protected:
 	string channel;
 	string nick;
 
+	string playerName;
+
     bool hasJoinedChannel;
+
+    Mutex mutexEventDataDone;
     bool eventDataDone;
+
     Mutex mutexNickList;
     time_t lastNickListUpdate;
     std::vector<string> eventData;
@@ -64,21 +82,33 @@ protected:
     Mutex mutexIRCCB;
     IRCCallbackInterface *callbackObj;
 
+    bool wantToLeaveChannel;
+
+    int irc_run_session(irc_session_t * session);
+
 public:
 
 	IRCThread(const std::vector<string> &argv,IRCCallbackInterface *callbackObj);
+	virtual ~IRCThread();
     virtual void execute();
     virtual void signalQuit();
     virtual bool shutdownAndWait();
 
+    static void setGlobalCacheContainerName(const char *name) { globalCacheContainerName = name; }
+
+    void setPlayerName(string value) { playerName = value; }
+    string getPlayerName() const { return playerName; }
+
+    bool getWantToLeaveChannel() const { return wantToLeaveChannel; }
+
     void SendIRCCmdMessage(string target, string msg);
     std::vector<string> getNickList();
-    bool isConnected();
+    bool isConnected(bool mutexLockRequired=true);
 
     std::vector<string> GetIRCConnectedNickList(string target, bool waitForCompletion);
 
-    bool getEventDataDone() const { return eventDataDone; }
-    void setEventDataDone(bool value) { eventDataDone=value; }
+    bool getEventDataDone();
+    void setEventDataDone(bool value);
 
     bool getHasJoinedChannel() const { return hasJoinedChannel; }
     void setHasJoinedChannel(bool value) { hasJoinedChannel=value; }
@@ -101,6 +131,11 @@ public:
     Mutex * getMutexIRCCB() { return &mutexIRCCB; }
     IRCCallbackInterface * getCallbackObj(bool lockObj=true);
     void setCallbackObj(IRCCallbackInterface *cb);
+
+    void joinChannel();
+    void leaveChannel();
+    void connectToHost();
+    void disconnect();
 };
 
 }}//end namespace

@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_TIMEFLOW_H_
 #define _GLEST_GAME_TIMEFLOW_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "tileset.h"
 #include "sound.h"
 #include "leak_dumper.h"
@@ -42,23 +47,21 @@ private:
 	float timeInc;
 
 public:
-	TimeFlow() {
-		firstTime = false;
-		tileset = NULL;
-		time = 0.0f;
-		lastTime = 0.0f;
-		timeInc = 0.0f;
-	}
+	TimeFlow();
 	void init(Tileset *tileset);
 
-	float getTime() const				{return time;}
-	bool isDay() const					{return time>dawn && time<dusk;}
-	bool isNight() const				{return !isDay();}
-	bool isTotalNight() const			{return time<dawn+1.f || time>dusk-1.f;}
-	float getTimeInc() const			{return timeInc;}
+	inline float getTime() const				{return time;}
+	inline bool isDay() const					{return time>dawn && time<dusk;}
+	inline bool isNight() const				{return !isDay();}
+	inline bool isTotalNight() const			{return time<dawn+1.f || time>dusk-1.f;}
+	inline float getTimeInc() const			{return timeInc;}
 
 	Vec3f computeLightColor() const;
 	void update();
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
+
 private:
 	//bool isAproxTime(float time) const;
 };

@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under 
 //	the terms of the GNU General Public License as published 
@@ -11,6 +11,11 @@
 
 #ifndef _GLEST_GAME_MENUSTATEABOUT_H_
 #define _GLEST_GAME_MENUSTATEABOUT_H_
+
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
 #include "main_menu.h"
 #include "leak_dumper.h"
@@ -39,8 +44,19 @@ private:
 	bool adjustModelText;
 	string loadAdditionalCredits();
 
+	bool enableCustomModCredits;
+	Texture2D *customModTexture;
+	int customModTextureX;
+	int customModTextureY;
+	int customModTextureW;
+	int customModTextureH;
+	float customModTextureAlpha;
+
+	GraphicLabel labelCustomModCredits;
+
 public:
 	MenuStateAbout(Program *program, MainMenu *mainMenu);
+	virtual ~MenuStateAbout();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
 	void mouseMove(int x, int y, const MouseState *mouseState);

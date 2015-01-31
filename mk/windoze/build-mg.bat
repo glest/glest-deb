@@ -6,8 +6,36 @@ ECHO Changing to build folder [%~dp0]
 cd /d "%~dp0"
 
 ECHO Checking for windows binary runtime tools...
-if NOT EXIST "..\..\data\glest_game\7z.exe" cscript getTools.vbs
-if NOT EXIST "..\..\data\glest_game\7z.dll" cscript getTools.vbs
+if NOT EXIST ..\..\data\glest_game\7z.exe call cscript getTools.vbs
+if NOT EXIST ..\..\data\glest_game\7z.dll call cscript getTools.vbs
+if NOT EXIST ..\..\data\glest_game\wget.exe call cscript getTools.vbs
+
+set depfolder=win32_deps
+set depfile=%depfolder%.7z 
+
+dir ..\..\source\
+if NOT EXIST ..\..\source\%depfolder%\NUL echo folder not found [%depfolder%]
+if NOT EXIST ..\..\source\%depfolder%\NUL goto checkDepIntegrity
+goto processBuildStageA
+
+:getDepFile
+ECHO Retrieving windows dependency archive...
+rem call ..\..\data\glest_game\wget.exe -c -O ..\..\source\%depfile%  http://master.dl.sourceforge.net/project/megaglest/%depfile%
+call ..\..\data\glest_game\wget.exe -c -O ..\..\source\%depfile% http://download.sourceforge.net/project/megaglest/%depfile%
+call ..\..\data\glest_game\7z.exe x -r -o..\..\source\ ..\..\source\%depfile%
+goto processBuildStageA
+
+:checkDepIntegrity
+ECHO Looking for windows dependency archive...
+call ..\..\data\glest_game\7z.exe t ..\..\source\%depfile% >nul
+set 7ztestdep=%ERRORLEVEL%
+ECHO Result of windows dependency archive [%7ztestdep%]
+if NOT "%7ztestdep%" == "0" goto getDepFile
+goto processBuildStageA
+
+:processBuildStageA
+call CopyWindowsRuntimeDlls.bat nopause
+
 call CopyWindowsRuntimeDlls.bat nopause
 
 rem setup the Visual Studio 2008 environment

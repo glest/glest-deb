@@ -23,7 +23,9 @@
 #include "metrics.h"
 #include "stats.h"
 #include "auto_test.h"
-
+#include "video_player.h"
+#include "game.h"
+#include "game_settings.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -34,7 +36,8 @@ namespace Glest{ namespace Game{
 // 	class BattleEnd  
 // =====================================================
 
-BattleEnd::BattleEnd(Program *program, const Stats *stats,ProgramState *originState): ProgramState(program) {
+BattleEnd::BattleEnd(Program *program, const Stats *stats,ProgramState *originState) :
+		ProgramState(program), menuBackgroundVideo(NULL), gameSettings(NULL) {
 
 	containerName= "BattleEnd";
 
@@ -44,23 +47,34 @@ BattleEnd::BattleEnd(Program *program, const Stats *stats,ProgramState *originSt
 	if(stats != NULL) {
 		this->stats= *stats;
 	}
+	if(originState != NULL) {
+		Game *game = dynamic_cast<Game *>(originState);
+		if(game != NULL) {
+			gameSettings = new GameSettings();
+			*gameSettings = *(game->getGameSettings());
+		}
+	}
 	mouseX = 0;
 	mouseY = 0;
 	mouse2d = 0;
 	renderToTexture = NULL;
+	renderToTextureCount = 0;
 
 	const Metrics &metrics= Metrics::getInstance();
 	Lang &lang= Lang::getInstance();
 	int buttonWidth = 125;
 	int xLocation = (metrics.getVirtualW() / 2) - (buttonWidth / 2);
 	buttonExit.init(xLocation, 80, buttonWidth);
-	buttonExit.setText(lang.get("Exit"));
+	buttonExit.setText(lang.getString("Exit"));
 
 	//mesage box
-	mainMessageBox.init(lang.get("Yes"), lang.get("No"));
+	mainMessageBox.init(lang.getString("Yes"), lang.getString("No"));
 	mainMessageBox.setEnabled(false);
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+	initBackgroundVideo();
+	initBackgroundMusic();
 
 	GraphicComponent::applyAllCustomProperties(containerName);
 }
@@ -68,8 +82,8 @@ BattleEnd::BattleEnd(Program *program, const Stats *stats,ProgramState *originSt
 void BattleEnd::reloadUI() {
 	Lang &lang= Lang::getInstance();
 
-	buttonExit.setText(lang.get("Exit"));
-	mainMessageBox.init(lang.get("Yes"), lang.get("No"));
+	buttonExit.setText(lang.getString("Exit"));
+	mainMessageBox.init(lang.getString("Yes"), lang.getString("No"));
 
 	GraphicComponent::reloadFontsForRegisterGraphicComponents(containerName);
 }
@@ -77,10 +91,21 @@ void BattleEnd::reloadUI() {
 BattleEnd::~BattleEnd() {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+	if(menuBackgroundVideo != NULL) {
+		menuBackgroundVideo->closePlayer();
+		delete menuBackgroundVideo;
+		menuBackgroundVideo = NULL;
+	}
+
+	delete gameSettings;
+	gameSettings = NULL;
+
 	delete originState;
 	originState = NULL;
 
-	SoundRenderer::getInstance().playMusic(CoreData::getInstance().getMenuMusic());
+	if(CoreData::getInstance().hasMainMenuVideoFilename() == false) {
+		SoundRenderer::getInstance().playMusic(CoreData::getInstance().getMenuMusic());
+	}
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -90,9 +115,242 @@ BattleEnd::~BattleEnd() {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
+std::pair<string,string> BattleEnd::getBattleEndVideo(bool won) {
+	std::pair<string,string> result;
+
+	string factionVideoUrl = "";
+	string factionVideoUrlFallback = "";
+
+	if(gameSettings != NULL) {
+		string currentTechName_factionPreview	 = gameSettings->getTech();
+		string currentFactionName_factionPreview = gameSettings->getFactionTypeName(stats.getThisFactionIndex());
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#1 tech [%s] faction [%s] won = %d\n",currentTechName_factionPreview.c_str(),currentFactionName_factionPreview.c_str(),won);
+
+		string factionDefinitionXML = Game::findFactionLogoFile(gameSettings, NULL,currentFactionName_factionPreview + ".xml");
+		if(factionDefinitionXML != "" && currentFactionName_factionPreview != GameConstants::RANDOMFACTION_SLOTNAME &&
+				currentFactionName_factionPreview != GameConstants::OBSERVER_SLOTNAME && fileExists(factionDefinitionXML) == true) {
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#2 tech [%s] faction [%s]\n",currentTechName_factionPreview.c_str(),currentFactionName_factionPreview.c_str());
+
+			XmlTree	xmlTree;
+			std::map<string,string> mapExtraTagReplacementValues;
+			xmlTree.load(factionDefinitionXML, Properties::getTagReplacementValues(&mapExtraTagReplacementValues));
+			const XmlNode *factionNode= xmlTree.getRootNode();
+			if(won == true) {
+				if(factionNode->hasAttribute("battle-end-win-video") == true) {
+					factionVideoUrl = factionNode->getAttribute("battle-end-win-video")->getValue();
+				}
+			}
+			else {
+				if(factionNode->hasAttribute("battle-end-lose-video") == true) {
+					factionVideoUrl = factionNode->getAttribute("battle-end-lose-video")->getValue();
+				}
+			}
+
+			if(factionVideoUrl != "" && fileExists(factionVideoUrl) == false) {
+				string techTreePath = "";
+				string factionPath = "";
+				std::vector<std::string> factionPartsList;
+				Tokenize(factionDefinitionXML,factionPartsList,"factions/");
+				if(factionPartsList.size() > 1) {
+					techTreePath = factionPartsList[0];
+
+					string factionPath = techTreePath + "factions/" + currentFactionName_factionPreview;
+					endPathWithSlash(factionPath);
+					factionVideoUrl = factionPath + factionVideoUrl;
+				}
+			}
+
+			if(won == true) {
+				factionVideoUrlFallback = Game::findFactionLogoFile(gameSettings, NULL,"battle_end_win_video.*");
+			}
+			else {
+				factionVideoUrlFallback = Game::findFactionLogoFile(gameSettings, NULL,"battle_end_lose_video.*");
+			}
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#3 factionVideoUrl [%s] factionVideoUrlFallback [%s]\n",factionVideoUrl.c_str(),factionVideoUrlFallback.c_str());
+			//printf("#3 factionVideoUrl [%s] factionVideoUrlFallback [%s]\n",factionVideoUrl.c_str(),factionVideoUrlFallback.c_str());
+
+			if(factionVideoUrl == "") {
+				factionVideoUrl = factionVideoUrlFallback;
+				factionVideoUrlFallback = "";
+			}
+		}
+		//printf("currentFactionName_factionPreview [%s] random [%s] observer [%s] factionVideoUrl [%s]\n",currentFactionName_factionPreview.c_str(),GameConstants::RANDOMFACTION_SLOTNAME,GameConstants::OBSERVER_SLOTNAME,factionVideoUrl.c_str());
+	}
+
+	if(factionVideoUrl != "") {
+		result.first = factionVideoUrl;
+		result.second = factionVideoUrlFallback;
+	}
+	else {
+		result.first = CoreData::getInstance().getBattleEndVideoFilename(won);
+		result.second = CoreData::getInstance().getBattleEndVideoFilenameFallback(won);
+	}
+
+	return result;
+}
+
+string BattleEnd::getBattleEndMusic(bool won) {
+	string result="";
+	string resultFallback="";
+
+	if(gameSettings != NULL) {
+		string currentTechName_factionPreview	 = gameSettings->getTech();
+		string currentFactionName_factionPreview = gameSettings->getFactionTypeName(stats.getThisFactionIndex());
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#1 tech [%s] faction [%s] won = %d\n",currentTechName_factionPreview.c_str(),currentFactionName_factionPreview.c_str(),won);
+
+		string factionDefinitionXML = Game::findFactionLogoFile(gameSettings, NULL,currentFactionName_factionPreview + ".xml");
+		if(factionDefinitionXML != "" && currentFactionName_factionPreview != GameConstants::RANDOMFACTION_SLOTNAME &&
+				currentFactionName_factionPreview != GameConstants::OBSERVER_SLOTNAME && fileExists(factionDefinitionXML) == true) {
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#2 tech [%s] faction [%s]\n",currentTechName_factionPreview.c_str(),currentFactionName_factionPreview.c_str());
+
+			XmlTree	xmlTree;
+			std::map<string,string> mapExtraTagReplacementValues;
+			xmlTree.load(factionDefinitionXML, Properties::getTagReplacementValues(&mapExtraTagReplacementValues));
+			const XmlNode *factionNode= xmlTree.getRootNode();
+			if(won == true) {
+				if(factionNode->hasAttribute("battle-end-win-music") == true) {
+					result = factionNode->getAttribute("battle-end-win-music")->getValue();
+				}
+			}
+			else {
+				if(factionNode->hasAttribute("battle-end-lose-music") == true) {
+					result = factionNode->getAttribute("battle-end-lose-music")->getValue();
+				}
+			}
+
+			if(result != "" && fileExists(result) == false) {
+				string techTreePath = "";
+				string factionPath = "";
+				std::vector<std::string> factionPartsList;
+				Tokenize(factionDefinitionXML,factionPartsList,"factions/");
+				if(factionPartsList.size() > 1) {
+					techTreePath = factionPartsList[0];
+
+					string factionPath = techTreePath + "factions/" + currentFactionName_factionPreview;
+					endPathWithSlash(factionPath);
+					result = factionPath + result;
+				}
+			}
+
+			if(won == true) {
+				resultFallback = Game::findFactionLogoFile(gameSettings, NULL,"battle_end_win_music.*");
+			}
+			else {
+				resultFallback = Game::findFactionLogoFile(gameSettings, NULL,"battle_end_lose_music.*");
+			}
+
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#3 result [%s] resultFallback [%s]\n",result.c_str(),resultFallback.c_str());
+			//printf("#3 result [%s] resultFallback [%s]\n",result.c_str(),resultFallback.c_str());
+
+			if(result == "") {
+				result = resultFallback;
+			}
+		}
+		//printf("currentFactionName_factionPreview [%s] random [%s] observer [%s] factionVideoUrl [%s]\n",currentFactionName_factionPreview.c_str(),GameConstants::RANDOMFACTION_SLOTNAME,GameConstants::OBSERVER_SLOTNAME,factionVideoUrl.c_str());
+	}
+
+	if(result == "") {
+		result = CoreData::getInstance().getBattleEndMusicFilename(won);
+	}
+
+	return result;
+}
+
+void BattleEnd::initBackgroundMusic() {
+	string music = "";
+
+	if(stats.getThisFactionIndex() > 0 && stats.getTeam(stats.getThisFactionIndex()) != GameConstants::maxPlayers -1 + fpt_Observer) {
+		if(stats.getVictory(stats.getThisFactionIndex())){
+			//header += lang.getString("Victory");
+			music = getBattleEndMusic(true);
+		}
+		else{
+			//header += lang.getString("Defeat");
+			music = getBattleEndMusic(false);
+		}
+
+		if(music != "" && fileExists(music) == true) {
+			printf("music [%s] \n",music.c_str());
+
+			battleEndMusic.open(music);
+			battleEndMusic.setNext(&battleEndMusic);
+
+			SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+			soundRenderer.playMusic(&battleEndMusic);
+		}
+	}
+}
+
+void BattleEnd::initBackgroundVideo() {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false &&
+		::Shared::Graphics::VideoPlayer::hasBackEndVideoPlayer() == true) {
+
+		if(menuBackgroundVideo != NULL) {
+			menuBackgroundVideo->closePlayer();
+			delete menuBackgroundVideo;
+			menuBackgroundVideo = NULL;
+		}
+
+		string videoFile = "";
+		string videoFileFallback = "";
+
+		if(stats.getThisFactionIndex() > 0 && stats.getTeam(stats.getThisFactionIndex()) != GameConstants::maxPlayers -1 + fpt_Observer) {
+			if(stats.getVictory(stats.getThisFactionIndex())){
+				//header += lang.getString("Victory");
+
+				//videoFile = CoreData::getInstance().getBattleEndVideoFilename(true);
+				//videoFileFallback = CoreData::getInstance().getBattleEndVideoFilenameFallback(true);
+				std::pair<string,string> wonVideos = getBattleEndVideo(true);
+				videoFile = wonVideos.first;
+				videoFileFallback = wonVideos.second;
+			}
+			else{
+				//header += lang.getString("Defeat");
+				//videoFile = CoreData::getInstance().getBattleEndVideoFilename(false);
+				//videoFileFallback = CoreData::getInstance().getBattleEndVideoFilenameFallback(false);
+				std::pair<string,string> lostVideos = getBattleEndVideo(false);
+				videoFile = lostVideos.first;
+				videoFileFallback = lostVideos.second;
+			}
+		}
+		else {
+			//header += "Observer";
+		}
+
+		if(fileExists(videoFile) || fileExists(videoFileFallback)) {
+			printf("videoFile [%s] videoFileFallback [%s]\n",videoFile.c_str(),videoFileFallback.c_str());
+
+			Context *c= GraphicsInterface::getInstance().getCurrentContext();
+			SDL_Surface *screen = static_cast<ContextGl*>(c)->getPlatformContextGlPtr()->getScreen();
+
+			string vlcPluginsPath = Config::getInstance().getString("VideoPlayerPluginsPath","");
+			//printf("screen->w = %d screen->h = %d screen->format->BitsPerPixel = %d\n",screen->w,screen->h,screen->format->BitsPerPixel);
+			menuBackgroundVideo = new VideoPlayer(
+					&Renderer::getInstance(),
+					videoFile,
+					videoFileFallback,
+					screen,
+					0,0,
+					screen->w,
+					screen->h,
+					screen->format->BitsPerPixel,
+					true,
+					vlcPluginsPath,
+					SystemFlags::VERBOSE_MODE_ENABLED);
+			menuBackgroundVideo->initPlayer();
+		}
+	}
+}
+
 void BattleEnd::update() {
 	if(Config::getInstance().getBool("AutoTest")){
 		AutoTest::getInstance().updateBattleEnd(program);
+		return;
 	}
 	mouse2d= (mouse2d+1) % Renderer::maxMouse2dAnim;
 
@@ -118,15 +376,17 @@ void BattleEnd::render() {
 	canRender();
 	incrementFps();
 
-	if(renderToTexture != NULL) {
+	//printf("In [%s::%s Line: %d] renderToTexture [%p]\n",__FILE__,__FUNCTION__,__LINE__,renderToTexture);
+	if(menuBackgroundVideo == NULL && renderToTexture != NULL) {
 		//printf("Rendering from texture!\n");
 
 		renderer.clearBuffers();
 		renderer.reset3dMenu();
 		renderer.clearZBuffer();
-		renderer.renderBackground(renderToTexture);
 
 		renderer.reset2d();
+
+		renderer.renderBackground(renderToTexture);
 
 		renderer.renderButton(&buttonExit);
 
@@ -140,7 +400,9 @@ void BattleEnd::render() {
 	else {
 		//printf("Rendering to texture!\n");
 
-		renderer.beginRenderToTexture(&renderToTexture);
+		if(menuBackgroundVideo == NULL && renderToTextureCount >= 300) {
+			renderer.beginRenderToTexture(&renderToTexture);
+		}
 
 		TextRenderer2D *textRenderer2D	= renderer.getTextRenderer();
 		TextRenderer3D *textRenderer3D	= renderer.getTextRenderer3D();
@@ -159,8 +421,26 @@ void BattleEnd::render() {
 		renderer.reset3dMenu();
 		renderer.clearZBuffer();
 		renderer.reset2d();
-		renderer.renderBackground(CoreData::getInstance().getBackgroundTexture());
 		
+		if(menuBackgroundVideo != NULL) {
+			//printf("Rendering video not null!\n");
+
+			if(menuBackgroundVideo->isPlaying() == true) {
+				menuBackgroundVideo->playFrame(false);
+
+				//printf("Rendering video playing!\n");
+			}
+			else {
+				if(menuBackgroundVideo != NULL) {
+					//initBackgroundVideo();
+					menuBackgroundVideo->RestartVideo();
+				}
+			}
+		}
+		else {
+			renderer.renderBackground(CoreData::getInstance().getBackgroundTexture());
+		}
+
 		//int winnerIndex 	= -1;
 		int bestScore 		= -1;
 		//int mostKillsIndex 	= -1;
@@ -254,77 +534,86 @@ void BattleEnd::render() {
 			else {
 				switch(stats.getControl(i)) {
 				case ctCpuEasy:
-					controlString= lang.get("CpuEasy");
+					controlString= lang.getString("CpuEasy");
 					break;
 				case ctCpu:
-					controlString= lang.get("Cpu");
+					controlString= lang.getString("Cpu");
 					break;
 				case ctCpuUltra:
-					controlString= lang.get("CpuUltra");
+					controlString= lang.getString("CpuUltra");
 					break;
 				case ctCpuMega:
-					controlString= lang.get("CpuMega");
+					controlString= lang.getString("CpuMega");
 					break;
 				case ctNetwork:
-					controlString= lang.get("Network");
+					controlString= lang.getString("Network");
 					break;
 				case ctHuman:
-					controlString= lang.get("Human");
+					controlString= lang.getString("Human");
 					break;
 
 				case ctNetworkCpuEasy:
-					controlString= lang.get("NetworkCpuEasy");
+					controlString= lang.getString("NetworkCpuEasy");
 					break;
 				case ctNetworkCpu:
-					controlString= lang.get("NetworkCpu");
+					controlString= lang.getString("NetworkCpu");
 					break;
 				case ctNetworkCpuUltra:
-					controlString= lang.get("NetworkCpuUltra");
+					controlString= lang.getString("NetworkCpuUltra");
 					break;
 				case ctNetworkCpuMega:
-					controlString= lang.get("NetworkCpuMega");
+					controlString= lang.getString("NetworkCpuMega");
 					break;
 
 				default:
-					printf("Error control = %d for i\n",stats.getControl(i),i);
+					printf("Error control = %d for i = %d\n",stats.getControl(i),i);
 					assert(false);
+					break;
 				};
 			}
 
 			if(stats.getControl(i) != ctHuman && stats.getControl(i) != ctNetwork ) {
 				controlString += "\nx " + floatToStr(stats.getResourceMultiplier(i),1);
 			}
+			else if(stats.getPlayerLeftBeforeEnd(i)==true){
+				controlString += "\n" +lang.getString("CpuUltra")+"\nx "+floatToStr(stats.getResourceMultiplier(i),1);
+			}
 
 			if(score == bestScore && stats.getVictory(i)) {
 				if(CoreData::getInstance().getGameWinnerTexture() != NULL) {
-					renderer.renderTextureQuad(textX, bm+380,-1,-1,CoreData::getInstance().getGameWinnerTexture(),0.7f);
+					renderer.renderTextureQuad(textX, bm+420,-1,-1,CoreData::getInstance().getGameWinnerTexture(),0.7f);
 				}
 			}
 
 			Vec3f color = stats.getPlayerColor(i);
 			if(stats.getPlayerName(i) != "") {
-				textRenderer->render(stats.getPlayerName(i).c_str(), textX, bm+400, false, &color);
+				string textToRender=stats.getPlayerName(i);
+				if(stats.getPlayerLeftBeforeEnd(i)==true){
+					textToRender+="\n("+getTimeDuationString(stats.getTimePlayerLeft(i),GameConstants::updateFps) + ")";
+				}
+
+				textRenderer->render(textToRender.c_str(), textX, bm+400, false, &color);
 			}
 			else {
-				textRenderer->render((lang.get("Player") + " " + intToStr(i+1)).c_str(), textX, bm+400,false, &color);
+				textRenderer->render((lang.getString("Player") + " " + intToStr(i+1)).c_str(), textX, bm+400,false, &color);
 			}
 
 			Vec3f highliteColor = Vec3f(WHITE.x,WHITE.y,WHITE.z);
 			if(disableStatsColorCoding == false) {
-				highliteColor.x = 0.85;
-				highliteColor.y = 0.8;
-				highliteColor.z = 0.07;
+				highliteColor.x = 0.85f;
+				highliteColor.y = 0.8f;
+				highliteColor.z = 0.07f;
 			}
 
 			if(stats.getPersonalityType(i) == fpt_Observer) {
-				textRenderer->render(lang.get("GameOver").c_str(), textX, bm+360);
+				textRenderer->render(lang.getString("GameOver").c_str(), textX, bm+360);
 			}
 			else {
 				if(stats.getVictory(i)) {
-					textRenderer->render(stats.getVictory(i)? lang.get("Victory").c_str(): lang.get("Defeat").c_str(), textX, bm+360, false, &highliteColor);
+					textRenderer->render(stats.getVictory(i)? lang.getString("Victory").c_str(): lang.getString("Defeat").c_str(), textX, bm+360, false, &highliteColor);
 				}
 				else {
-					textRenderer->render(stats.getVictory(i)? lang.get("Victory").c_str(): lang.get("Defeat").c_str(), textX, bm+360);
+					textRenderer->render(stats.getVictory(i)? lang.getString("Victory").c_str(): lang.getString("Defeat").c_str(), textX, bm+360);
 				}
 			}
 
@@ -370,16 +659,17 @@ void BattleEnd::render() {
 			}
 		}
 
-		textRenderer->render(lang.get("Result"), lm, bm+360);
-		textRenderer->render(lang.get("Control"), lm, bm+320);
-		textRenderer->render(lang.get("Faction"), lm, bm+280);
-		textRenderer->render(lang.get("Team"), lm, bm+240);
-		textRenderer->render(lang.get("Kills"), lm, bm+200);
-		textRenderer->render(lang.get("EnemyKills"), lm, bm+180);
-		textRenderer->render(lang.get("Deaths"), lm, bm+160);
-		textRenderer->render(lang.get("UnitsProduced"), lm, bm+120);
-		textRenderer->render(lang.get("ResourcesHarvested"), lm, bm+80);
-		textRenderer->render(lang.get("Score"), lm, bm+20);
+		textRenderer->render("\n"+(lang.getString("LeftAt")), lm, bm+400);
+		textRenderer->render(lang.getString("Result"), lm, bm+360);
+		textRenderer->render(lang.getString("Control"), lm, bm+320);
+		textRenderer->render(lang.getString("Faction"), lm, bm+280);
+		textRenderer->render(lang.getString("Team"), lm, bm+240);
+		textRenderer->render(lang.getString("Kills"), lm, bm+200);
+		textRenderer->render(lang.getString("EnemyKills"), lm, bm+180);
+		textRenderer->render(lang.getString("Deaths"), lm, bm+160);
+		textRenderer->render(lang.getString("UnitsProduced"), lm, bm+120);
+		textRenderer->render(lang.getString("ResourcesHarvested"), lm, bm+80);
+		textRenderer->render(lang.getString("Score"), lm, bm+20);
 
 		textRenderer->end();
 
@@ -392,12 +682,12 @@ void BattleEnd::render() {
 
 		string header = stats.getDescription() + " - ";
 
-		if(stats.getTeam(stats.getThisFactionIndex()) != GameConstants::maxPlayers -1 + fpt_Observer) {
+		if(stats.getThisFactionIndex() > 0 && stats.getTeam(stats.getThisFactionIndex()) != GameConstants::maxPlayers -1 + fpt_Observer) {
 			if(stats.getVictory(stats.getThisFactionIndex())){
-				header += lang.get("Victory");
+				header += lang.getString("Victory");
 			}
 			else{
-				header += lang.get("Defeat");
+				header += lang.getString("Defeat");
 			}
 		}
 		else {
@@ -406,15 +696,15 @@ void BattleEnd::render() {
 		textRenderer->render(header, lm+250, bm+550);
 
 		//GameConstants::updateFps
-		//string header2 = lang.get("GameDuration") + " " + floatToStr(stats.getWorldTimeElapsed() / 24.0,2);
+		//string header2 = lang.getString("GameDurationTime","",true) + " " + floatToStr(stats.getWorldTimeElapsed() / 24.0,2);
 
-		string header2 = lang.get("GameDuration") + ": " + floatToStr((float)stats.getFramesToCalculatePlaytime() / (float)GameConstants::updateFps / 60.0,2);
+		string header2 = lang.getString("GameDurationTime","",true) + ": " + getTimeDuationString(stats.getFramesToCalculatePlaytime(),GameConstants::updateFps);
 		textRenderer->render(header2, lm+250, bm+530);
 
-		header2 = lang.get("GameMaxConcurrentUnitCount") + ": " + intToStr(stats.getMaxConcurrentUnitCount());
+		header2 = lang.getString("GameMaxConcurrentUnitCount") + ": " + intToStr(stats.getMaxConcurrentUnitCount());
 		textRenderer->render(header2, lm+250, bm+510);
 
-		header2 = lang.get("GameTotalEndGameConcurrentUnitCount") + ": " + intToStr(stats.getTotalEndGameConcurrentUnitCount());
+		header2 = lang.getString("GameTotalEndGameConcurrentUnitCount") + ": " + intToStr(stats.getTotalEndGameConcurrentUnitCount());
 		textRenderer->render(header2, lm+250, bm+490);
 
 		textRenderer->end();
@@ -426,11 +716,19 @@ void BattleEnd::render() {
 			renderer.renderMessageBox(&mainMessageBox);
 		}
 
-		if(renderToTexture == NULL) {
+		if(menuBackgroundVideo == NULL && renderToTexture == NULL) {
 			renderer.renderMouse2d(mouseX, mouseY, mouse2d, 0.f);
 		}
 
-		renderer.endRenderToTexture(&renderToTexture);
+		if(menuBackgroundVideo == NULL && renderToTextureCount >= 300) {
+			renderer.endRenderToTexture(&renderToTexture);
+		}
+
+		if(menuBackgroundVideo == NULL) {
+			if(renderToTexture == NULL && renderToTextureCount < 300) {
+				renderToTextureCount++;
+			}
+		}
 	}
 
 	renderer.renderFPSWhenEnabled(lastFps);
@@ -448,7 +746,7 @@ void BattleEnd::keyDown(SDL_KeyboardEvent key){
 		}
 		else {
 			Lang &lang= Lang::getInstance();
-			showMessageBox(lang.get("ExitGame?"), "", true);
+			showMessageBox(lang.getString("ExitGameMenu?"), "", true);
 		}
 	}
 	else if(isKeyPressed(SDLK_RETURN,key) && mainMessageBox.getEnabled()) {
@@ -466,9 +764,9 @@ void BattleEnd::mouseDownLeft(int x, int y){
 		program->setState(new MainMenu(program));
 	}
 	else if(mainMessageBox.getEnabled()) {
-		int button= 1;
+		int button= 0;
 		if(mainMessageBox.mouseClick(x, y, button)) {
-			if(button==1) {
+			if(button==0) {
 				SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				program->setState(new MainMenu(program));
 			}

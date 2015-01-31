@@ -52,9 +52,9 @@ Quaternion::Quaternion(const EulerAngles &eulerAngles){
 	setEuler(eulerAngles);
 }
 
-Quaternion::Quaternion(const AxisAngle &axisAngle){
-	setAxisAngle(axisAngle);
-}
+//Quaternion::Quaternion(const AxisAngle &axisAngle){
+//	setAxisAngle(axisAngle);
+//}
 
 void Quaternion::setMultIdentity(){
 	w= 1.0f;
@@ -66,42 +66,17 @@ void Quaternion::setAddIdentity(){
 	v= Vec3f(0.0f);
 }
 
-void Quaternion::setAxisAngle(const AxisAngle &axisAngle){
-#ifdef USE_STREFLOP
-	w= streflop::cosf(axisAngle.angle/2.0f);
-	v.x= axisAngle.axis.x * streflop::sinf(axisAngle.angle/2.0f);
-	v.y= axisAngle.axis.y * streflop::sinf(axisAngle.angle/2.0f);
-	v.z= axisAngle.axis.z * streflop::sinf(axisAngle.angle/2.0f);
-#else
-	w= cosf(axisAngle.angle/2.0f);
-	v.x= axisAngle.axis.x * sinf(axisAngle.angle/2.0f);
-	v.y= axisAngle.axis.y * sinf(axisAngle.angle/2.0f);
-	v.z= axisAngle.axis.z * sinf(axisAngle.angle/2.0f);
-#endif
-}
-
 void Quaternion::setEuler(const EulerAngles &eulerAngles){
 	Quaternion qx, qy, qz, qr;
 
-#ifdef USE_STREFLOP
-	qx.w= streflop::cosf(eulerAngles.x/2.0f);
-	qx.v= Vec3f(streflop::sinf(eulerAngles.x/2.0f), 0.0f, 0.0f);
+	qx.w= std::cos(eulerAngles.x/2.0f);
+	qx.v= Vec3f(std::sin(eulerAngles.x/2.0f), 0.0f, 0.0f);
 
-	qy.w= streflop::cosf(eulerAngles.y/2.0f);
-	qy.v= Vec3f(0.0f, streflop::sinf(eulerAngles.y/2.0f), 0.0f);
+	qy.w= std::cos(eulerAngles.y/2.0f);
+	qy.v= Vec3f(0.0f, std::sin(eulerAngles.y/2.0f), 0.0f);
 
-	qz.w= streflop::cosf(eulerAngles.z/2.0f);
-	qz.v= Vec3f(0.0f, 0.0f, streflop::sinf(eulerAngles.z/2.0f));
-#else
-	qx.w= cosf(eulerAngles.x/2.0f);
-	qx.v= Vec3f(sinf(eulerAngles.x/2.0f), 0.0f, 0.0f);
-
-	qy.w= cosf(eulerAngles.y/2.0f);
-	qy.v= Vec3f(0.0f, sinf(eulerAngles.y/2.0f), 0.0f);
-
-	qz.w= cosf(eulerAngles.z/2.0f);
-	qz.v= Vec3f(0.0f, 0.0f, sinf(eulerAngles.z/2.0f));
-#endif
+	qz.w= std::cos(eulerAngles.z/2.0f);
+	qz.v= Vec3f(0.0f, 0.0f, std::sin(eulerAngles.z/2.0f));
 	
 	qr= qx*qy*qz;
 
@@ -109,22 +84,8 @@ void Quaternion::setEuler(const EulerAngles &eulerAngles){
 	v= qr.v;
 }
 
-float Quaternion::length(){
-#ifdef USE_STREFLOP
-	return streflop::sqrt(w*w+v.x*v.x+v.y*v.y+v.z*v.z);
-#else
-	return sqrt(w*w+v.x*v.x+v.y*v.y+v.z*v.z);
-#endif
-}
-
 Quaternion Quaternion::conjugate(){
 	return Quaternion(w, -v);
-}
-
-void Quaternion::normalize(){
-	float il= 1.f/length();
-	w*= il;
-	v= v*il;
 }
 
 Quaternion Quaternion::operator + (const Quaternion &q) const{
@@ -202,15 +163,6 @@ Matrix4f Quaternion::toMatrix4() const{
 	rm[15]= 1.0f;
 
 	return rm;
-}
-
-AxisAngle Quaternion::toAxisAngle() const{
-	float scale= 1.0f/(v.x*v.x + v.y*v.y + v.z*v.z);
-#ifdef USE_STREFLOP
-	return AxisAngle(v*scale, 2*streflop::acosf(w));
-#else
-	return AxisAngle(v*scale, 2*acosf(w));
-#endif
 }
 
 Vec3f Quaternion::getLocalXAxis() const{

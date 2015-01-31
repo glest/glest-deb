@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_GAME_H_
 #define _GLEST_GAME_GAME_H_
 
-#include <vector>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <vector>
 #include "gui.h"
 #include "game_camera.h"
 #include "world.h"
@@ -23,16 +27,22 @@
 #include "script_manager.h"
 #include "game_settings.h"
 #include "network_interface.h"
-#include "types.h"
+#include "data_types.h"
+#include "selection.h"
 #include "leak_dumper.h"
 
 using std::vector;
 using namespace Shared::Platform;
 using namespace Shared::PlatformCommon;
 
+namespace Shared { namespace Graphics {
+	class VideoPlayer;
+}};
+
 namespace Glest{ namespace Game{
 
 class GraphicMessageBox;
+class ServerInterface;
 
 enum LoadGameItem {
 	lgt_FactionPreview 	= 0x01,
@@ -49,15 +59,10 @@ enum LoadGameItem {
 //
 //	Main game class
 // =====================================================
-
-//class Game: public ProgramState, public SimpleTaskCallbackInterface {
-class Game: public ProgramState, public FileCRCPreCacheThreadCallbackInterface {
+class Game: public ProgramState, public FileCRCPreCacheThreadCallbackInterface,
+            public CustomInputCallbackInterface, public ClientLagCallbackInterface {
 public:
-	enum Speed{
-		sFast,
-		sNormal,
-		sSlow
-	};
+	static const float highlightTime;
 
 private:
 	typedef vector<Ai*> Ais;
@@ -83,12 +88,25 @@ private:
     Vec2i mouseCellPos;
 
 	int updateFps, lastUpdateFps, avgUpdateFps;
+	int framesToCatchUpAsClient;
+	int framesToSlowDownAsClient;
+	int receivedTooEarlyInFrames[GameConstants::networkSmoothInterval];
+	int framesNeededToWaitForServerMessage[GameConstants::networkSmoothInterval];
 	int totalRenderFps, renderFps, lastRenderFps, avgRenderFps,currentAvgRenderFpsTotal;
-	Uint64 tickCount;
+	uint64 tickCount;
 	bool paused;
+	bool pauseRequestSent;
+	bool resumeRequestSent;
+	bool pauseStateChanged;
+	bool pausedForJoinGame;
+	bool pausedBeforeJoinGame;
+
 	bool gameOver;
 	bool renderNetworkStatus;
+	bool renderInGamePerformance;
 	bool showFullConsole;
+	bool setMarker;
+	bool cameraDragAllowed;
 	bool mouseMoved;
 	float scrollSpeed;
 	bool camLeftButtonDown;
@@ -96,7 +114,7 @@ private:
 	bool camUpButtonDown;
 	bool camDownButtonDown;
 
-	Speed speed;
+	int speed;
 	GraphicMessageBox mainMessageBox;
 	GraphicMessageBox errorMessageBox;
 
@@ -109,6 +127,7 @@ private:
 	bool isFirstRender;
 
 	bool quitTriggeredIndicator;
+	bool quitPendingIndicator;
 
 	int original_updateFps;
 	int original_cameraFps;
@@ -123,6 +142,7 @@ private:
 
 	bool photoModeEnabled;
 	bool visibleHUD;
+	bool timeDisplay;
 	bool withRainEffect;
 	Program *program;
 
@@ -132,27 +152,87 @@ private:
 
 	PopupMenu popupMenu;
 	PopupMenu popupMenuSwitchTeams;
+	PopupMenu popupMenuDisconnectPlayer;
 
 	std::map<int,int> switchTeamIndexMap;
 	GraphicMessageBox switchTeamConfirmMessageBox;
 
+	std::map<int,int> disconnectPlayerIndexMap;
+	int playerIndexDisconnect;
+	GraphicMessageBox disconnectPlayerConfirmMessageBox;
+
 	int exitGamePopupMenuIndex;
 	int joinTeamPopupMenuIndex;
 	int pauseGamePopupMenuIndex;
+	int saveGamePopupMenuIndex;
+	int loadGamePopupMenuIndex;
+	//int markCellPopupMenuIndex;
+	//int unmarkCellPopupMenuIndex;
 	int keyboardSetupPopupMenuIndex;
-	GLuint statelist3dMenu;
+	int disconnectPlayerPopupMenuIndex;
+	//GLuint statelist3dMenu;
 	ProgramState *currentUIState;
 
+	bool isMarkCellEnabled;
+	Vec2i cellMarkedPos;
+	MarkedCell cellMarkedData;
+	bool isMarkCellTextEnabled;
+
+	Texture2D *markCellTexture;
+	bool isUnMarkCellEnabled;
+	Texture2D *unmarkCellTexture;
+	std::map<Vec2i, MarkedCell> mapMarkedCellList;
+	Texture2D *highlightCellTexture;
+	std::vector<MarkedCell> highlightedCells;
 	bool masterserverMode;
 
 	StrSound *currentAmbientSound;
 
 	time_t lastNetworkPlayerConnectionCheck;
 
+	time_t lastMasterServerGameStatsDump;
+
+	XmlNode *loadGameNode;
+	int lastworldFrameCountForReplay;
+	std::vector<std::pair<int,NetworkCommand> > replayCommandList;
+
+	std::vector<string> streamingVideos;
+	::Shared::Graphics::VideoPlayer *videoPlayer;
+	bool playingStaticVideo;
+
+	Unit *currentCameraFollowUnit;
+
+	std::map<int,HighlightSpecialUnitInfo> unitHighlightList;
+
+	MasterSlaveThreadController masterController;
+
+	bool inJoinGameLoading;
+	bool initialResumeSpeedLoops;
+
+	bool quitGameCalled;
+	bool disableSpeedChange;
+
+	std::map<int,FowAlphaCellsLookupItem> teamFowAlphaCellsLookupItem;
+	std::map<string,int64> gamePerformanceCounts;
+
+	bool networkPauseGameForLaggedClientsRequested;
+	bool networkResumeGameForLaggedClientsRequested;
+
 public:
 	Game();
     Game(Program *program, const GameSettings *gameSettings, bool masterserverMode);
     ~Game();
+
+    bool isMarkCellMode() const { return isMarkCellEnabled; }
+    const Texture2D * getMarkCellTexture() const { return markCellTexture; }
+    bool isUnMarkCellMode() const { return isUnMarkCellEnabled; }
+    const Texture2D * getUnMarkCellTexture() const { return unmarkCellTexture; }
+
+    std::map<Vec2i, MarkedCell> getMapMarkedCellList() const { return mapMarkedCellList; }
+
+    const Texture2D * getHighlightCellTexture() const { return highlightCellTexture; }
+    const std::vector<MarkedCell> * getHighlightedCells() const { return &highlightedCells; }
+    void addOrReplaceInHighlightedCells(MarkedCell mc);
 
     bool isMasterserverMode() const { return masterserverMode; }
     //get
@@ -163,7 +243,7 @@ public:
 	const GameCamera *getGameCamera() const	{return &gameCamera;}
 	GameCamera *getGameCameraPtr()			{return &gameCamera;}
 	const Commander *getCommander() const	{return &commander;}
-	Gui *getGui()							{return &gui;}
+	Gui *getGuiPtr()							{return &gui;}
 	const Gui *getGui() const				{return &gui;}
 	Commander *getCommander()				{return &commander;}
 	Console *getConsole()					{return &console;}
@@ -171,8 +251,20 @@ public:
 	World *getWorld()						{return &world;}
 	const World *getWorld() const			{return &world;}
 
-	bool getPaused() const					{ return paused;}
-	void setPaused(bool value, bool forceAllowPauseStateChange=false);
+	Program *getProgram()					{return program;}
+
+	void removeUnitFromSelection(const Unit *unit);
+	bool addUnitToSelection(Unit *unit);
+	void addUnitToGroupSelection(Unit *unit,int groupIndex);
+	void removeUnitFromGroupSelection(int unitId,int groupIndex);
+	void recallGroupSelection(int groupIndex);
+
+	Uint64 getTickCount()					{return tickCount;}
+	bool getPaused();
+	void setPaused(bool value, bool forceAllowPauseStateChange,bool clearCaches,bool joinNetworkGame);
+	void tryPauseToggle(bool pause);
+	void setupRenderForVideo();
+	void saveGame();
 	const int getTotalRenderFps() const					{return totalRenderFps;}
 
 	void toggleTeamColorMarker();
@@ -210,11 +302,11 @@ public:
 	void endPerformanceTimer();
 	Vec2i getPerformanceTimerResults();
 
-	static Texture2D * findFactionLogoTexture(const GameSettings *settings, Logger *logger=NULL,string factionLogoFilter="loading_screen.*", bool useTechDefaultIfFilterNotFound=true);
-	static string findFactionLogoFile(const GameSettings *settings, Logger *logger=NULL, string factionLogoFilter="loading_screen.*");
-	static string extractScenarioLogoFile(const GameSettings *settings, string &result, bool &loadingImageUsed, Logger *logger=NULL, string factionLogoFilter="loading_screen.*");
-	static string extractFactionLogoFile(bool &loadingImageUsed, string factionName, string scenarioDir, string techName, Logger *logger=NULL, string factionLogoFilter="loading_screen.*");
-	static string extractTechLogoFile(string scenarioDir, string techName, bool &loadingImageUsed, Logger *logger=NULL,string factionLogoFilter="loading_screen.*");
+	static Texture2D * findFactionLogoTexture(const GameSettings *settings, Logger *logger=NULL,string factionLogoFilter=GameConstants::LOADING_SCREEN_FILE_FILTER, bool useTechDefaultIfFilterNotFound=true);
+	static string findFactionLogoFile(const GameSettings *settings, Logger *logger=NULL, string factionLogoFilter=GameConstants::LOADING_SCREEN_FILE_FILTER);
+	static string extractScenarioLogoFile(const GameSettings *settings, string &result, bool &loadingImageUsed, Logger *logger=NULL, string factionLogoFilter=GameConstants::LOADING_SCREEN_FILE_FILTER);
+	static string extractFactionLogoFile(bool &loadingImageUsed, string factionName, string scenarioDir, string techName, Logger *logger=NULL, string factionLogoFilter=GameConstants::LOADING_SCREEN_FILE_FILTER);
+	static string extractTechLogoFile(string scenarioDir, string techName, bool &loadingImageUsed, Logger *logger=NULL,string factionLogoFilter=GameConstants::LOADING_SCREEN_FILE_FILTER);
 
 	void loadHudTexture(const GameSettings *settings);
 
@@ -225,6 +317,36 @@ public:
 
 	void endGame();
 
+	void playStaticVideo(const string &playVideo);
+	void playStreamingVideo(const string &playVideo);
+	void stopStreamingVideo(const string &playVideo);
+	void stopAllVideo();
+
+	string saveGame(string name, string path="saved/");
+	static void loadGame(string name,Program *programPtr,bool isMasterserverMode, const GameSettings *joinGameSettings=NULL);
+
+	void addNetworkCommandToReplayList(NetworkCommand* networkCommand,int worldFrameCount);
+
+	bool factionLostGame(int factionIndex);
+
+	void addCellMarker(Vec2i cellPos, MarkedCell cellData);
+	void removeCellMarker(Vec2i surfaceCellPos, const Faction *faction);
+	void showMarker(Vec2i cellPos, MarkedCell cellData);
+
+	void highlightUnit(int unitId,float radius, float thickness, Vec4f color);
+	void unhighlightUnit(int unitId);
+
+	bool showTranslatedTechTree() const;
+
+	void DumpCRCWorldLogIfRequired(string fileSuffix="");
+
+	bool getDisableSpeedChange() const { return disableSpeedChange; }
+	void setDisableSpeedChange(bool value) { disableSpeedChange = value; }
+
+	string getGamePerformanceCounts(bool displayWarnings) const;
+	virtual void addPerformanceCount(string key,int64 value);
+	bool getRenderInGamePerformance() const { return renderInGamePerformance; }
+
 private:
 	//render
     void render3d();
@@ -234,7 +356,10 @@ private:
 	void checkWinner();
 	void checkWinnerStandard();
 	void checkWinnerScripted();
+	void setEndGameTeamWinnersAndLosers();
+
 	bool hasBuilding(const Faction *faction);
+	bool factionLostGame(const Faction *faction);
 	void incSpeed();
 	void decSpeed();
 	int getUpdateLoops();
@@ -253,6 +378,31 @@ private:
 
 	int getFirstUnusedTeamNumber();
 	void updateWorldStats();
+
+	void setupPopupMenus(bool checkClientAdminOverrideOnly);
+
+	string getDebugStats(std::map<int,string> &factionDebugInfo);
+
+	void renderVideoPlayer();
+
+	void updateNetworkMarkedCells();
+	void updateNetworkUnMarkedCells();
+	void updateNetworkHighligtedCells();
+
+	virtual void processInputText(string text, bool cancelled);
+
+	void startMarkCell();
+	void startCameraFollowUnit();
+
+	bool switchSetupForSlots(ServerInterface *& serverInterface,
+			int startIndex, int endIndex, bool onlyNetworkUnassigned);
+	void processNetworkSynchChecksIfRequired();
+	Stats getEndGameStats();
+	void checkWinnerStandardHeadlessOrObserver();
+	void checkWinnerStandardPlayer();
+	std::map<int, int> getTeamsAlive();
+
+	virtual bool clientLagHandler(int slotIndex,bool networkPauseGameForLaggedClients);
 };
 
 }}//end namespace

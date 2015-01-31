@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_TILESET_H_
 #define _GLEST_GAME_TILESET_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <map>
 #include "graphics_interface.h"
 #include "xml_parser.h"
@@ -115,6 +120,8 @@ public:
 	static const int surfCount= 6;
 	static const int objCount= 10;
 	static const int transitionVars= 2; //number or different transition textures
+	static const float standardAirHeight;
+	static const float standardShadowIntensity;
 
 public:
 	typedef vector<float> SurfProbs;
@@ -127,19 +134,26 @@ private:
 	SurfProbs surfProbs[surfCount];
 	SurfPixmaps surfPixmaps[surfCount];
 
+	int partsArray[surfCount];
+	//int partsizes[surfCount];
+
 	RandomGen random;
     Texture3D *waterTex;
     bool waterEffects;
     bool fog;
     int fogMode;
-	float fogDensity;
+    float fogDensity;
 	Vec3f fogColor;
 	Vec3f sunLightColor;
 	Vec3f moonLightColor;
+	float shadowIntensity;
 	Weather weather;
+	float airHeight;
 
 	AmbientSounds ambientSounds;
 	Checksum checksumValue;
+
+	string tileset_name;
 
 public:
 	Tileset() {
@@ -149,6 +163,12 @@ public:
 	    fogMode = 0;
 		fogDensity = 0.0f;
 		weather= wSunny;
+		airHeight= standardAirHeight;
+		shadowIntensity= standardShadowIntensity;
+
+		for(int index = 0; index < surfCount; ++index) {
+			partsArray[index] = 0;
+		}
 	}
     ~Tileset();
     Checksum loadTileset(const vector<string> pathList, const string &tilesetName,
@@ -158,6 +178,7 @@ public:
 	Checksum * getChecksumValue() { return &checksumValue; }
 
     //get
+	float getAirHeight()const  {return airHeight;}
 	const SurfaceAtlas *getSurfaceAtlas() const		{return &surfaceAtlas;}
 	ObjectType *getObjectType(int i)				{return &objectTypes[i];}
 	float getSurfProb(int surf, int var) const		{return surfProbs[surf][var];}
@@ -169,15 +190,18 @@ public:
 	const Vec3f &getFogColor() const				{return fogColor;}
 	const Vec3f &getSunLightColor() const			{return sunLightColor;}
 	const Vec3f &getMoonLightColor() const			{return moonLightColor;}
+	float getShadowIntense()const  {return shadowIntensity;}
 	Weather getWeather() const						{return weather;}
 	void setWeather(Weather value) { weather = value; }
 
 	//surface textures
 	const Pixmap2D *getSurfPixmap(int type, int var) const;
-	void addSurfTex(int leftUp, int rightUp, int leftDown, int rightDown, Vec2f &coord, const Texture2D *&texture);
+	void addSurfTex(int leftUp, int rightUp, int leftDown, int rightDown, Vec2f &coord, const Texture2D *&texture, int mapX, int mapY);
 
 	//sounds
 	AmbientSounds *getAmbientSounds() {return &ambientSounds;}
+
+	string getName() const { return tileset_name; }
 };
 
 }} //end namespace

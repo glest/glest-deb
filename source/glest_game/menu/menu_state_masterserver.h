@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -103,18 +103,21 @@ private:
 	std::string threadedErrorMsg;
 
     std::vector<string> ircArgs;
-	Mutex mutexIRCClient;
+	Mutex *mutexIRCClient;
 	IRCThread *ircClient;
 	std::vector<string> oldNickList;
 
 	Console consoleIRC;
 	ChatManager chatManager;
 
+	bool masterserverParseErrorShown;
+
 public:
 	MenuStateMasterserver(Program *program, MainMenu *mainMenu);
 	~MenuStateMasterserver();
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
+	void mouseUp(int x, int y, const MouseButton mouseButton);
 	void mouseMove(int x, int y, const MouseState *mouseState);
 	void update();
 	void render();
@@ -123,7 +126,7 @@ public:
     virtual void keyPress(SDL_KeyboardEvent c);
     virtual void keyUp(SDL_KeyboardEvent key);
 
-	virtual void simpleTask(BaseThread *callingThread);
+	virtual void simpleTask(BaseThread *callingThread,void *userdata);
 	virtual bool isInSpecialKeyCaptureEvent() { return chatManager.getEditEnabled(); }
 
 	static void setDisplayMessageFunction(DisplayMessageFunction pDisplayMessage) { pCB_DisplayMessage = pDisplayMessage; }

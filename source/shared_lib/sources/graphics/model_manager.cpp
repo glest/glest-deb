@@ -16,10 +16,11 @@
 #include <cstdlib>
 #include <stdexcept>
 #include "util.h"
-
+#include "platform_util.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
+using namespace Shared::Platform;
 
 namespace Shared{ namespace Graphics{
 
@@ -28,7 +29,10 @@ namespace Shared{ namespace Graphics{
 // =====================================================
 
 ModelManager::ModelManager(){
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	textureManager= NULL;
 }
 
@@ -36,9 +40,8 @@ ModelManager::~ModelManager(){
 	end();
 }
 
-Model *ModelManager::newModel(){
-	Model *model= GraphicsInterface::getInstance().getFactory()->newModel();
-	model->setTextureManager(textureManager);
+Model *ModelManager::newModel(const string &path,bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList, string *sourceLoader){
+	Model *model= GraphicsInterface::getInstance().getFactory()->newModel(path,textureManager,deletePixMapAfterLoad,loadedFileList,sourceLoader);
 	models.push_back(model);
 	return model;
 }
@@ -56,6 +59,7 @@ void ModelManager::end(){
 		if(models[i] != NULL) {
 			models[i]->end();
 			delete models[i];
+			models[i]=NULL;
 		}
 	}
 	models.clear();

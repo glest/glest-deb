@@ -12,12 +12,10 @@
 #ifndef _SHADER_G3DVIEWER_RENDERER_H_
 #define _SHADER_G3DVIEWER_RENDERER_H_
 
-/*
-#include "model_renderer.h"
-#include "texture_manager.h"
-#include "model.h"
-#include "texture.h"
-*/
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
 #include "model_renderer.h"
 #include "texture_manager.h"
@@ -58,6 +56,9 @@ private:
 	const Texture *teamTexture;
 
 public:
+	MeshCallbackTeamColor() : MeshCallback() {
+		teamTexture = NULL;
+	}
 	void setTeamTexture(const Texture *teamTexture)	{this->teamTexture= teamTexture;}
 	virtual void execute(const Mesh *mesh);
 };
@@ -120,7 +121,7 @@ private:
 	void checkExtension(const string &extension, const string &msg);
 
 public:
-	~Renderer();
+	virtual ~Renderer();
 	static Renderer *getInstance();
 
 	void init();
@@ -136,7 +137,6 @@ public:
 	void toggleWireframe();
 	void toggleGrid();
 
-	void loadTheModel(Model *model, string file);
 	void renderTheModel(Model *model, float f);
 
 	void manageParticleSystem(ParticleSystem *particleSystem);
@@ -145,9 +145,8 @@ public:
 	Texture2D *getPlayerColorTexture(PlayerColor playerColor);
 
 	Texture2D * getNewTexture2D();
-	Model * getNewModel();
 
-	Model *newModel(ResourceScope rs) { return getNewModel(); }
+	Model *newModel(ResourceScope rs,const string &path,bool deletePixMapAfterLoad=false,std::map<string,vector<pair<string, string> > > *loadedFileList=NULL, string *sourceLoader=NULL);
 	Texture2D *newTexture2D(ResourceScope rs) { return getNewTexture2D(); }
 
 	void initTextureManager();

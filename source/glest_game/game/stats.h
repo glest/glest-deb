@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_STATS_H_
 #define _GLEST_GAME_STATS_H_
 
-#include <string>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <string>
 #include "game_constants.h"
 #include "faction.h"
 #include "faction_type.h"
@@ -41,6 +45,8 @@ public:
 	int unitsProduced;
 	int resourcesHarvested;
 	string playerName;
+	bool playerLeftBeforeEnd;
+	int timePlayerLeft;
 	Vec3f playerColor;
 
 	string getStats() const;
@@ -63,15 +69,15 @@ private:
 	float worldTimeElapsed;
 	int framesPlayed;
 	int framesToCalculatePlaytime;
-	time_t timePlayed;
 	int maxConcurrentUnitCount;
 	int totalEndGameConcurrentUnitCount;
 	bool isMasterserverMode;
+	string techName;
 
 public:
 
 	Stats() {
-		description 		= "";
+		//description 		= "";
 		factionCount 		= 0;
 		thisFactionIndex 	= 0;
 
@@ -81,9 +87,11 @@ public:
 		maxConcurrentUnitCount			= 0;
 		totalEndGameConcurrentUnitCount	= 0;
 		isMasterserverMode				= false;
+		//techName						= "";
 	}
 
-	void init(int factionCount, int thisFactionIndex, const string &description);
+	void init(int factionCount, int thisFactionIndex, const string &description,
+			const string &techName);
 
 	string getDescription() const	{return description;}
 	int getThisFactionIndex() const	{return thisFactionIndex;}
@@ -107,7 +115,13 @@ public:
 	int getUnitsProduced(int factionIndex) const				{return playerStats[factionIndex].unitsProduced;}
 	int getResourcesHarvested(int factionIndex) const			{return playerStats[factionIndex].resourcesHarvested;}
 	string getPlayerName(int factionIndex) const				{return playerStats[factionIndex].playerName;}
+	bool getPlayerLeftBeforeEnd(int factionIndex) const			{return playerStats[factionIndex].playerLeftBeforeEnd;}
+	void setPlayerLeftBeforeEnd(int factionIndex, bool value) 	{playerStats[factionIndex].playerLeftBeforeEnd = value; }
 	Vec3f getPlayerColor(int factionIndex) const				{ return playerStats[factionIndex].playerColor;}
+
+	int getTimePlayerLeft(int factionIndex) const			{return playerStats[factionIndex].timePlayerLeft;}
+	void setTimePlayerLeft(int factionIndex, int value) 	{playerStats[factionIndex].timePlayerLeft = value; }
+
 
 	bool getIsMasterserverMode() const							{ return isMasterserverMode; }
 	void setIsMasterserverMode(bool value) 						{ isMasterserverMode = value; }
@@ -124,16 +138,22 @@ public:
 	void setResourceMultiplier(int playerIndex, float resourceMultiplier)	{playerStats[playerIndex].resourceMultiplier= resourceMultiplier;}
 	void setTeam(int playerIndex, int teamIndex)							{playerStats[playerIndex].teamIndex= teamIndex;}
 	void setVictorious(int playerIndex);
-	void kill(int killerFactionIndex, int killedFactionIndex, bool isEnemy);
-	void die(int diedFactionIndex);
-	void produce(int producerFactionIndex);
+	void kill(int killerFactionIndex, int killedFactionIndex, bool isEnemy, bool isDeathCounted, bool isKillCounted);
+	void die(int diedFactionIndex, bool isDeathCounted);
+	void produce(int producerFactionIndex, bool isProductionCounted);
 	void harvest(int harvesterFactionIndex, int amount);
 	void setPlayerName(int playerIndex, string value) 	{playerStats[playerIndex].playerName = value; }
 	void setPlayerColor(int playerIndex, Vec3f value)	{playerStats[playerIndex].playerColor = value; }
 
 	void addFramesToCalculatePlaytime()  		{this->framesToCalculatePlaytime++; }
 
+	void setTechName(string name) { techName = name; }
+	string getTechName() const { return techName; }
+
 	string getStats() const;
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 };
 
 }}//end namespace

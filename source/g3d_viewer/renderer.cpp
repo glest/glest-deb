@@ -13,11 +13,14 @@
 
 #include "graphics_factory_gl.h"
 #include "graphics_interface.h"
-//#include <png.h>
+#include "config.h"
+#include "platform_common.h"
 #include <memory>
 
 using namespace Shared::Graphics;
 using namespace Shared::Graphics::Gl;
+using namespace Glest::Game;
+using namespace Shared::Util;
 
 namespace Shared{ namespace G3dViewer{
 
@@ -103,6 +106,16 @@ Renderer::Renderer() {
 	green = 0.3f;
 	blue = 0.3f;
 	alpha = 1.0f;
+
+	customTextureRed=NULL;
+	customTextureBlue=NULL;
+	customTextureGreen=NULL;
+	customTextureYellow=NULL;
+	customTextureWhite=NULL;
+	customTextureCyan=NULL;
+	customTextureOrange=NULL;
+	customTextureMagenta=NULL;
+	particleManager=NULL;
 }
 
 Renderer::~Renderer() {
@@ -113,6 +126,11 @@ Renderer::~Renderer() {
 	//resources
 	delete particleManager;
 	delete modelManager;
+
+	if(GraphicsInterface::getInstance().getFactory() != NULL) {
+		delete GraphicsInterface::getInstance().getFactory();
+		GraphicsInterface::getInstance().setFactory(NULL);
+	}
 }
 
 Renderer * Renderer::getInstance() {
@@ -134,6 +152,18 @@ void Renderer::transform(float rotX, float rotY, float zoom) {
 }
 
 void Renderer::checkGlCaps() {
+
+	if(glActiveTexture == NULL) {
+		string message;
+
+		message += "Your system supports OpenGL version \"";
+ 		message += getGlVersion() + string("\"\n");
+ 		message += "MegaGlest needs a version that supports\n";
+ 		message += "glActiveTexture (OpenGL 1.3) or the ARB_multitexture extension.";
+
+ 		throw megaglest_runtime_error(message.c_str());
+	}
+
 	//opengl 1.3
 	//if(!isGlVersionSupported(1, 3, 0)) {
 	if(glewIsSupported("GL_VERSION_1_3") == false) {
@@ -144,7 +174,7 @@ void Renderer::checkGlCaps() {
  		message += "MegaGlest needs at least version 1.3 to work\n";
  		message += "You may solve this problem by installing your latest video card drivers";
 
- 		throw runtime_error(message.c_str());
+ 		throw megaglest_runtime_error(message.c_str());
 	}
 
 	//opengl 1.4 or extension
@@ -157,7 +187,7 @@ void Renderer::checkGlCaps() {
 void Renderer::checkExtension(const string &extension, const string &msg) {
 	if(isGlExtensionSupported(extension.c_str()) == false) {
 		string str= "OpenGL extension not supported: " + extension +  ", required for " + msg;
-		throw runtime_error(str);
+		throw megaglest_runtime_error(str);
 	}
 }
 
@@ -166,16 +196,32 @@ Texture2D * Renderer::getNewTexture2D() {
 	return newTexture;
 }
 
-Model * Renderer::getNewModel() {
-	Model *newModel = modelManager->newModel();
-	return newModel;
+Model * Renderer::newModel(ResourceScope rs,const string &path,bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList, string *sourceLoader) {
+    return modelManager->newModel(path,deletePixMapAfterLoad,loadedFileList,sourceLoader);
 }
 
 void Renderer::init() {
 	assertGl();
 
-	GraphicsFactory *gf= new GraphicsFactoryGl();
-	GraphicsInterface::getInstance().setFactory(gf);
+	GraphicsFactory *gf= GraphicsInterface::getInstance().getFactory();
+	if(gf == NULL) {
+		gf= new GraphicsFactoryGl();
+		GraphicsInterface::getInstance().setFactory(gf);
+	}
+
+	Config &config = Config::getInstance();
+	if(config.getBool("CheckGlCaps")){
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		checkGlCaps();
+	}
+
+	if(glActiveTexture == NULL) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error: glActiveTexture == NULL\nglActiveTexture is only supported if the GL version is 1.3 or greater,\nor if the ARB_multitexture extension is supported!");
+		throw megaglest_runtime_error(szBuf);
+	}
 
 	modelRenderer= gf->newModelRenderer();
 	textureManager= gf->newTextureManager();
@@ -281,7 +327,7 @@ void Renderer::reset(int w, int h, PlayerColor playerColor) {
 	glLoadIdentity();
 	glTranslatef(0, -1.5, -5);
 
-	Texture2D *customTexture;
+	Texture2D *customTexture=NULL;
 	switch(playerColor) {
 	case pcRed:
 		customTexture= customTextureRed;
@@ -309,6 +355,7 @@ void Renderer::reset(int w, int h, PlayerColor playerColor) {
 		break;
 	default:
 		assert(false);
+		break;
 	}
 	meshCallbackTeamColor.setTeamTexture(customTexture);
 
@@ -368,16 +415,9 @@ void Renderer::toggleGrid() {
 	grid= grid? false: true;
 }
 
-void Renderer::loadTheModel(Model *model, string file) {
-	model->setTextureManager(textureManager);
-	model->loadG3d(file);
-	textureManager->init();
-	modelManager->init();
-}
-
 void Renderer::renderTheModel(Model *model, float f) {
 	if(model != NULL){
-		modelRenderer->begin(true, true, !wireframe, &meshCallbackTeamColor);
+		modelRenderer->begin(true, true, !wireframe, false, &meshCallbackTeamColor);
 		model->updateInterpolationData(f, true);
 		modelRenderer->render(model);
 
@@ -414,7 +454,7 @@ void Renderer::renderParticleManager() {
 }
 
 Texture2D * Renderer::getPlayerColorTexture(PlayerColor playerColor) {
-	Texture2D *customTexture;
+	Texture2D *customTexture=NULL;
 	switch(playerColor){
 	case pcRed:
 		customTexture= customTextureRed;
@@ -441,7 +481,8 @@ Texture2D * Renderer::getPlayerColorTexture(PlayerColor playerColor) {
 		customTexture= customTextureMagenta;
 		break;
 	default:
-		assert(false);
+		throw megaglest_runtime_error("Unknown playercolor: " + intToStr(playerColor));
+		break;
 	}
 
 	return customTexture;

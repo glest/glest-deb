@@ -1,3 +1,4 @@
+// ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
 //	Copyright (C) 2001-2008 Martiño Figueroa
@@ -44,6 +45,7 @@ Program *Program::singleton = NULL;
 const int SOUND_THREAD_UPDATE_MILLISECONDS = 25;
 
 bool Program::wantShutdownApplicationAfterGame = false;
+const char *ProgramState::MAIN_PROGRAM_RENDER_KEY = "MEGAGLEST.RENDER";
 
 // =====================================================
 // 	class Program::CrashProgramState
@@ -73,7 +75,7 @@ void ProgramState::tick() {
 bool ProgramState::canRender(bool sleepIfCannotRender) {
 	int maxFPSCap = Config::getInstance().getInt("RenderFPSCap","500");
 	int sleepMillis = Config::getInstance().getInt("RenderFPSCapSleepMillis","1");
-	Renderer &renderer= Renderer::getInstance();
+	//Renderer &renderer= Renderer::getInstance();
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		maxFPSCap = Config::getInstance().getInt("RenderFPSCapHeadless","250");
 		sleepMillis = Config::getInstance().getInt("RenderFPSCapHeadlessSleepMillis","1");
@@ -82,7 +84,7 @@ bool ProgramState::canRender(bool sleepIfCannotRender) {
 	if(lastFps > maxFPSCap) {
 		if(sleepIfCannotRender == true) {
 			sleep(sleepMillis);
-			//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] sleeping because lastFps = %d, maxFPSCap = %d sleepMillis = %d\n",__FILE__,__FUNCTION__,__LINE__,lastFps,maxFPSCap,sleepMillis);
+			//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] sleeping because lastFps = %d, maxFPSCap = %d sleepMillis = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,lastFps,maxFPSCap,sleepMillis);
 		}
 		return false;
 	}
@@ -122,7 +124,8 @@ Program::ShowMessageProgramState::ShowMessageProgramState(Program *program, cons
 	if(msg) {
 		fprintf(stderr, "%s\n", msg);
 		msgBox.setText(msg);
-	} else {
+	}
+	else {
 		msgBox.setText("Mega-Glest has crashed.");
 	}
 
@@ -140,7 +143,7 @@ void Program::ShowMessageProgramState::render() {
 }
 
 void Program::ShowMessageProgramState::mouseDownLeft(int x, int y) {
-	int button= 1;
+	int button= 0;
 	if(msgBox.mouseClick(x,y,button)) {
 		program->exit();
 		userWantsExit = true;
@@ -148,7 +151,7 @@ void Program::ShowMessageProgramState::mouseDownLeft(int x, int y) {
 }
 
 void Program::ShowMessageProgramState::keyPress(SDL_KeyboardEvent c) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] c = [%d]\n",__FILE__,__FUNCTION__,__LINE__,c.keysym.sym);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] c = [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,c.keysym.sym);
 
     // if user pressed return we exit
 	//if(c == 13) {
@@ -170,17 +173,23 @@ void Program::ShowMessageProgramState::update() {
 
 // ===================== PUBLIC ========================
 
+bool Program::rendererInitOk = false;
+bool Program::tryingRendererInit = false;
+
 Program::Program() {
 	//this->masterserverMode = false;
+	this->window = NULL;
 	this->shutdownApplicationEnabled = false;
 	this->skipRenderFrameCount = 0;
+	this->messageBoxIsSystemError = false;
+	this->programStateOldSystemError = NULL;
 	this->programState= NULL;
 	this->singleton = this;
 	this->soundThreadManager = NULL;
 
 	//mesage box
 	Lang &lang= Lang::getInstance();
-	msgBox.init(lang.get("Ok"));
+	msgBox.init(lang.getString("Ok"));
 	msgBox.setEnabled(false);
 }
 
@@ -189,73 +198,104 @@ Program::Program() {
 //}
 
 void Program::initNormal(WindowGl *window){
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	init(window);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	setState(new Intro(this));
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+}
+
+void Program::initSavedGame(WindowGl *window,bool masterserverMode, string saveGameFile) {
+	init(window);
+	MainMenu *mainMenu= new MainMenu(this);
+	setState(mainMenu);
+
+	if(saveGameFile == "") {
+		Config &config = Config::getInstance();
+		saveGameFile = config.getString("LastSavedGame","");
+		if(saveGameFile == "") {
+			saveGameFile = GameConstants::saveGameFileDefault;
+			if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+				saveGameFile = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + saveGameFile;
+			}
+			else {
+				string userData = Config::getInstance().getString("UserData_Root","");
+				if(userData != "") {
+					endPathWithSlash(userData);
+				}
+				saveGameFile = userData + saveGameFile;
+			}
+		}
+	}
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Loading game from [%s]\n",saveGameFile.c_str());
+	printf("Loading saved game from [%s]\n",saveGameFile.c_str());
+
+	Game::loadGame(saveGameFile,this,masterserverMode);
 }
 
 void Program::initServer(WindowGl *window, bool autostart,bool openNetworkSlots,
 		bool masterserverMode) {
-	MainMenu* mainMenu= NULL;
-
 	//this->masterserverMode = masterserverMode;
 	init(window);
-	mainMenu= new MainMenu(this);
+	MainMenu *mainMenu= new MainMenu(this);
 	setState(mainMenu);
 	mainMenu->setState(new MenuStateCustomGame(this, mainMenu, openNetworkSlots, pNewGame, autostart, NULL, masterserverMode));
 }
 
 void Program::initServer(WindowGl *window, GameSettings *settings) {
-	MainMenu* mainMenu= NULL;
-
 	init(window);
-	mainMenu= new MainMenu(this);
+	MainMenu *mainMenu= new MainMenu(this);
 	setState(mainMenu);
 	mainMenu->setState(new MenuStateCustomGame(this, mainMenu, false, pNewGame, true, settings));
 }
 
-void Program::initClient(WindowGl *window, const Ip &serverIp) {
-	MainMenu* mainMenu= NULL;
-
+void Program::initClient(WindowGl *window, const Ip &serverIp, int portNumber) {
 	init(window);
-	mainMenu= new MainMenu(this);
+	MainMenu *mainMenu= new MainMenu(this);
 	setState(mainMenu);
-	mainMenu->setState(new MenuStateJoinGame(this, mainMenu, true, serverIp));
+	mainMenu->setState(new MenuStateJoinGame(this, mainMenu, true, serverIp,portNumber));
+}
+
+void Program::initClientAutoFindHost(WindowGl *window) {
+	init(window);
+	MainMenu *mainMenu= new MainMenu(this);
+	setState(mainMenu);
+	bool autoFindHost = true;
+	mainMenu->setState(new MenuStateJoinGame(this, mainMenu, &autoFindHost));
+
 }
 
 void Program::initScenario(WindowGl *window, string autoloadScenarioName) {
-	MainMenu* mainMenu= NULL;
-
 	init(window);
-	mainMenu= new MainMenu(this);
+	MainMenu *mainMenu= new MainMenu(this);
 	setState(mainMenu);
-	mainMenu->setState(new MenuStateScenario(this, mainMenu, Config::getInstance().getPathListForType(ptScenarios),autoloadScenarioName));
+	mainMenu->setState(new MenuStateScenario(this, mainMenu, false,
+			Config::getInstance().getPathListForType(ptScenarios),autoloadScenarioName));
 }
 
 Program::~Program(){
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	delete programState;
 	programState = NULL;
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	Renderer::getInstance().end();
 	CoreData &coreData= CoreData::getInstance();
     coreData.cleanup();
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//restore video mode
 	restoreDisplaySettings();
 	singleton = NULL;
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(soundThreadManager != NULL) {
 		BaseThread::shutdownAndWait(soundThreadManager);
@@ -263,22 +303,34 @@ Program::~Program(){
 		soundThreadManager = NULL;
 	}
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+}
+
+void Program::restoreStateFromSystemError() {
+	messageBoxIsSystemError = false;
+	if(this->programStateOldSystemError == NULL) {
+		setState(new Intro(this));
+	}
+	else {
+		setState(this->programStateOldSystemError);
+	}
 }
 
 void Program::keyDown(SDL_KeyboardEvent key) {
 	if(msgBox.getEnabled()) {
 		//SDL_keysym keystate = Window::getKeystate();
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		//if(key == vkEscape  || key == SDLK_ESCAPE ||
 		//	((key == vkReturn || key == SDLK_RETURN || key == SDLK_KP_ENTER) && !(keystate.mod & (KMOD_LALT | KMOD_RALT)))) {
 		if(isKeyPressed(SDLK_ESCAPE,key) == true ||	((isKeyPressed(SDLK_RETURN,key) == true) && !(key.keysym.mod & (KMOD_LALT | KMOD_RALT)))) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			//printf("---> keystate [%d]\n",keystate);
 			msgBox.setEnabled(false);
-
+			if(messageBoxIsSystemError == true) {
+				restoreStateFromSystemError();
+			}
 		}
 	}
 	//delegate event
@@ -295,11 +347,14 @@ void Program::keyPress(SDL_KeyboardEvent c) {
 
 void Program::mouseDownLeft(int x, int y) {
 	if(msgBox.getEnabled()) {
-		int button= 1;
+		int button= 0;
 		if(msgBox.mouseClick(x, y, button)) {
-			//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			//close message box
 			msgBox.setEnabled(false);
+			if(messageBoxIsSystemError == true) {
+				restoreStateFromSystemError();
+			}
 		}
 	}
 }
@@ -310,7 +365,7 @@ void Program::eventMouseMove(int x, int y, const MouseState *ms) {
 	}
 }
 
-void Program::simpleTask(BaseThread *callingThread) {
+void Program::simpleTask(BaseThread *callingThread,void *userdata) {
 	loopWorker();
 }
 
@@ -319,9 +374,9 @@ void Program::loop() {
 }
 
 void Program::loopWorker() {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] ================================= MAIN LOOP START ================================= \n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] ================================= MAIN LOOP START ================================= \n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	Renderer &renderer= Renderer::getInstance();
+	//Renderer &renderer= Renderer::getInstance();
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false && window) {
 		MainWindow *mainWindow = dynamic_cast<MainWindow *>(window);
 		if(mainWindow) {
@@ -331,6 +386,14 @@ void Program::loopWorker() {
 			}
 		}
 	}
+
+	Chrono chronoPerformanceCounts;
+
+	bool showPerfStats = Config::getInstance().getBool("ShowPerfStats","false");
+	Chrono chronoPerf;
+	char perfBuf[8096]="";
+	std::vector<string> perfList;
+	if(showPerfStats) chronoPerf.start();
 
 	Chrono chronoLoop;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chronoLoop.start();
@@ -342,33 +405,58 @@ void Program::loopWorker() {
     assert(programState != NULL);
 
     if(this->programState->quitTriggered() == true) {
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
     	Stats endStats = this->programState->quitAndToggleState();
 
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
     	Game::exitGameState(this, endStats);
 
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
     	return;
     }
     ProgramState *prevState = this->programState;
 
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
     assert(programState != NULL);
+
+    chronoPerformanceCounts.start();
+
     programState->render();
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP RENDERING\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+    programState->addPerformanceCount(ProgramState::MAIN_PROGRAM_RENDER_KEY,chronoPerformanceCounts.getMillis());
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP RENDERING\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
 	//update camera
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
-	while(updateCameraTimer.isTime()){
+
+    chronoPerformanceCounts.start();
+
+    while(updateCameraTimer.isTime()) {
 		programState->updateCamera();
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP CAMERA UPDATING\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+    programState->addPerformanceCount("programState->updateCamera()",chronoPerformanceCounts.getMillis());
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP CAMERA UPDATING\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
 	//update world
@@ -377,50 +465,100 @@ void Program::loopWorker() {
 	while(prevState == this->programState && updateTimer.isTime()) {
 		Chrono chronoUpdateLoop;
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chronoUpdateLoop.start();
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " updateCount: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),updateCount);
+			perfList.push_back(perfBuf);
+		}
 
 		GraphicComponent::update();
 		programState->update();
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] programState->update took msecs: %lld, updateCount = %d\n",__FILE__,__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] programState->update took msecs: %lld, updateCount = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) chronoUpdateLoop.start();
 
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " updateCount: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),updateCount);
+			perfList.push_back(perfBuf);
+		}
+
 		if(prevState == this->programState) {
+			chronoPerformanceCounts.start();
+
 			if(soundThreadManager == NULL || soundThreadManager->isThreadExecutionLagging()) {
 				if(soundThreadManager != NULL) {
-					if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] ERROR / WARNING soundThreadManager->isThreadExecutionLagging is TRUE\n",__FILE__,__FUNCTION__,__LINE__);
-					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s %d] ERROR / WARNING soundThreadManager->isThreadExecutionLagging is TRUE\n",__FILE__,__FUNCTION__,__LINE__);
+					if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] ERROR / WARNING soundThreadManager->isThreadExecutionLagging is TRUE\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s %d] ERROR / WARNING soundThreadManager->isThreadExecutionLagging is TRUE\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 				}
 				SoundRenderer::getInstance().update();
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] SoundRenderer::getInstance().update() took msecs: %lld, updateCount = %d\n",__FILE__,__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] SoundRenderer::getInstance().update() took msecs: %lld, updateCount = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) chronoUpdateLoop.start();
 			}
 
+			programState->addPerformanceCount("SoundRenderer::getInstance().update()",chronoPerformanceCounts.getMillis());
+
+			if(showPerfStats) {
+				sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " updateCount: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),updateCount);
+				perfList.push_back(perfBuf);
+			}
+
+			chronoPerformanceCounts.start();
+
 			NetworkManager::getInstance().update();
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] NetworkManager::getInstance().update() took msecs: %lld, updateCount = %d\n",__FILE__,__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
+
+			programState->addPerformanceCount("NetworkManager::getInstance().update()",chronoPerformanceCounts.getMillis());
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] NetworkManager::getInstance().update() took msecs: %lld, updateCount = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoUpdateLoop.getMillis(),updateCount);
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chronoUpdateLoop.getMillis() > 0) chronoUpdateLoop.start();
+
+			if(showPerfStats) {
+				sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER " updateCount: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis(),updateCount);
+				perfList.push_back(perfBuf);
+			}
+
 		}
 		updateCount++;
 	}
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d AFTER programState->update took msecs: %lld ==============> MAIN LOOP BODY LOGIC, updateCount = %d\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis(),updateCount);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d AFTER programState->update took msecs: %lld ==============> MAIN LOOP BODY LOGIC, updateCount = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis(),updateCount);
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
+
+	if(showPerfStats) {
+		sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+		perfList.push_back(perfBuf);
+	}
 
 	if(prevState == this->programState) {
 		//fps timer
+		chronoPerformanceCounts.start();
+
 		chrono.start();
 		while(fpsTimer.isTime()) {
 			programState->tick();
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP TICKING\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+		programState->addPerformanceCount("programState->tick()",chronoPerformanceCounts.getMillis());
+
+		if(showPerfStats) {
+			sprintf(perfBuf,"In [%s::%s] Line: %d took msecs: " MG_I64_SPECIFIER "\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoPerf.getMillis());
+			perfList.push_back(perfBuf);
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP TICKING\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
-		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP TICKING\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s] Line: %d programState->render took msecs: %lld ==============> MAIN LOOP TICKING\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chrono.getMillis());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) chrono.start();
 
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] ------------------------------- MAIN LOOP END, stats: loop took msecs: %lld -------------------------------\n",__FILE__,__FUNCTION__,__LINE__,chronoLoop.getMillis());
+	if(showPerfStats && chronoPerf.getMillis() >= 100) {
+		for(unsigned int x = 0; x < perfList.size(); ++x) {
+			printf("%s",perfList[x].c_str());
+		}
+	}
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] ------------------------------- MAIN LOOP END, stats: loop took msecs: %lld -------------------------------\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chronoLoop.getMillis());
 }
 
 void Program::resize(SizeState sizeState){
@@ -454,16 +592,16 @@ void Program::renderProgramMsgBox() {
 
 }
 
-void Program::setState(ProgramState *programStateNew, bool cleanupOldState)
-{
+void Program::setState(ProgramState *programStateNew, bool cleanupOldState) {
 	try {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
+		this->programStateOldSystemError = this->programState;
 		bool msgBoxEnabled = msgBox.getEnabled();
 
 		bool showingOSCursor = isCursorShowing();
 		if(dynamic_cast<Game *>(programStateNew) != NULL) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			int X = 0;
 			int Y = 0;
@@ -478,28 +616,29 @@ void Program::setState(ProgramState *programStateNew, bool cleanupOldState)
 			showCursor(true);
 			SDL_PumpEvents();
 			sleep(0);
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 		}
 
 		if(cleanupOldState == true) {
 			if(this->programState != programStateNew) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
+				this->programStateOldSystemError = NULL;
 				delete this->programState;
 
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 				this->programState = NULL;
 
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 			}
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		//mesage box
 		Lang &lang= Lang::getInstance();
-		msgBox.init(lang.get("Ok"));
+		msgBox.init(lang.getString("Ok"));
 		msgBox.setEnabled(msgBoxEnabled);
 
 		fpsTimer.init(1, maxTimes);
@@ -508,13 +647,16 @@ void Program::setState(ProgramState *programStateNew, bool cleanupOldState)
 
 		this->programState= programStateNew;
 		assert(programStateNew != NULL);
+		if(programStateNew == NULL) {
+			throw megaglest_runtime_error("programStateNew == NULL");
+		}
 		programStateNew->load();
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		programStateNew->init();
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		updateTimer.reset();
 		updateCameraTimer.reset();
@@ -532,13 +674,57 @@ void Program::setState(ProgramState *programStateNew, bool cleanupOldState)
 			}
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		this->programStateOldSystemError = NULL;
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	}
+	catch(megaglest_runtime_error& e) {
+		//printf("3333333 ex.wantStackTrace() = %d\n",e.wantStackTrace());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,szBuf);
+		//abort();
+		//printf("44444444a ex.wantStackTrace() = %d\n",e.wantStackTrace());
+
+		messageBoxIsSystemError = true;
+		string errorMsg = e.what();
+
+		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+			if(dynamic_cast<Game *>(programStateNew) != NULL) {
+				try {
+					Game *game = dynamic_cast<Game *>(programStateNew);
+					Renderer &renderer= Renderer::getInstance();
+					renderer.initGame(game,game->getGameCameraPtr());
+				}
+				catch(megaglest_runtime_error& ex2) {
+					errorMsg += "\n" + string(ex2.what());
+				}
+			}
+		}
+
+		//printf("44444444b ex.wantStackTrace() = %d\n",e.wantStackTrace());
+		this->showMessage(errorMsg.c_str());
+		//setState(new Intro(this));
 	}
 	catch(const exception &e){
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,szBuf);
+		//abort();
+
+		messageBoxIsSystemError = true;
+
+		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+			if(dynamic_cast<Game *>(programStateNew) != NULL) {
+				Game *game = dynamic_cast<Game *>(programStateNew);
+				Renderer &renderer= Renderer::getInstance();
+				renderer.initGame(game,game->getGameCameraPtr());
+			}
+		}
+
 		this->showMessage(e.what());
-		setState(new Intro(this));
+		//setState(new Intro(this));
 	}
 }
 
@@ -549,19 +735,19 @@ void Program::exit() {
 // ==================== PRIVATE ====================
 
 void Program::init(WindowGl *window, bool initSound, bool toggleFullScreen){
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	this->window= window;
 	Config &config= Config::getInstance();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
     //set video mode
 	if(toggleFullScreen == false) {
 		setDisplaySettings();
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//window
 	window->setText("MegaGlest");
@@ -570,14 +756,14 @@ void Program::init(WindowGl *window, bool initSound, bool toggleFullScreen){
 	window->setSize(config.getInt("ScreenWidth"), config.getInt("ScreenHeight"));
 	window->create();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//timers
 	fpsTimer.init(1, maxTimes);
 	updateTimer.init(GameConstants::updateFps, maxTimes);
 	updateCameraTimer.init(GameConstants::cameraFps, maxTimes);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
     //log start
 	Logger &logger= Logger::getInstance();
@@ -596,51 +782,59 @@ void Program::init(WindowGl *window, bool initSound, bool toggleFullScreen){
 	logger.setFile(logFile);
 	logger.clear();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//lang
 	//Lang &lang= Lang::getInstance();
 	Lang::getInstance();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//render
 	Renderer &renderer= Renderer::getInstance();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	window->initGl(config.getInt("ColorBits"), config.getInt("DepthBits"), config.getInt("StencilBits"),config.getBool("HardwareAcceleration","false"),config.getBool("FullScreenAntiAliasing","false"));
+	window->initGl(config.getInt("ColorBits"),
+			       config.getInt("DepthBits"),
+			       config.getInt("StencilBits"),
+			       config.getBool("HardwareAcceleration","false"),
+			       config.getBool("FullScreenAntiAliasing","false"),
+			       config.getFloat("GammaValue","0.0"));
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	window->makeCurrentGl();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//coreData, needs renderer, but must load before renderer init
 	CoreData &coreData= CoreData::getInstance();
     coreData.load();
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//init renderer (load global textures)
+    tryingRendererInit = true;
 	renderer.init();
+	tryingRendererInit = false;
+	rendererInitOk = true;
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//sound
 	if(initSound == true && toggleFullScreen == false) {
         SoundRenderer &soundRenderer= SoundRenderer::getInstance();
         bool initOk = soundRenderer.init(window);
 
-        if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] initOk = %d\n",__FILE__,__FUNCTION__,__LINE__,initOk);
+        if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] initOk = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,initOk);
 
         // Test sound system failed
         //initOk = false;
         // END
 
         if(initOk == false) {
-        	string sError = "Sound System could not be initialzed!";
+        	string sError = "Sound System could not be initialized!";
         	this->showMessage(sError.c_str());
         }
 
@@ -649,8 +843,9 @@ void Program::init(WindowGl *window, bool initSound, bool toggleFullScreen){
 			if(BaseThread::shutdownAndWait(soundThreadManager) == true) {
 				delete soundThreadManager;
 			}
+			static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 			soundThreadManager = new SimpleTaskThread(&SoundRenderer::getInstance(),0,SOUND_THREAD_UPDATE_MILLISECONDS);
-			soundThreadManager->setUniqueID(__FILE__);
+			soundThreadManager->setUniqueID(mutexOwnerId);
 			soundThreadManager->start();
 		}
 	}
@@ -658,7 +853,7 @@ void Program::init(WindowGl *window, bool initSound, bool toggleFullScreen){
 	NetworkInterface::setAllowGameDataSynchCheck(Config::getInstance().getBool("AllowGameDataSynchCheck","false"));
 	NetworkInterface::setAllowDownloadDataSynch(Config::getInstance().getBool("AllowDownloadDataSynch","false"));
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Program::reloadUI() {
@@ -673,7 +868,7 @@ void Program::setDisplaySettings(){
 
 	if(!config.getBool("Windowed")) {
 
-		int freq= config.getInt("RefreshFrequency");
+		//int freq= config.getInt("RefreshFrequency");
 		int colorBits= config.getInt("ColorBits");
 		int screenWidth= config.getInt("ScreenWidth");
 		int screenHeight= config.getInt("ScreenHeight");
@@ -684,15 +879,8 @@ void Program::setDisplaySettings(){
             config.setInt("ScreenWidth",screenWidth);
             config.setInt("ScreenHeight",screenHeight);
         }
-
-		if(!(changeVideoMode(screenWidth, screenHeight, colorBits, freq) ||
-			changeVideoMode(screenWidth, screenHeight, colorBits, 0)))
-		{
-			throw runtime_error(
-				"Error setting video mode: " +
-				intToStr(screenWidth) + "x" + intToStr(screenHeight) + "x" + intToStr(colorBits));
-		}
 	}
+	changeVideoModeFullScreen(!config.getBool("Windowed"));
 }
 
 void Program::restoreDisplaySettings(){
@@ -708,13 +896,19 @@ bool Program::isMessageShowing() {
 }
 
 void Program::showMessage(const char *msg) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] msg [%s]\n",__FILE__,__FUNCTION__,__LINE__,msg);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d] msg [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,msg);
 
 	msgBox.setText(msg);
 	msgBox.setEnabled(true);
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		printf("Message:\n%s\n",msg);
+
+		if(messageBoxIsSystemError == true) {
+			messageBoxIsSystemError = false;
+			//setState(new Intro(this));
+			initServer(window,false,true,true);
+		}
 	}
 }
 
@@ -729,8 +923,9 @@ void Program::stopSoundSystem() {
 void Program::startSoundSystem() {
 	stopSoundSystem();
 	if(SoundRenderer::getInstance().runningThreaded() == true) {
+		static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 		soundThreadManager = new SimpleTaskThread(&SoundRenderer::getInstance(),0,SOUND_THREAD_UPDATE_MILLISECONDS);
-		soundThreadManager->setUniqueID(__FILE__);
+		soundThreadManager->setUniqueID(mutexOwnerId);
 		soundThreadManager->start();
 	}
 }
@@ -742,7 +937,12 @@ void Program::resetSoundSystem() {
 void Program::reInitGl() {
 	if(window != NULL) {
 		Config &config= Config::getInstance();
-		window->initGl(config.getInt("ColorBits"), config.getInt("DepthBits"), config.getInt("StencilBits"),config.getBool("HardwareAcceleration","false"),config.getBool("FullScreenAntiAliasing","false"));
+		window->initGl(config.getInt("ColorBits"),
+				       config.getInt("DepthBits"),
+				       config.getInt("StencilBits"),
+				       config.getBool("HardwareAcceleration","false"),
+				       config.getBool("FullScreenAntiAliasing","false"),
+				       config.getFloat("GammaValue","0.0"));
 	}
 }
 

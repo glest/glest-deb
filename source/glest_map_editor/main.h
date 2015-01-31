@@ -12,6 +12,11 @@
 #ifndef _MAPEDITOR_MAIN_H_
 #define _MAPEDITOR_MAIN_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include <vector>
 
@@ -48,6 +53,7 @@ enum StatusItems {
 	siBRUSH_TYPE,
 	siBRUSH_VALUE,
 	siBRUSH_RADIUS,
+	siPOS_VALUE,
 	siCOUNT
 };
 
@@ -72,6 +78,19 @@ const char *resource_descs[] = {
 
 const char *surface_descs[] = {
 	"Grass", "Sec. grass", "Road", "Stone", "Ground"
+};
+
+
+class MainToolBar : public wxToolBar {
+private:
+	DECLARE_EVENT_TABLE()
+
+public:
+	
+    MainToolBar(wxWindow *parent,
+              wxWindowID id) : wxToolBar(parent,id) {}
+
+	void onMouseMove(wxMouseEvent &event);
 };
 
 // =====================================================
@@ -125,6 +144,8 @@ private:
 
 		miViewResetZoomAndPos,
 		miViewGrid,
+		miViewHeightMap,
+		miHideWater,
 		miViewAbout,
 		miViewHelp,
 
@@ -191,6 +212,7 @@ public:
 	MainWindow(string appPath);
 	~MainWindow();
 
+	void refreshMapRender();
 	void init(string fname);
 
 	void onClose(wxCloseEvent &event);
@@ -233,6 +255,8 @@ public:
 
 	void onMenuViewResetZoomAndPos(wxCommandEvent &event);
 	void onMenuViewGrid(wxCommandEvent &event);
+	void onMenuViewHeightMap(wxCommandEvent &event);
+	void onMenuHideWater(wxCommandEvent &event);
 	void onMenuViewAbout(wxCommandEvent &event);
 	void onMenuViewHelp(wxCommandEvent &event);
 
@@ -333,6 +357,10 @@ private:
 	MainWindow *mainWindow;
 
 public:
+	App() : wxApp() {
+		mainWindow = NULL;
+	}
+	virtual ~App() {}
 	virtual bool OnInit();
 	virtual int MainLoop();
 	virtual int OnExit();

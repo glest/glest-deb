@@ -15,6 +15,7 @@
 #include "unit_type.h"
 #include "unit.h"
 #include "map.h"
+#include "faction_type.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Graphics;
@@ -22,40 +23,101 @@ using namespace Shared::Util;
 
 namespace Glest { namespace Game {
 
+Task::Task() {
+	taskClass = tcProduce;
+}
+
+//void Task::saveGame(XmlNode *rootNode) const {
+//	std::map<string,string> mapTagReplacements;
+//	XmlNode *taskNode = rootNode->addChild("Task");
+//}
+
 // =====================================================
 // 	class ProduceTask
 // =====================================================
+ProduceTask::ProduceTask() : Task() {
+	taskClass= tcProduce;
+	unitType= NULL;
+	resourceType= NULL;
+	unitClass = ucWarrior;
+}
 
-ProduceTask::ProduceTask(UnitClass unitClass){
+ProduceTask::ProduceTask(UnitClass unitClass) : Task() {
 	taskClass= tcProduce;
 	this->unitClass= unitClass;
 	unitType= NULL;
 	resourceType= NULL;
 }
 
-ProduceTask::ProduceTask(const UnitType *unitType){
+ProduceTask::ProduceTask(const UnitType *unitType) : Task() {
 	taskClass= tcProduce;
 	this->unitType= unitType;
 	resourceType= NULL;
+	unitClass = ucWarrior;
 }
 
-ProduceTask::ProduceTask(const ResourceType *resourceType){
+ProduceTask::ProduceTask(const ResourceType *resourceType) : Task() {
 	taskClass= tcProduce;
 	unitType= NULL;
+	unitClass = ucWarrior;
 	this->resourceType= resourceType;
 }
 
 string ProduceTask::toString() const{
 	string str= "Produce ";
 	if(unitType!=NULL){
-		str+= unitType->getName();
+		str+= unitType->getName(false);
 	}
 	return str;
+}
+
+void ProduceTask::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *taskNode = rootNode->addChild("Task");
+	taskNode->addAttribute("taskClass",intToStr(taskClass), mapTagReplacements);
+	XmlNode *produceTaskNode = taskNode->addChild("ProduceTask");
+
+//	UnitClass unitClass;
+	produceTaskNode->addAttribute("unitClass",intToStr(unitClass), mapTagReplacements);
+//	const UnitType *unitType;
+	if(unitType != NULL) {
+		produceTaskNode->addAttribute("unitType",unitType->getName(false), mapTagReplacements);
+	}
+//	const ResourceType *resourceType;
+	if(resourceType != NULL) {
+		produceTaskNode->addAttribute("resourceType",resourceType->getName(false), mapTagReplacements);
+	}
+}
+
+ProduceTask * ProduceTask::loadGame(const XmlNode *rootNode, Faction *faction) {
+	const XmlNode *produceTaskNode = rootNode->getChild("ProduceTask");
+
+	ProduceTask *newTask = new ProduceTask();
+	//	UnitClass unitClass;
+	newTask->unitClass = static_cast<UnitClass>(produceTaskNode->getAttribute("unitClass")->getIntValue());
+	//	const UnitType *unitType;
+	if(produceTaskNode->hasAttribute("unitType")) {
+		string unitTypeName = produceTaskNode->getAttribute("unitType")->getValue();
+		newTask->unitType = faction->getType()->getUnitType(unitTypeName);
+	}
+	//	const ResourceType *resourceType;
+	if(produceTaskNode->hasAttribute("resourceType")) {
+		string resourceTypeName = produceTaskNode->getAttribute("resourceType")->getValue();
+		newTask->resourceType = faction->getTechTree()->getResourceType(resourceTypeName);
+	}
+
+	return newTask;
 }
 
 // =====================================================
 // 	class BuildTask
 // =====================================================
+BuildTask::BuildTask() {
+	taskClass= tcBuild;
+	this->unitType= NULL;
+	resourceType= NULL;
+	forcePos= false;
+}
 
 BuildTask::BuildTask(const UnitType *unitType){
 	taskClass= tcBuild;
@@ -82,14 +144,57 @@ BuildTask::BuildTask(const UnitType *unitType, const Vec2i &pos){
 string BuildTask::toString() const{
 	string str= "Build ";
 	if(unitType!=NULL){
-		str+= unitType->getName();
+		str+= unitType->getName(false);
 	}
 	return str;
+}
+
+void BuildTask::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *taskNode = rootNode->addChild("Task");
+	taskNode->addAttribute("taskClass",intToStr(taskClass), mapTagReplacements);
+	XmlNode *buildTaskNode = taskNode->addChild("BuildTask");
+
+//	const UnitType *unitType;
+	if(unitType != NULL) {
+		buildTaskNode->addAttribute("unitType",unitType->getName(false), mapTagReplacements);
+	}
+//	const ResourceType *resourceType;
+	if(resourceType != NULL) {
+		buildTaskNode->addAttribute("resourceType",resourceType->getName(), mapTagReplacements);
+	}
+//	bool forcePos;
+	buildTaskNode->addAttribute("forcePos",intToStr(forcePos), mapTagReplacements);
+//	Vec2i pos;
+	buildTaskNode->addAttribute("pos",pos.getString(), mapTagReplacements);
+}
+
+BuildTask * BuildTask::loadGame(const XmlNode *rootNode, Faction *faction) {
+	const XmlNode *buildTaskNode = rootNode->getChild("BuildTask");
+
+	BuildTask *newTask = new BuildTask();
+	if(buildTaskNode->hasAttribute("unitType")) {
+		string unitTypeName = buildTaskNode->getAttribute("unitType")->getValue();
+		newTask->unitType = faction->getType()->getUnitType(unitTypeName);
+	}
+	if(buildTaskNode->hasAttribute("resourceType")) {
+		string resourceTypeName = buildTaskNode->getAttribute("resourceType")->getValue();
+		newTask->resourceType = faction->getTechTree()->getResourceType(resourceTypeName);
+	}
+
+	newTask->forcePos = buildTaskNode->getAttribute("forcePos")->getIntValue() != 0;
+	newTask->pos = Vec2i::strToVec2(buildTaskNode->getAttribute("pos")->getValue());
+
+	return newTask;
 }
 
 // =====================================================
 // 	class UpgradeTask
 // =====================================================
+UpgradeTask::UpgradeTask() {
+	taskClass= tcUpgrade;
+	this->upgradeType= NULL;
+}
 
 UpgradeTask::UpgradeTask(const UpgradeType *upgradeType){
 	taskClass= tcUpgrade;
@@ -104,12 +209,86 @@ string UpgradeTask::toString() const{
 	return str;
 }
 
+void UpgradeTask::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *taskNode = rootNode->addChild("Task");
+	taskNode->addAttribute("taskClass",intToStr(taskClass), mapTagReplacements);
+	XmlNode *upgradeTaskNode = taskNode->addChild("UpgradeTask");
+
+	if(upgradeType != NULL) {
+		//upgradeType->saveGame(upgradeTaskNode);
+		upgradeTaskNode->addAttribute("upgradeType",upgradeType->getName(), mapTagReplacements);
+	}
+}
+
+UpgradeTask * UpgradeTask::loadGame(const XmlNode *rootNode, Faction *faction) {
+	const XmlNode *upgradeTaskNode = rootNode->getChild("UpgradeTask");
+
+	UpgradeTask *newTask = new UpgradeTask();
+	if(upgradeTaskNode->hasAttribute("upgradeType")) {
+		string upgradeTypeName = upgradeTaskNode->getAttribute("upgradeType")->getValue();
+		newTask->upgradeType = faction->getType()->getUpgradeType(upgradeTypeName);
+	}
+	return newTask;
+}
+
 // =====================================================
 // 	class Ai
 // =====================================================
 
 void Ai::init(AiInterface *aiInterface, int useStartLocation) {
 	this->aiInterface= aiInterface;
+
+	Faction *faction = this->aiInterface->getMyFaction();
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMaxBuildRadius) != INT_MAX) {
+		maxBuildRadius = faction->getAIBehaviorStaticOverideValue(aibsvcMaxBuildRadius);
+		//printf("Discovered overriden static value for AI, maxBuildRadius = %d\n",maxBuildRadius);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriors) != INT_MAX) {
+		minMinWarriors = faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriors);
+		//printf("Discovered overriden static value for AI, minMinWarriors = %d\n",minMinWarriors);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuEasy) != INT_MAX) {
+		minMinWarriorsExpandCpuEasy = faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuEasy);
+		//printf("Discovered overriden static value for AI, minMinWarriorsExpandCpuEasy = %d\n",minMinWarriorsExpandCpuEasy);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuMega) != INT_MAX) {
+		minMinWarriorsExpandCpuMega = faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuMega);
+		//printf("Discovered overriden static value for AI, minMinWarriorsExpandCpuMega = %d\n",minMinWarriorsExpandCpuMega);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuUltra) != INT_MAX) {
+		minMinWarriorsExpandCpuUltra = faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuUltra);
+		//printf("Discovered overriden static value for AI, minMinWarriorsExpandCpuUltra = %d\n",minMinWarriorsExpandCpuUltra);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuNormal) != INT_MAX) {
+		minMinWarriorsExpandCpuNormal = faction->getAIBehaviorStaticOverideValue(aibsvcMinMinWarriorsExpandCpuNormal);
+		//printf("Discovered overriden static value for AI, minMinWarriorsExpandCpuNormal = %d\n",minMinWarriorsExpandCpuNormal);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMaxMinWarriors) != INT_MAX) {
+		maxMinWarriors = faction->getAIBehaviorStaticOverideValue(aibsvcMaxMinWarriors);
+		//printf("Discovered overriden static value for AI, maxMinWarriors = %d\n",maxMinWarriors);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMaxExpansions) != INT_MAX) {
+		maxExpansions = faction->getAIBehaviorStaticOverideValue(aibsvcMaxExpansions);
+		//printf("Discovered overriden static value for AI, maxExpansions = %d\n",maxExpansions);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcVillageRadius) != INT_MAX) {
+		villageRadius = faction->getAIBehaviorStaticOverideValue(aibsvcVillageRadius);
+		//printf("Discovered overriden static value for AI, villageRadius = %d\n",villageRadius);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcScoutResourceRange) != INT_MAX) {
+		scoutResourceRange = faction->getAIBehaviorStaticOverideValue(aibsvcScoutResourceRange);
+		//printf("Discovered overriden static value for AI, scoutResourceRange = %d\n",scoutResourceRange);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinWorkerAttackersHarvesting) != INT_MAX) {
+		minWorkerAttackersHarvesting = faction->getAIBehaviorStaticOverideValue(aibsvcMinWorkerAttackersHarvesting);
+		//printf("Discovered overriden static value for AI, scoutResourceRange = %d\n",scoutResourceRange);
+	}
+	if(faction->getAIBehaviorStaticOverideValue(aibsvcMinBuildSpacing) != INT_MAX) {
+		minBuildSpacing = faction->getAIBehaviorStaticOverideValue(aibsvcMinBuildSpacing);
+		//printf("Discovered overriden static value for AI, scoutResourceRange = %d\n",scoutResourceRange);
+	}
+
 	if(useStartLocation == -1) {
 		startLoc = random.randRange(0, aiInterface->getMapMaxPlayers()-1);
 	}
@@ -165,7 +344,10 @@ void Ai::update() {
 		int factionSwitchTeamRequestCountCurrent = factionSwitchTeamRequestCount[vote->factionIndex];
 
 		//int allowJoinTeam = random.randRange(0, 100);
-		srand(time(NULL) + aiInterface->getMyFaction()->getIndex());
+		//srand(time(NULL) + aiInterface->getMyFaction()->getIndex());
+		Chrono seed(true);
+		srand((unsigned int)seed.getCurTicks() + aiInterface->getMyFaction()->getIndex());
+
 		int allowJoinTeam = rand() % 100;
 
 		SwitchTeamVote *voteResult = aiInterface->getMyFaction()->getSwitchTeamVote(vote->factionIndex);
@@ -173,31 +355,41 @@ void Ai::update() {
 		voteResult->allowSwitchTeam = false;
 
 		const GameSettings *settings =  aiInterface->getWorld()->getGameSettings();
-		// Can only ask the AI player 2 times max per game
-		if(factionSwitchTeamRequestCountCurrent <= 2) {
-			// x% chance the AI will answer yes
-			if(settings->getAiAcceptSwitchTeamPercentChance() >= 100) {
-				voteResult->allowSwitchTeam = true;
-			}
-			else if(settings->getAiAcceptSwitchTeamPercentChance() <= 0) {
-				voteResult->allowSwitchTeam = false;
-			}
-			else {
-				voteResult->allowSwitchTeam = (allowJoinTeam >= (100 - settings->getAiAcceptSwitchTeamPercentChance()));
+
+		// If AI player already lost game they cannot vote
+		if(aiInterface->getWorld()->factionLostGame(aiInterface->getFactionIndex()) == true) {
+			voteResult->allowSwitchTeam = true;
+		}
+		else {
+			// Can only ask the AI player 2 times max per game
+			if(factionSwitchTeamRequestCountCurrent <= 2) {
+				// x% chance the AI will answer yes
+				if(settings->getAiAcceptSwitchTeamPercentChance() >= 100) {
+					voteResult->allowSwitchTeam = true;
+				}
+				else if(settings->getAiAcceptSwitchTeamPercentChance() <= 0) {
+					voteResult->allowSwitchTeam = false;
+				}
+				else {
+					voteResult->allowSwitchTeam = (allowJoinTeam >= (100 - settings->getAiAcceptSwitchTeamPercentChance()));
+				}
 			}
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] AI for faction# %d voted %s [%d] factionSwitchTeamRequestCountCurrent [%d] settings->getAiAcceptSwitchTeamPercentChance() [%d]\n",__FILE__,__FUNCTION__,__LINE__,aiInterface->getMyFaction()->getIndex(),(voteResult->allowSwitchTeam ? "Yes" : "No"),allowJoinTeam,factionSwitchTeamRequestCountCurrent,settings->getAiAcceptSwitchTeamPercentChance());
-		//printf("AI for faction# %d voted %s [%d] factionSwitchTeamRequestCountCurrent [%d]\n",aiInterface->getMyFaction()->getIndex(),(voteResult->allowSwitchTeam ? "Yes" : "No"),allowJoinTeam,factionSwitchTeamRequestCountCurrent);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"AI for faction# %d voted %s [%d] CountCurrent [%d] PercentChance [%d]",aiInterface->getMyFaction()->getIndex(),(voteResult->allowSwitchTeam ? "Yes" : "No"),allowJoinTeam,factionSwitchTeamRequestCountCurrent,settings->getAiAcceptSwitchTeamPercentChance());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] %s\n",__FILE__,__FUNCTION__,__LINE__,szBuf);
+
+		aiInterface->printLog(3, szBuf);
 
 		aiInterface->giveCommandSwitchTeamVote(aiInterface->getMyFaction(),voteResult);
 	}
 
 	//process ai rules
-	for(int ruleIdx = 0; ruleIdx < aiRules.size(); ++ruleIdx) {
+	for(unsigned int ruleIdx = 0; ruleIdx < aiRules.size(); ++ruleIdx) {
 		AiRule *rule = aiRules[ruleIdx];
 		if(rule == NULL) {
-			throw runtime_error("rule == NULL");
+			throw megaglest_runtime_error("rule == NULL");
 		}
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld [ruleIdx = %d]\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis(),ruleIdx);
@@ -206,7 +398,7 @@ void Ai::update() {
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld [ruleIdx = %d, before rule->test()]\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis(),ruleIdx);
 
-			//printf("???? Testing AI Faction # %d RULE Name[%s]\n",aiInterface->getFactionIndex(),rule->getName().c_str());
+			//printf("Testing AI Faction # %d RULE Name[%s]\n",aiInterface->getFactionIndex(),rule->getName().c_str());
 
 			if(rule->test()) {
 				if(outputAIBehaviourToConsole()) printf("\n\nYYYYY Executing AI Faction # %d RULE Name[%s]\n\n",aiInterface->getFactionIndex(),rule->getName().c_str());
@@ -273,55 +465,62 @@ const ResourceType *Ai::getNeededResource(int unitIndex) {
         const ResourceType *rt= tt->getResourceType(i);
         const Resource *r= aiInterface->getResource(rt);
 
+		if( rt->getClass() != rcStatic && rt->getClass() != rcConsumable) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"Examining resource [%s] amount [%d] (previous amount [%d]",rt->getName().c_str(),r->getAmount(),amount);
+			aiInterface->printLog(3, szBuf);
+		}
+
 		if( rt->getClass() != rcStatic && rt->getClass() != rcConsumable &&
 			r->getAmount() < amount) {
 
-			// Now MAKE SURE the unit has a harvest command for this resource
-			// AND that the resource is within eye-sight to avoid units
-			// standing around doing nothing.
-			const HarvestCommandType *hct= unit->getType()->getFirstHarvestCommand(rt,unit->getFaction());
+			// Only have up to x units going for this resource so we can focus
+			// on other needed resources for other units
+			const int maxUnitsToHarvestResource = 5;
 
-			Vec2i resPos;
-			if(hct != NULL && aiInterface->getNearestSightedResource(rt, aiInterface->getHomeLocation(), resPos, false)) {
-				amount= r->getAmount();
-				neededResource= rt;
+			vector<int> unitsGettingResource = findUnitsHarvestingResourceType(rt);
+			if((int)unitsGettingResource.size() <= maxUnitsToHarvestResource) {
+				// Now MAKE SURE the unit has a harvest command for this resource
+				// AND that the resource is within eye-sight to avoid units
+				// standing around doing nothing.
+				const HarvestCommandType *hct= unit->getType()->getFirstHarvestCommand(rt,unit->getFaction());
+				Vec2i resPos;
+				if(hct != NULL && aiInterface->getNearestSightedResource(rt, aiInterface->getHomeLocation(), resPos, false)) {
+					amount= r->getAmount();
+					neededResource= rt;
+				}
 			}
         }
     }
+
+    char szBuf[8096]="";
+    snprintf(szBuf,8096,"Unit [%d - %s] looking for resources (not static or consumable)",unit->getId(),unit->getType()->getName(false).c_str());
+    aiInterface->printLog(3, szBuf);
+    snprintf(szBuf,8096,"[resource type count %d] Needed resource [%s].",tt->getResourceTypeCount(),(neededResource != NULL ? neededResource->getName().c_str() : "<none>"));
+    aiInterface->printLog(3, szBuf);
+
     return neededResource;
 }
 
 bool Ai::beingAttacked(Vec2i &pos, Field &field, int radius){
-
 	const Unit *enemy = aiInterface->getFirstOnSightEnemyUnit(pos, field, radius);
 	return (enemy != NULL);
-/*
-    int count= aiInterface->onSightUnitCount();
-    const Unit *unit;
-
-    for(int i=0; i<count; ++i){
-        unit= aiInterface->getOnSightUnit(i);
-        if(!aiInterface->isAlly(unit) && unit->isAlive()){
-            pos= unit->getPos();
-			field= unit->getCurrField();
-            if(pos.dist(aiInterface->getHomeLocation())<radius){
-                aiInterface->printLog(2, "Being attacked at pos "+intToStr(pos.x)+","+intToStr(pos.y)+"\n");
-                return true;
-            }
-        }
-    }
-    return false;
-*/
 }
 
 bool Ai::isStableBase() {
 	UnitClass ucWorkerType = ucWorker;
     if(getCountOfClass(ucWarrior,&ucWorkerType) > minWarriors) {
-        aiInterface->printLog(4, "Base is stable\n");
+        char szBuf[8096]="";
+        snprintf(szBuf,8096,"Base is stable [minWarriors = %d found = %d]",minWarriors,ucWorkerType);
+        aiInterface->printLog(4, szBuf);
+
         return true;
     }
     else{
-        aiInterface->printLog(4, "Base is not stable\n");
+        char szBuf[8096]="";
+        snprintf(szBuf,8096,"Base is NOT stable [minWarriors = %d found = %d]",minWarriors,ucWorkerType);
+        aiInterface->printLog(4, szBuf);
+
         return false;
     }
 }
@@ -343,9 +542,86 @@ bool Ai::findAbleUnit(int *unitIndex, CommandClass ability, bool idleOnly){
 		return false;
 	}
 	else{
-		*unitIndex= units[random.randRange(0, units.size()-1)];
+		*unitIndex= units[random.randRange(0, (int)units.size()-1)];
 		return true;
 	}
+}
+
+vector<int> Ai::findUnitsHarvestingResourceType(const ResourceType *rt) {
+	vector<int> units;
+
+	Map *map= aiInterface->getMap();
+	for(int i = 0; i < aiInterface->getMyUnitCount(); ++i) {
+		const Unit *unit= aiInterface->getMyUnit(i);
+		if(unit->getType()->hasCommandClass(ccHarvest)) {
+			if(unit->anyCommand() && unit->getCurrCommand()->getCommandType()->getClass() == ccHarvest) {
+				Command *command= unit->getCurrCommand();
+			    const HarvestCommandType *hct= dynamic_cast<const HarvestCommandType*>(command->getCommandType());
+			    if(hct != NULL) {
+					const Vec2i unitTargetPos = unit->getTargetPos();
+					SurfaceCell *sc= map->getSurfaceCell(Map::toSurfCoords(unitTargetPos));
+					Resource *r= sc->getResource();
+					if (r != NULL && r->getType() == rt) {
+						units.push_back(i);
+					}
+			    }
+			}
+		}
+		else if(unit->getType()->hasCommandClass(ccProduce)) {
+			if(unit->anyCommand() && unit->getCurrCommand()->getCommandType()->getClass() == ccProduce) {
+				Command *command= unit->getCurrCommand();
+			    const ProduceCommandType *pct= dynamic_cast<const ProduceCommandType*>(command->getCommandType());
+			    if(pct != NULL) {
+			    	const UnitType *ut = pct->getProducedUnit();
+			    	if(ut != NULL) {
+						const Resource *r = ut->getCost(rt);
+						if(r != NULL) {
+							if (r != NULL && r->getAmount() < 0) {
+								units.push_back(i);
+							}
+						}
+			    	}
+			    }
+			}
+		}
+		else if(unit->getType()->hasCommandClass(ccBuild)) {
+			if(unit->anyCommand() && unit->getCurrCommand()->getCommandType()->getClass() == ccBuild) {
+				Command *command= unit->getCurrCommand();
+			    const BuildCommandType *bct= dynamic_cast<const BuildCommandType*>(command->getCommandType());
+			    if(bct != NULL) {
+			    	for(int j = 0; j < bct->getBuildingCount(); ++j) {
+						const UnitType *ut = bct->getBuilding(j);
+						if(ut != NULL) {
+							const Resource *r = ut->getCost(rt);
+							if(r != NULL) {
+								if (r != NULL && r->getAmount() < 0) {
+									units.push_back(i);
+									break;
+								}
+							}
+						}
+			    	}
+			    }
+			}
+		}
+	}
+
+	return units;
+}
+
+vector<int> Ai::findUnitsDoingCommand(CommandClass currentCommand) {
+	vector<int> units;
+
+	for(int i = 0; i < aiInterface->getMyUnitCount(); ++i) {
+		const Unit *unit= aiInterface->getMyUnit(i);
+		if(unit->getType()->hasCommandClass(currentCommand)) {
+			if(unit->anyCommand() && unit->getCurrCommand()->getCommandType()->getClass() == currentCommand) {
+				units.push_back(i);
+			}
+		}
+	}
+
+	return units;
 }
 
 bool Ai::findAbleUnit(int *unitIndex, CommandClass ability, CommandClass currentCommand){
@@ -365,20 +641,18 @@ bool Ai::findAbleUnit(int *unitIndex, CommandClass ability, CommandClass current
 		return false;
 	}
 	else{
-		*unitIndex= units[random.randRange(0, units.size()-1)];
+		*unitIndex= units[random.randRange(0, (int)units.size()-1)];
 		return true;
 	}
 }
 
 bool Ai::findPosForBuilding(const UnitType* building, const Vec2i &searchPos, Vec2i &outPos){
 
-	const int spacing= 1;
-
     for(int currRadius = 0; currRadius < maxBuildRadius; ++currRadius) {
         for(int i=searchPos.x - currRadius; i < searchPos.x + currRadius; ++i) {
             for(int j=searchPos.y - currRadius; j < searchPos.y + currRadius; ++j) {
                 outPos= Vec2i(i, j);
-                if(aiInterface->isFreeCells(outPos - Vec2i(spacing), building->getSize() + spacing * 2, fLand)) {
+                if(aiInterface->isFreeCells(outPos - Vec2i(minBuildSpacing), building->getSize() + minBuildSpacing * 2, fLand)) {
                		return true;
                 }
             }
@@ -430,11 +704,11 @@ void Ai::retryTask(const Task *task){
 }
 // ==================== expansions ====================
 
-void Ai::addExpansion(const Vec2i &pos){
+void Ai::addExpansion(const Vec2i &pos) {
 
 	//check if there is a nearby expansion
-	for(Positions::iterator it= expansionPositions.begin(); it!=expansionPositions.end(); ++it){
-		if((*it).dist(pos)<villageRadius){
+	for(Positions::iterator it = expansionPositions.begin(); it != expansionPositions.end(); ++it) {
+		if((*it).dist(pos) < villageRadius) {
 			return;
 		}
 	}
@@ -443,7 +717,7 @@ void Ai::addExpansion(const Vec2i &pos){
 	expansionPositions.push_front(pos);
 
 	//remove expansion if queue is list is full
-	if(expansionPositions.size()>maxExpansions){
+	if((int)expansionPositions.size() > maxExpansions){
 		expansionPositions.pop_back();
 	}
 }
@@ -454,12 +728,13 @@ Vec2i Ai::getRandomHomePosition() {
 		return aiInterface->getHomeLocation();
 	}
 
-	return expansionPositions[random.randRange(0, expansionPositions.size()-1)];
+	return expansionPositions[random.randRange(0, (int)expansionPositions.size()-1)];
 }
 
 // ==================== actions ====================
 
 void Ai::sendScoutPatrol(){
+
 	Vec2i pos;
 	int unit;
 	bool possibleTargetFound= false;
@@ -468,7 +743,8 @@ void Ai::sendScoutPatrol(){
 	        && random.randRange(0, 2) == 1;
 	bool megaResourceAttack=(aiInterface->getControlType() == ctCpuMega || aiInterface->getControlType() == ctNetworkCpuMega)
 			&& random.randRange(0, 1) == 1;
-	if( megaResourceAttack || ultraResourceAttack) {
+
+	if(possibleTargetFound == false && (megaResourceAttack || ultraResourceAttack)) {
 		Map *map= aiInterface->getMap();
 
 		const TechTree *tt= aiInterface->getTechTree();
@@ -498,7 +774,7 @@ void Ai::sendScoutPatrol(){
 				//printf("is inside map\n");
 				// find first resource in this area
 				Vec2i resPos;
-				if(aiInterface->isResourceInRegion(pos, rt, resPos, 20)){
+				if(aiInterface->isResourceInRegion(pos, rt, resPos, scoutResourceRange)){
 					// found a possible target.
 					pos= resPos;
 					//printf("lets try the new target\n");
@@ -509,6 +785,23 @@ void Ai::sendScoutPatrol(){
 			//else printf("is outside map\n");
 		}
 	}
+
+	std::vector<Vec2i> warningEnemyList = aiInterface->getEnemyWarningPositionList();
+	if( (possibleTargetFound == false) && (warningEnemyList.empty() == false)) {
+		//for(int i = (int)warningEnemyList.size() - 1; i <= 0; --i) {
+			//Vec2i &checkPos = warningEnemyList[i];
+			Vec2i &checkPos = warningEnemyList[0];
+			if (random.randRange(0, 1) == 1 ) {
+				pos = checkPos;
+				possibleTargetFound = true;
+				warningEnemyList.clear();
+			} else {
+				aiInterface->removeEnemyWarningPositionFromList(checkPos);
+			}
+			//break;
+		//}
+	}
+
 	if(possibleTargetFound == false){
 		startLoc= (startLoc + 1) % aiInterface->getMapMaxPlayers();
 		pos= aiInterface->getStartLocation(startLoc);
@@ -527,8 +820,6 @@ void Ai::sendScoutPatrol(){
 }
 
 void Ai::massiveAttack(const Vec2i &pos, Field field, bool ultraAttack){
-	const int minWorkerAttackersHarvesting = 3;
-
 	int producerWarriorCount=0;
 	int maxProducerWarriors=random.randRange(1,11);
 	int unitCount = aiInterface->getMyUnitCount();
@@ -659,32 +950,40 @@ void Ai::massiveAttack(const Vec2i &pos, Field field, bool ultraAttack){
 
     if(	aiInterface->getControlType() == ctCpuEasy ||
     	aiInterface->getControlType() == ctNetworkCpuEasy) {
-		minWarriors+= 1;
+		minWarriors += minMinWarriorsExpandCpuEasy;
 	}
 	else if(aiInterface->getControlType() == ctCpuMega ||
 			aiInterface->getControlType() == ctNetworkCpuMega) {
-		minWarriors+= 3;
-		if(minWarriors>maxMinWarriors-1 || randomMinWarriorsReached) {
+		minWarriors += minMinWarriorsExpandCpuMega;
+		if(minWarriors > maxMinWarriors-1 || randomMinWarriorsReached) {
 			randomMinWarriorsReached=true;
 			minWarriors=random.randRange(maxMinWarriors-10, maxMinWarriors*2);
 		}
 	}
-	else if(minWarriors<maxMinWarriors) {
-		minWarriors+= 3;
+	else if(minWarriors < maxMinWarriors) {
+	    if(aiInterface->getControlType() == ctCpuUltra ||
+	    	aiInterface->getControlType() == ctNetworkCpuUltra) {
+    		minWarriors += minMinWarriorsExpandCpuUltra;
+		}
+	    else {
+	    	minWarriors+= minMinWarriorsExpandCpuNormal;
+	    }
 	}
 	aiInterface->printLog(2, "Massive attack to pos: "+ intToStr(pos.x)+", "+intToStr(pos.y)+"\n");
 }
 
 void Ai::returnBase(int unitIndex) {
     Vec2i pos;
-    CommandResult r;
+    //std::pair<CommandResult,string> r(crFailUndefined,"");
     aiInterface->getFactionIndex();
     pos= Vec2i(
-		random.randRange(-villageRadius, villageRadius), random.randRange(-villageRadius, villageRadius)) +
-		getRandomHomePosition();
+		random.randRange(-villageRadius, villageRadius),
+		random.randRange(-villageRadius, villageRadius)) +
+		                 getRandomHomePosition();
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-    r= aiInterface->giveCommand(unitIndex, ccMove, pos);
+    //r= aiInterface->giveCommand(unitIndex, ccMove, pos);
+    aiInterface->giveCommand(unitIndex, ccMove, pos);
 
     //aiInterface->printLog(1, "Order return to base pos:" + intToStr(pos.x)+", "+intToStr(pos.y)+": "+rrToStr(r)+"\n");
 }
@@ -718,7 +1017,7 @@ bool Ai::haveBlockedUnits() {
 
 		// If this building is a store
 		if(u->isAlive() && ut->isMobile() && u->getPath() != NULL && (u->getPath()->isBlocked() || u->getPath()->getBlockCount())) {
-			Vec2i unitPos = u->getPos();
+			Vec2i unitPos = u->getPosNotThreadSafe();
 
 			//printf("#1 AI found blocked unit [%d - %s]\n",u->getId(),u->getFullName().c_str());
 
@@ -759,7 +1058,7 @@ bool Ai::getAdjacentUnits(std::map<float, std::map<int, const Unit *> > &signalA
 
 	bool result = false;
 	Map *map = aiInterface->getMap();
-	Vec2i unitPos = unit->getPos();
+	Vec2i unitPos = unit->getPosNotThreadSafe();
 	for(int i = -1; i <= 1; ++i) {
 		for(int j = -1; j <= 1; ++j) {
 			Vec2i pos = unitPos + Vec2i(i, j);
@@ -811,7 +1110,7 @@ void Ai::unblockUnits() {
 
 		// If this building is a store
 		if(u->isAlive() && ut->isMobile() && u->getPath() != NULL && (u->getPath()->isBlocked() || u->getPath()->getBlockCount())) {
-			Vec2i unitPos = u->getPos();
+			Vec2i unitPos = u->getPosNotThreadSafe();
 
 			//printf("#2 AI found blocked unit [%d - %s]\n",u->getId(),u->getFullName().c_str());
 
@@ -857,10 +1156,11 @@ void Ai::unblockUnits() {
 
 					for(int moveAttempt = 1; moveAttempt <= villageRadius; ++moveAttempt) {
 						Vec2i pos= Vec2i(
-							random.randRange(-villageRadius*2, villageRadius*2), random.randRange(-villageRadius*2, villageRadius*2)) +
-											 adjacentUnit->getPos();
+							random.randRange(-villageRadius*2, villageRadius*2),
+							random.randRange(-villageRadius*2, villageRadius*2)) +
+											 adjacentUnit->getPosNotThreadSafe();
 
-						bool canUnitMoveToCell = map->aproxCanMove(adjacentUnit, adjacentUnit->getPos(), pos);
+						bool canUnitMoveToCell = map->aproxCanMove(adjacentUnit, adjacentUnit->getPosNotThreadSafe(), pos);
 						if(canUnitMoveToCell == true) {
 
 							if(ct != NULL) {
@@ -868,7 +1168,8 @@ void Ai::unblockUnits() {
 									unitGroupCommandId = aiInterface->getWorld()->getNextCommandGroupId();
 								}
 
-								CommandResult r = aiInterface->giveCommand(adjacentUnit,ct, pos, unitGroupCommandId);
+								//std::pair<CommandResult,string> r = aiInterface->giveCommand(adjacentUnit,ct, pos, unitGroupCommandId);
+								aiInterface->giveCommand(adjacentUnit,ct, pos, unitGroupCommandId);
 							}
 						}
 					}
@@ -882,6 +1183,121 @@ void Ai::unblockUnits() {
 
 bool Ai::outputAIBehaviourToConsole() const {
 	return false;
+}
+
+void Ai::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *aiNode = rootNode->addChild("Ai");
+
+//    AiInterface *aiInterface;
+//	AiRules aiRules;
+//    int startLoc;
+	aiNode->addAttribute("startLoc",intToStr(startLoc), mapTagReplacements);
+//    bool randomMinWarriorsReached;
+	aiNode->addAttribute("randomMinWarriorsReached",intToStr(randomMinWarriorsReached), mapTagReplacements);
+//	Tasks tasks;
+	for(Tasks::const_iterator it = tasks.begin(); it != tasks.end(); ++it) {
+		(*it)->saveGame(aiNode);
+	}
+//	Positions expansionPositions;
+	for(Positions::const_iterator it = expansionPositions.begin(); it != expansionPositions.end(); ++it) {
+		XmlNode *expansionPositionsNode = aiNode->addChild("expansionPositions");
+		expansionPositionsNode->addAttribute("pos",(*it).getString(), mapTagReplacements);
+	}
+
+//	RandomGen random;
+	aiNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	std::map<int,int> factionSwitchTeamRequestCount;
+
+//	int maxBuildRadius;
+	aiNode->addAttribute("maxBuildRadius",intToStr(maxBuildRadius), mapTagReplacements);
+//	int minMinWarriors;
+	aiNode->addAttribute("minMinWarriors",intToStr(minMinWarriors), mapTagReplacements);
+//	int minMinWarriorsExpandCpuEasy;
+	aiNode->addAttribute("minMinWarriorsExpandCpuEasy",intToStr(minMinWarriorsExpandCpuEasy), mapTagReplacements);
+//	int minMinWarriorsExpandCpuMega;
+	aiNode->addAttribute("minMinWarriorsExpandCpuMega",intToStr(minMinWarriorsExpandCpuMega), mapTagReplacements);
+//	int minMinWarriorsExpandCpuUltra;
+	aiNode->addAttribute("minMinWarriorsExpandCpuUltra",intToStr(minMinWarriorsExpandCpuUltra), mapTagReplacements);
+//	int minMinWarriorsExpandCpuNormal;
+	aiNode->addAttribute("minMinWarriorsExpandCpuNormal",intToStr(minMinWarriorsExpandCpuNormal), mapTagReplacements);
+//	int maxMinWarriors;
+	aiNode->addAttribute("maxMinWarriors",intToStr(maxMinWarriors), mapTagReplacements);
+//	int maxExpansions;
+	aiNode->addAttribute("maxExpansions",intToStr(maxExpansions), mapTagReplacements);
+//	int villageRadius;
+	aiNode->addAttribute("villageRadius",intToStr(villageRadius), mapTagReplacements);
+//	int scoutResourceRange;
+	aiNode->addAttribute("scoutResourceRange",intToStr(scoutResourceRange), mapTagReplacements);
+//	int minWorkerAttackersHarvesting;
+	aiNode->addAttribute("minWorkerAttackersHarvesting",intToStr(minWorkerAttackersHarvesting), mapTagReplacements);
+}
+
+void Ai::loadGame(const XmlNode *rootNode, Faction *faction) {
+	const XmlNode *aiNode = rootNode->getChild("Ai");
+
+	startLoc = aiNode->getAttribute("startLoc")->getIntValue();
+	randomMinWarriorsReached = aiNode->getAttribute("randomMinWarriorsReached")->getIntValue() != 0;
+
+	vector<XmlNode *> taskNodeList = aiNode->getChildList("Task");
+	for(unsigned int i = 0; i < taskNodeList.size(); ++i) {
+		XmlNode *taskNode = taskNodeList[i];
+		TaskClass taskClass = static_cast<TaskClass>(taskNode->getAttribute("taskClass")->getIntValue());
+		switch(taskClass) {
+			case tcProduce:
+				{
+				ProduceTask *newTask = ProduceTask::loadGame(taskNode, faction);
+				tasks.push_back(newTask);
+				}
+				break;
+			case tcBuild:
+				{
+				BuildTask *newTask = BuildTask::loadGame(taskNode, faction);
+				tasks.push_back(newTask);
+				}
+				break;
+			case tcUpgrade:
+				{
+				UpgradeTask *newTask = UpgradeTask::loadGame(taskNode, faction);
+				tasks.push_back(newTask);
+				}
+				break;
+		}
+	}
+
+	vector<XmlNode *> expansionPositionsNodeList = aiNode->getChildList("expansionPositions");
+	for(unsigned int i = 0; i < expansionPositionsNodeList.size(); ++i) {
+		XmlNode *expansionPositionsNode = expansionPositionsNodeList[i];
+		Vec2i pos = Vec2i::strToVec2(expansionPositionsNode->getAttribute("pos")->getValue());
+		expansionPositions.push_back(pos);
+	}
+
+	//	RandomGen random;
+	random.setLastNumber(aiNode->getAttribute("random")->getIntValue());
+	//	std::map<int,int> factionSwitchTeamRequestCount;
+
+	//	int maxBuildRadius;
+	maxBuildRadius = aiNode->getAttribute("maxBuildRadius")->getIntValue();
+	//	int minMinWarriors;
+	minMinWarriors = aiNode->getAttribute("minMinWarriors")->getIntValue();
+	//	int minMinWarriorsExpandCpuEasy;
+	minMinWarriorsExpandCpuEasy = aiNode->getAttribute("minMinWarriorsExpandCpuEasy")->getIntValue();
+	//	int minMinWarriorsExpandCpuMega;
+	minMinWarriorsExpandCpuMega = aiNode->getAttribute("minMinWarriorsExpandCpuMega")->getIntValue();
+	//	int minMinWarriorsExpandCpuUltra;
+	minMinWarriorsExpandCpuUltra = aiNode->getAttribute("minMinWarriorsExpandCpuUltra")->getIntValue();
+	//	int minMinWarriorsExpandCpuNormal;
+	minMinWarriorsExpandCpuNormal = aiNode->getAttribute("minMinWarriorsExpandCpuNormal")->getIntValue();
+	//	int maxMinWarriors;
+	maxMinWarriors = aiNode->getAttribute("maxMinWarriors")->getIntValue();
+	//	int maxExpansions;
+	maxExpansions = aiNode->getAttribute("maxExpansions")->getIntValue();
+	//	int villageRadius;
+	villageRadius = aiNode->getAttribute("villageRadius")->getIntValue();
+	//	int scoutResourceRange;
+	scoutResourceRange = aiNode->getAttribute("scoutResourceRange")->getIntValue();
+	//	int minWorkerAttackersHarvesting;
+	minWorkerAttackersHarvesting = aiNode->getAttribute("minWorkerAttackersHarvesting")->getIntValue();
 }
 
 }}//end namespace

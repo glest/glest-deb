@@ -35,41 +35,77 @@ DisplayableType::DisplayableType(){
 	image= NULL;
 }
 
+string DisplayableType::getName(bool translatedValue) const {
+	if(translatedValue == false) return name;
+
+	Lang &lang = Lang::getInstance();
+	return lang.getTechTreeString("CommandName_" + name,name.c_str());
+}
+
+//void DisplayableType::saveGame(XmlNode *rootNode) const {
+//	std::map<string,string> mapTagReplacements;
+//	XmlNode *displayableTypeNode = rootNode->addChild("DisplayableType");
+//
+//	displayableTypeNode->addAttribute("name",name, mapTagReplacements);
+//}
+
 // =====================================================
 // 	class RequirableType
 // =====================================================
 
-string RequirableType::getReqDesc() const{
+string RequirableType::getReqDesc(bool translatedValue) const{
 	bool anyReqs= false;
 
 	string reqString="";
 	for(int i=0; i<getUnitReqCount(); ++i){
 		if(getUnitReq(i) == NULL) {
-			throw runtime_error("getUnitReq(i) == NULL");
+			throw megaglest_runtime_error("getUnitReq(i) == NULL");
 		}
-        reqString+= getUnitReq(i)->getName();
+        reqString+= getUnitReq(i)->getName(translatedValue);
         reqString+= "\n";
 		anyReqs= true;
     }
 
     for(int i=0; i<getUpgradeReqCount(); ++i){
 		if(getUpgradeReq(i) == NULL) {
-			throw runtime_error("getUpgradeReq(i) == NULL");
+			throw megaglest_runtime_error("getUpgradeReq(i) == NULL");
 		}
 
-    	reqString+= getUpgradeReq(i)->getName();
+    	reqString+= getUpgradeReq(i)->getName(translatedValue);
         reqString+= "\n";
 		anyReqs= true;
     }
 
-	string str= getName();
+	string str= getName(translatedValue);
 	if(anyReqs){
-		return str + " " + Lang::getInstance().get("Reqs") + ":\n" + reqString;
+		return str + " " + Lang::getInstance().getString("Reqs",(translatedValue == true ? "" : "english")) + ":\n" + reqString;
 	}
 	else{
 		return str;
 	}
 }  
+
+//void RequirableType::saveGame(XmlNode *rootNode) const {
+//	DisplayableType::saveGame(rootNode);
+//
+//	std::map<string,string> mapTagReplacements;
+//	XmlNode *requirableTypeNode = rootNode->addChild("RequirableType");
+//
+////	UnitReqs unitReqs;			//needed units
+//	for(unsigned int i = 0; i < unitReqs.size(); ++i) {
+//		const UnitType *ut = unitReqs[i];
+//
+//		XmlNode *unitReqsNode = requirableTypeNode->addChild("unitReqs");
+//		unitReqsNode->addAttribute("name",ut->getName(), mapTagReplacements);
+//	}
+////	UpgradeReqs upgradeReqs;	//needed upgrades
+//	for(unsigned int i = 0; i < upgradeReqs.size(); ++i) {
+//		const UpgradeType* ut = upgradeReqs[i];
+//
+//		ut->saveGame(requirableTypeNode);
+//	}
+//
+//}
 
 // =====================================================
 // 	class ProducibleType
@@ -84,7 +120,7 @@ ProducibleType::~ProducibleType(){
 }
 
 const Resource *ProducibleType::getCost(const ResourceType *rt) const{
-	for(int i=0; i<costs.size(); ++i){
+	for(int i=0; i < (int)costs.size(); ++i){
 		if(costs[i].getType()==rt){
 			return &costs[i];
 		}
@@ -92,27 +128,83 @@ const Resource *ProducibleType::getCost(const ResourceType *rt) const{
 	return NULL;
 }
 
-string ProducibleType::getReqDesc() const{
-    string str= getName()+" "+Lang::getInstance().get("Reqs")+":\n";
-    for(int i=0; i<getCostCount(); ++i){
-        if(getCost(i)->getAmount()!=0){
-            str+= getCost(i)->getType()->getName();
-            str+= ": "+ intToStr(getCost(i)->getAmount());
-            str+= "\n";
-        }
-    }
+string ProducibleType::getReqDesc(bool translatedValue) const {
+	return getReqDesc(false,translatedValue);
+}
 
+string ProducibleType::getResourceReqDesc(bool lineBreaks, bool translatedValue) const {
+    string str= "";
+	for(int i=0; i<getCostCount(); ++i){
+		if(getCost(i)->getAmount()!=0){
+			str+= getCost(i)->getType()->getName(translatedValue);
+			str+= ": "+ intToStr(getCost(i)->getAmount());
+			if(lineBreaks == true) {
+				str+= "\n";
+			}
+			else {
+				str+= " ";
+			}
+		}
+	}
+
+    return str;
+}
+
+string ProducibleType::getUnitAndUpgradeReqDesc(bool lineBreaks, bool translatedValue) const {
+	string str= "";
     for(int i=0; i<getUnitReqCount(); ++i){
-        str+= getUnitReq(i)->getName();
-        str+= "\n";
+        str+= getUnitReq(i)->getName(translatedValue);
+        if(lineBreaks == true) {
+        	str+= "\n";
+        }
+		else {
+			str+= " ";
+		}
     }
 
     for(int i=0; i<getUpgradeReqCount(); ++i){
-        str+= getUpgradeReq(i)->getName();
-        str+= "\n";
+        str+= getUpgradeReq(i)->getName(translatedValue);
+        if(lineBreaks == true) {
+        	str+= "\n";
+        }
+		else {
+			str+= " ";
+		}
     }
 
     return str;
 }   
+
+string ProducibleType::getReqDesc(bool ignoreResourceRequirements, bool translatedValue) const {
+    string str= getName(translatedValue) + " " + Lang::getInstance().getString("Reqs",(translatedValue == true ? "" : "english")) + ":\n";
+    if(ignoreResourceRequirements == false) {
+		str+= getResourceReqDesc(true,translatedValue);
+    }
+
+    str+= getUnitAndUpgradeReqDesc(true,translatedValue);
+    return str;
+}
+
+//void ProducibleType::saveGame(XmlNode *rootNode) const {
+//	RequirableType::saveGame(rootNode);
+//
+//	std::map<string,string> mapTagReplacements;
+//	XmlNode *producibleTypeNode = rootNode->addChild("ProducibleType");
+//
+////	Costs costs;
+//	for(unsigned int i = 0; i < costs.size(); ++i) {
+//		const Resource &res = costs[i];
+//		res.saveGame(producibleTypeNode);
+//	}
+////    Texture2D *cancelImage;
+////	int productionTime;
+//	producibleTypeNode->addAttribute("productionTime",intToStr(productionTime), mapTagReplacements);
+//}
+
+//void ProducibleType::loadGame(const XmlNode *rootNode) {
+//	const XmlNode *producibleTypeNode = rootNode->getChild("ProducibleType");
+//
+//	//int newUnitId = producibleTypeNode->getAttribute("id")->getIntValue();
+//}
 
 }}//end namespace

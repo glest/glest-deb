@@ -25,6 +25,12 @@
 #include <pwd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#if defined(__APPLE__)
+#include <sys/select.h>
+#include <sys/time.h>
+#endif
+
 #include <unistd.h>
 
 #if defined(__FreeBSD__)
@@ -160,13 +166,13 @@ int ftpStat(const char* path, ftpPathInfo_S *info)
 		if(pw)
 			strncpy(info->user, pw->pw_name, sizeof(info->user));
 		else
-			sprintf(info->user, "%04d", fileInfo.st_uid);
+			snprintf(info->user, 20,"%04d", fileInfo.st_uid);
 
 		gr = getgrgid(fileInfo.st_gid);
 		if(gr)
 			strncpy(info->group, gr->gr_name, sizeof(info->group));
 		else
-			sprintf(info->group, "%04d", fileInfo.st_gid);
+			snprintf(info->group, 20,"%04d", fileInfo.st_gid);
 
 		return 0;
 	}
@@ -203,10 +209,12 @@ int ftpSend(socket_t s, const void *data, int len)
 
 	do
 	{
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(SO_NOSIGPIPE)
 		currLen = send(s, data, len, SO_NOSIGPIPE);
-#else
+#elif defined(MSG_NOSIGNAL)
         currLen = send(s, data, len, MSG_NOSIGNAL);
+#else
+        currLen = send(s, data, len, 0);
 #endif
 
 		if(currLen >= 0)
@@ -264,6 +272,7 @@ socket_t ftpEstablishDataConnection(int passive, ip_t *ip, port_t *port, int ses
 		myAddr.sin_family      = AF_INET;
 		myAddr.sin_addr.s_addr = INADDR_ANY;
 		myAddr.sin_port        = htons(20);
+		myAddr.sin_zero[0]	   = 0;
 		if(bind(dataSocket, (struct sockaddr *)&myAddr, sizeof(myAddr)))
 		{
 			if(VERBOSE_MODE_ENABLED) printf("In ftpEstablishDataConnection #2 about to Close socket = %d, for sessionId = %d\n",dataSocket, sessionId);
@@ -275,6 +284,8 @@ socket_t ftpEstablishDataConnection(int passive, ip_t *ip, port_t *port, int ses
 		clientAddr.sin_family      = AF_INET;
 		clientAddr.sin_addr.s_addr = htonl(*ip);
 		clientAddr.sin_port        = htons(*port);
+		clientAddr.sin_zero[0]	   = 0;
+
 		if(connect(dataSocket, (struct sockaddr *)&clientAddr, sizeof(clientAddr)))
 		{
 			if(VERBOSE_MODE_ENABLED) printf("In ftpEstablishDataConnection #3 about to Close socket = %d, for sessionId = %d\n",dataSocket, sessionId);
@@ -292,6 +303,7 @@ socket_t ftpEstablishDataConnection(int passive, ip_t *ip, port_t *port, int ses
 		myAddr.sin_family = AF_INET;
 		myAddr.sin_addr.s_addr = INADDR_ANY;
 		myAddr.sin_port = htons(passivePort);
+		myAddr.sin_zero[0] = 0;
 		//myAddr.sin_port = htons(ftpGetPassivePort() + sessionId);
 
 		if(setsockopt(dataSocket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)))
@@ -388,6 +400,7 @@ socket_t ftpCreateServerSocket(int portNumber)
 	struct sockaddr_in serverinfo;
 	unsigned len;
 	int val = 1;
+	int opt_result = 0;
 
 	theServer = socket(AF_INET, SOCK_STREAM, 0);
 	if(theServer < 0)
@@ -396,13 +409,14 @@ socket_t ftpCreateServerSocket(int portNumber)
 	serverinfo.sin_family = AF_INET;
 	serverinfo.sin_addr.s_addr = INADDR_ANY;
 	serverinfo.sin_port = htons(portNumber);
+	serverinfo.sin_zero[0] = 0;
 	len = sizeof(serverinfo);
 
-	setsockopt(theServer, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+	opt_result = setsockopt(theServer, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 
 	if(bind(theServer, (struct sockaddr *)&serverinfo, len))
 	{
-		if(VERBOSE_MODE_ENABLED) printf("\nERROR In ftpCreateServerSocket bind FAILED about to close listener socket = %d\n",theServer);
+		if(VERBOSE_MODE_ENABLED) printf("\nERROR In ftpCreateServerSocket bind FAILED about to close listener socket = %d opt_result = %d\n",theServer,opt_result);
 
 		ftpUntrackSocket(theServer);
 		ftpCloseSocket(&theServer);
@@ -444,7 +458,7 @@ socket_t ftpAcceptServerConnection(socket_t server, ip_t *remoteIP, port_t *remo
 	if(!ownIp)	// kennen wir schon die eigene IP?
 	{
 		len = sizeof(sockinfo);
-		if(getsockname(clientSocket, (struct sockaddr *)&sockinfo, &len))
+		if(clientSocket >= 0 && getsockname(clientSocket, (struct sockaddr *)&sockinfo, &len))
 		{
 if(VERBOSE_MODE_ENABLED) printf("getsockname error\n");
 		}
@@ -480,7 +494,6 @@ int ftpUntrackSocket(socket_t s)
 	{
 		FD_CLR(s, &watchedSockets);
 	}
-	// TODO hier sollte eine Möglichkeit geschaffen werden um maxSockNr anzupassen
 	return 0;
 }
 

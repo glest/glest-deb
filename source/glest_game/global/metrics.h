@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_METRICS_H_
 #define _GLEST_GAME_METRICS_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "config.h"
 #include "leak_dumper.h"
 
@@ -38,6 +43,8 @@ private:
 
 private:
 	Metrics();
+	static Metrics *getInstancePtr();
+	void reloadData(int resWidth=-1, int resHeight=-1);
 
 public:
 	static const Metrics &getInstance();
@@ -61,6 +68,8 @@ public:
 
 	bool isInDisplay(int x, int y) const;
 	bool isInMinimap(int x, int y) const;
+
+	static void reload(int resWidth=-1, int resHeight=-1);
 };
 
 }}//end namespace

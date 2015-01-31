@@ -1,6 +1,7 @@
 /*
     streflop: STandalone REproducible FLOating-Point
-    Nicolas Brodu, 2006
+    Copyright 2006 Nicolas Brodu
+			  2012 Mark Vejvoda
     Code released according to the GNU Lesser General Public License
 
     Heavily relies on GNU Libm, itself depending on netlib fplibm, GNU MP, and IBM MP lib.
@@ -18,7 +19,7 @@
 #define __BYTE_ORDER 1234
 #define __FLOAT_WORD_ORDER 1234
 
-// Softfloat or other unknown FPU. TODO: Try some header autodetect?
+// Softfloat or other unknown FPU.
 #else
 
 #define __BYTE_ORDER 1234

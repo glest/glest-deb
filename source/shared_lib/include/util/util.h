@@ -19,6 +19,7 @@
 #include <curl/curl.h>
 #include <cstdio>
 #include <assert.h>
+#include <stdexcept>
 #include "leak_dumper.h"
 
 using std::string;
@@ -27,6 +28,15 @@ using namespace Shared::Platform;
 //#define UNDEF_DEBUG
 
 namespace Shared { namespace Util {
+
+enum GlobalStaticFlagTypes {
+    gsft_none               = 0x00,
+    gsft_lan_mode  			= 0x01,
+    //gsft_xx  = 0x02
+    //gsft__xx                  = 0x04,
+    //gsft__xx                  = 0x08,
+    //gsft__xx                  = 0x10,
+};
 
 class GlobalStaticFlags {
 public:
@@ -38,8 +48,15 @@ public:
 		isNonGraphicalMode = value;
 	}
 
+	static void setFlags(uint64 flagsValue) { flags = flagsValue; }
+	static uint64 getFlags() { return flags; }
+
+	static void setFlag(GlobalStaticFlagTypes flag) { flags |= flag; }
+	static bool isFlagSet(GlobalStaticFlagTypes flag) { return (flags & (unsigned int)flag) == (unsigned int)flag; }
+
 protected:
 	static bool isNonGraphicalMode;
+	static uint64 flags;
 };
 
 class SystemFlags
@@ -129,6 +146,8 @@ protected:
 	static bool haveSpecialOutputCommandLineOption;
 	static bool curl_global_init_called;
 
+	static SystemFlagsType * setupRequiredMembers();
+
 public:
 
 	static CURL *curl_handle;
@@ -141,7 +160,21 @@ public:
 	~SystemFlags();
 
 	static void init(bool haveSpecialOutputCommandLineOption);
-	static SystemFlagsType & getSystemSettingType(DebugType type);
+	//static SystemFlagsType & getSystemSettingType(DebugType type);
+	inline static SystemFlagsType & getSystemSettingType(DebugType type) {
+		if(SystemFlags::debugLogFileList == NULL) {
+			SystemFlagsType *result = setupRequiredMembers();
+			if(result != NULL) {
+				return *result;
+			}
+			else if(SystemFlags::debugLogFileList == NULL) {
+				throw std::runtime_error("unknown return value for SystemFlagsType!");
+			}
+		}
+
+		return (*debugLogFileList)[type];
+	}
+
 	static size_t httpWriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data);
 	static std::string getHTTP(std::string URL,CURL *handle=NULL, int timeOut=-1, CURLcode *savedResult=NULL);
 	static std::string escapeURL(std::string URL, CURL *handle=NULL);
@@ -199,12 +232,19 @@ void copyStringToBuffer(char *buffer, int bufferSize, const string& s);
 //numeric fcs
 int clamp(int value, int min, int max);
 float clamp(float value, float min, float max);
+int64 clamp(int64 value, int64 min, int64 max);
 float saturate(float value);
 int round(float f);
 
 //misc
-bool fileExists(const string &path);
 bool checkVersionComptability(string clientVersionString, string serverVersionString);
+
+template<typename T>
+void enforceMinimumValue(T minValue, T &value) {
+	if(value < minValue) {
+		value = minValue;
+	}
+}
 
 template<typename T>
 void deleteValues(T beginIt, T endIt){
@@ -243,7 +283,6 @@ public:
         return m_map;
     }
 };
-
 
 }}//end namespace
 

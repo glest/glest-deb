@@ -36,7 +36,7 @@
  */
 int ftpRemoveTrailingSlash(char* path)
 {
-	int len = strlen(path);
+	size_t len = strlen(path);
 
 	if(len > 1)
 	{
@@ -44,7 +44,7 @@ int ftpRemoveTrailingSlash(char* path)
 		if(path[len] == '/')
 			path[len] = '\0';
 	}
-	return len;
+	return (int)len;
 }
 
 /**
@@ -75,7 +75,7 @@ void ftpRemoveDoubleSlash(char* path)
  *  The function catenates all passed strings to a new string and assures that  
  *  the result does not exceed MAX_PATH_LEN. The last parameter has to be
  *  NULL.
- *  @todo Not all embedded environments support variadic functions, or they are
+ *  Not all embedded environments support variadic functions, or they are
  *  too expensive. 
  *
  *  @param dest    user name
@@ -166,6 +166,6 @@ char *ftpStrcpy(char *dest, const char *src)
      char       *d = dest;     
      const char *s = src;
 
-     while (*d++ = *s++);
+     while ((*d++ = *s++));
      return dest;
 }

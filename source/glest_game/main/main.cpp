@@ -1,12 +1,23 @@
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2008 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
 //	by the Free Software Foundation; either version 2 of the
 //	License, or (at your option) any later version
 // ==============================================================
+
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+    #include <process.h>
+	#include <io.h>
+#endif
+
+#ifdef HAVE_GOOGLE_BREAKPAD
+#include "handler/exception_handler.h"
+#endif
 
 #include "math_wrapper.h"
 #include "main.h"
@@ -39,33 +50,23 @@
 #include <iterator>
 #include "core_data.h"
 #include "font_text.h"
-//#include "FileReader.h"
-//#include "JPGReader.h"
-//#include "sound.h"
-//#include "unicode/uclean.h"
 #include <locale.h>
 #include "string_utils.h"
+#include "auto_test.h"
+#include "lua_script.h"
+#include "interpolation.h"
 
-// For gcc backtrace on crash!
+// To handle signal catching
 #if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__FreeBSD__) && !defined(BSD)
-
-//#include <mcheck.h>
-
-#include <execinfo.h>
-#include <cxxabi.h>
 #include <signal.h>
 #endif
 
-#ifdef WIN32
+#if defined WIN32 && !defined(HAVE_GOOGLE_BREAKPAD)
 #if defined(__WIN32__) && !defined(__GNUC__)
 #include <eh.h>
 #endif
 #include <dbghelp.h>
 #endif
-
-#include <stdlib.h>
-
-#include "leak_dumper.h"
 
 #ifndef WIN32
   #include <poll.h>
@@ -75,7 +76,14 @@
   #define _strnicmp strncasecmp
 #endif
 
-#ifdef WIN32
+#include <stdlib.h>
+#include "network_message.h"
+#include "network_protocol.h"
+#include "conversion.h"
+#include "gen_uuid.h"
+#include "leak_dumper.h"
+
+#if defined(WIN32)
 #ifndef _DEBUG
 #ifndef __GNUC__
 
@@ -90,49 +98,91 @@ using namespace Shared::Platform;
 using namespace Shared::Util;
 using namespace Shared::Graphics;
 using namespace Shared::Graphics::Gl;
-using namespace	Shared::Xml;
+using namespace Shared::Xml;
 using namespace Shared;
 
-namespace Glest{ namespace Game{
+namespace Glest { namespace Game {
 
-bool disableheadless_console = false;
-bool disableBacktrace = false;
-bool gameInitialized = false;
-//static string application_binary="";
-static string application_binary="";
-static string mg_app_name = "";
-static string mailStringSupport = "";
-static bool sdl_quitCalled = false;
-//static bool isMasterServerModeEnabled = false;
+static string tempDataLocation 			= getUserHome();
+static string mg_app_name 				= "";
+static string mailStringSupport 		= "";
+static bool sdl_quitCalled 			= false;
 
-FileCRCPreCacheThread *preCacheThread=NULL;
+static bool disableheadless_console 			= false;
+static bool disableBacktrace 					= false;
+static bool gameInitialized 					= false;
 
-string runtimeErrorMsg = "";
+static Program *mainProgram 					= NULL;
+static FileCRCPreCacheThread *preCacheThread	= NULL;
+#ifdef WIN32
+static string runtimeErrorMsg 					= "";
+#endif
+
+#ifdef HAVE_GOOGLE_BREAKPAD
+std::auto_ptr<google_breakpad::ExceptionHandler> errorHandlerPtr;
+#endif
+
+class NavtiveLanguageNameListCacheGenerator : public SimpleTaskCallbackInterface {
+	virtual void simpleTask(BaseThread *callingThread,void *userdata) {
+		Lang &lang = Lang::getInstance();
+		lang.getDiscoveredLanguageList(true);
+	}
+};
+
+// =====================================================
+// 	class ExceptionHandler
+// =====================================================
+class ExceptionHandler: public PlatformExceptionHandler{
+public:
+
+#if defined(__WIN32__) && !defined(__GNUC__)
+	virtual void handle(LPEXCEPTION_POINTERS pointers);
+#endif
+
+	virtual void handle();
+
+    static void logError(const char *msg, bool confirmToConsole);
+    static void handleRuntimeError(const megaglest_runtime_error &ex);
+	static void handleRuntimeError(const char *msg, bool getStackTraceString);
+	static int DisplayMessage(const char *msg, bool exitApp);
+};
 
 void cleanupCRCThread() {
 	if(preCacheThread != NULL) {
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+		const double MAX_THREAD_WAIT = 60;
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("START - shutting down crc threads\n");
 		time_t elapsed = time(NULL);
 		preCacheThread->signalQuit();
 		for(;preCacheThread->canShutdown(false) == false &&
-			difftime(time(NULL),elapsed) <= 45;) {
-			//sleep(150);
+			difftime((long int)time(NULL),elapsed) <= MAX_THREAD_WAIT;) {
 		}
-		if(preCacheThread->canShutdown(false)) {
-			if(preCacheThread->shutdownAndWait() == true) {
+		if(difftime((long int)time(NULL),elapsed) <= MAX_THREAD_WAIT) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("B - shutting down crc threads\n");
+
+			for(;preCacheThread->shutdownAndWait() == false &&
+				difftime((long int)time(NULL),elapsed) <= MAX_THREAD_WAIT;) {
+			}
+			if(preCacheThread->getRunningStatus() == false) {
 				delete preCacheThread;
+				preCacheThread=NULL;
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("C - shutting down crc threads\n");
 			}
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		}
 		else {
-			if(preCacheThread->shutdownAndWait() == true) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-				delete preCacheThread;
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("D - shutting down crc threads\n");
 
-				//printf("Stopping broadcast thread [%p] - C\n",broadCastThread);
+			if(preCacheThread->canShutdown(false) == true) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+				delete preCacheThread;
+				preCacheThread=NULL;
+
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("E - shutting down crc threads\n");
 			}
 		}
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("F - shutting down crc threads\n");
 		preCacheThread = NULL;
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	}
@@ -147,8 +197,20 @@ static void cleanupProcessObjects() {
 		restoreVideoMode(true);
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#1 IRCCLient Cache SHUTDOWN\n");
+	IRCThread * &ircClient = CacheManager::getCachedItem< IRCThread * >(GameConstants::ircClientCacheLookupKey);
+    if(ircClient != NULL) {
+    	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#2 IRCCLient Cache SHUTDOWN\n");
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+    	ircClient->disconnect();
+		ircClient->signalQuit();
+    	ircClient = NULL;
+    	sleep(0);
+    }
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#4 IRCCLient Cache SHUTDOWN\n");
+
     cleanupCRCThread();
-	//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
     if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
     if(Renderer::isEnded() == false) {
@@ -162,33 +224,47 @@ static void cleanupProcessObjects() {
 	SystemFlags::Close();
 	SystemFlags::SHUTDOWN_PROGRAM_MODE=true;
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("start running threads = %lu\n",Thread::getThreadList().size());
+	//printf("Closing IRC CLient %d\n",__LINE__);
+
+	Thread::shutdownThreads();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("start running threads = " MG_SIZE_T_SPECIFIER "\n",Thread::getThreadList().size());
 	time_t elapsed = time(NULL);
+	int lastLazyThreadDump = 0;
     for(;Thread::getThreadList().size() > 0 &&
-    	 difftime(time(NULL),elapsed) <= 10;) {
-    	//sleep(0);
+    	 difftime((long int)time(NULL),elapsed) <= 10;) {
+
+    	if(difftime((long int)time(NULL),elapsed) > 1) {
+			if(lastLazyThreadDump != (int)difftime((long int)time(NULL),elapsed)) {
+				lastLazyThreadDump = difftime((long int)time(NULL),elapsed);
+
+				printf("Waiting for the following threads to exit [" MG_SIZE_T_SPECIFIER "]:\n",Thread::getThreadList().size());
+
+				for(int i = 0; i < (int)Thread::getThreadList().size(); ++i) {
+					BaseThread *baseThread = dynamic_cast<BaseThread *>(Thread::getThreadList()[i]);
+					printf("Thread index: %d ptr [%p] isBaseThread: %d, Name: [%s]\n",i,baseThread,(baseThread != NULL ? 1 : 0),(baseThread != NULL ? baseThread->getUniqueID().c_str() : "<na>"));
+				}
+			}
+    	}
     }
-    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("end running threads = %lu\n",Thread::getThreadList().size());
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("end running threads = " MG_SIZE_T_SPECIFIER "\n",Thread::getThreadList().size());
+
+    Thread::shutdownThreads();
 
 	std::map<int,Texture2D *> &crcPlayerTextureCache = CacheManager::getCachedItem< std::map<int,Texture2D *> >(GameConstants::playerTextureCacheLookupKey);
-	//deleteMapValues(crcPlayerTextureCache.begin(),crcPlayerTextureCache.end());
 	crcPlayerTextureCache.clear();
 
 	std::map<string,Texture2D *> &crcFactionPreviewTextureCache = CacheManager::getCachedItem< std::map<string,Texture2D *> >(GameConstants::factionPreviewTextureCacheLookupKey);
-	//deleteMapValues(crcFactionPreviewTextureCache.begin(),crcFactionPreviewTextureCache.end());
 	crcFactionPreviewTextureCache.clear();
 
 	std::map<string, vector<FileReader<Pixmap2D> const * >* > &list2d = FileReader<Pixmap2D>::getFileReadersMap();
-	//printf("list2d = %lu\n",list2d.size());
 	deleteMapValues(list2d.begin(),list2d.end());
 	std::map<string, vector<FileReader<Pixmap3D> const * >* > &list3d = FileReader<Pixmap3D>::getFileReadersMap();
-	//printf("list3d = %lu\n",list3d.size());
 	deleteMapValues(list3d.begin(),list3d.end());
 
 	XmlIo::getInstance().cleanup();
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 
 	SystemFlags::globalCleanupHTTP();
 	CacheManager::cleanupMutexes();
@@ -212,25 +288,24 @@ void fatal(const char *s, ...)    // failure exit
             if(SDL_WasInit(SDL_INIT_VIDEO)) {
                 SDL_ShowCursor(1);
                 SDL_WM_GrabInput(SDL_GRAB_OFF);
-                SDL_SetGamma(1, 1, 1);
             }
             #ifdef WIN32
 				LPWSTR wstr = Ansi2WideString(errText.c_str());
 				LPWSTR wstr1 = Ansi2WideString(sErr.c_str());
 
-                MessageBox(NULL, wstr, wstr1, MB_OK|MB_SYSTEMMODAL);
+				if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+					MessageBox(NULL, wstr, wstr1, MB_OK|MB_SYSTEMMODAL);
+				}
 
-				delete [] wstr;
-				delete [] wstr1;
+				if(wstr) delete [] wstr;
+				if(wstr1) delete [] wstr1;
             #endif
-            //SDL_Quit();
         }
     }
 
     // Now try to shutdown threads if possible
-	Program *program = Program::getInstance();
-    delete program;
-    program = NULL;
+    delete mainProgram;
+    mainProgram = NULL;
     // END
 
     if(sdl_quitCalled == false) {
@@ -240,39 +315,232 @@ void fatal(const char *s, ...)    // failure exit
     exit(EXIT_FAILURE);
 }
 
-void stackdumper(unsigned int type, EXCEPTION_POINTERS *ep) {
-    if(!ep) fatal("unknown type");
+std::string get_module_path(HMODULE module = 0) {
+  char path_name[MAX_PATH] = {};
+  DWORD size = GetModuleFileNameA(module, path_name, MAX_PATH);
+  return std::string(path_name, size);
+}
+void write_module_name(string &out, HANDLE process, DWORD64 program_counter) {
+  DWORD64 module_base = SymGetModuleBase64(process, program_counter);
+  if (module_base) {
+    std::string module_name = get_module_path(reinterpret_cast<HMODULE>(module_base));
+    if (!module_name.empty())
+      out += module_name + "|";
+    else
+      out += "Unknown module|";
+  } else {
+    out += "Unknown module|";
+  }
+}
+
+void write_function_name(string &out, HANDLE process, DWORD64 program_counter) {
+  SYMBOL_INFO_PACKAGE sym = { sizeof(sym) };
+  sym.si.MaxNameLen = MAX_SYM_NAME;
+  if (SymFromAddr(process, program_counter, 0, &sym.si)) {
+    out += string(sym.si.Name) + "()";
+  } else {
+    out += "Unknown function";
+  }
+}
+
+void write_file_and_line(string & out, HANDLE process, DWORD64 program_counter) {
+  IMAGEHLP_LINE64 ih_line = { sizeof(IMAGEHLP_LINE64) };
+  DWORD dummy = 0;
+  if (SymGetLineFromAddr64(process, program_counter, &dummy, &ih_line)) {
+    out += string("|") + string(ih_line.FileName) + ":" + intToStr(ih_line.LineNumber);
+  }
+}
+void generate_stack_trace(string &out, CONTEXT ctx, int skip) {
+  STACKFRAME64 sf = {};
+#if !defined(_WIN64)
+  sf.AddrPC.Offset    = ctx.Eip;
+#else
+  sf.AddrPC.Offset    = ctx.Rip;
+#endif
+  sf.AddrPC.Mode      = AddrModeFlat;
+#if !defined(_WIN64)
+  sf.AddrStack.Offset = ctx.Esp;
+#else
+  sf.AddrStack.Offset = ctx.Rsp;
+#endif
+  sf.AddrStack.Mode   = AddrModeFlat;
+#if !defined(_WIN64)
+  sf.AddrFrame.Offset = ctx.Ebp;
+#else
+  sf.AddrFrame.Offset = ctx.Rbp;
+#endif
+  sf.AddrFrame.Mode   = AddrModeFlat;
+
+  HANDLE process = GetCurrentProcess();
+  HANDLE thread = GetCurrentThread();
+
+  bool tryThreadContext = true;
+  CONTEXT threadContext;
+  memset(&threadContext, 0, sizeof(CONTEXT));
+  threadContext.ContextFlags = CONTEXT_FULL;
+
+  for (;;) {
+    SetLastError(0);
+#if !defined(_WIN64)
+    BOOL stack_walk_ok = StackWalk64(IMAGE_FILE_MACHINE_I386,
+#else
+	BOOL stack_walk_ok = StackWalk64(IMAGE_FILE_MACHINE_AMD64,
+#endif
+									process, thread, &sf,
+                                     (tryThreadContext == false ? &threadContext : &ctx),
+									 0, &SymFunctionTableAccess64,
+                                     &SymGetModuleBase64, 0);
+    if (!stack_walk_ok || !sf.AddrFrame.Offset) {
+		if(tryThreadContext == true) {
+			tryThreadContext = false;
+			if(GetThreadContext(thread, &threadContext) != 0) {
+#if !defined(_WIN64)
+			  sf.AddrPC.Offset    = threadContext.Eip;
+#else
+				sf.AddrPC.Offset    = threadContext.Rip;
+#endif
+			  sf.AddrPC.Mode      = AddrModeFlat;
+#if !defined(_WIN64)
+			  sf.AddrStack.Offset = threadContext.Esp;
+#else
+			  sf.AddrStack.Offset = threadContext.Rsp;
+#endif
+			  sf.AddrStack.Mode   = AddrModeFlat;
+#if !defined(_WIN64)
+			  sf.AddrFrame.Offset = threadContext.Ebp;
+#else
+			  sf.AddrFrame.Offset = threadContext.Rbp;
+#endif
+			  sf.AddrFrame.Mode   = AddrModeFlat;
+			}
+			else {
+				return;
+			}
+		}
+		else {
+			return;
+		}
+	}
+
+    if (skip) {
+		--skip;
+    }
+	else {
+      // write the address
+		out += intToStr(sf.AddrPC.Offset) + "|";
+
+		write_module_name(out, process, sf.AddrPC.Offset);
+		write_function_name(out, process, sf.AddrPC.Offset);
+		write_file_and_line(out, process, sf.AddrPC.Offset);
+
+		out += "\n";
+    }
+  }
+}
+
+struct UntypedException {
+  UntypedException(const EXCEPTION_RECORD & er)
+    : exception_object(reinterpret_cast<void *>(er.ExceptionInformation[1])),
+      type_array(reinterpret_cast<_ThrowInfo *>(er.ExceptionInformation[2])->pCatchableTypeArray)
+  {}
+  void * exception_object;
+  _CatchableTypeArray * type_array;
+};
+
+void * exception_cast_worker(const UntypedException & e, const type_info & ti) {
+  for (int i = 0; i < e.type_array->nCatchableTypes; ++i) {
+    _CatchableType & type_i = *e.type_array->arrayOfCatchableTypes[i];
+    const std::type_info & ti_i = *reinterpret_cast<std::type_info *>(type_i.pType);
+    if (ti_i == ti) {
+      char * base_address = reinterpret_cast<char *>(e.exception_object);
+      base_address += type_i.thisDisplacement.mdisp;
+      return base_address;
+    }
+  }
+  return 0;
+}
+
+template <typename T>
+T * exception_cast(const UntypedException & e) {
+  const std::type_info & ti = typeid(T);
+  return reinterpret_cast<T *>(exception_cast_worker(e, ti));
+}
+void stackdumper(unsigned int type, EXCEPTION_POINTERS *ep, bool fatalExit) {
+#ifdef HAVE_GOOGLE_BREAKPAD
+	if(errorHandlerPtr.get() != NULL) {
+		errorHandlerPtr->WriteMinidump();
+	}
+#endif
+	if(!ep) {
+		fatal("unknown type");
+		return;
+	}
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
     CONTEXT *context = ep->ContextRecord;
-    stringType out, t;
-    formatstring(out)("%s Exception: 0x%x [0x%x]\n\n", mg_app_name, er->ExceptionCode, er->ExceptionCode==EXCEPTION_ACCESS_VIOLATION ? er->ExceptionInformation[1] : -1);
-    STACKFRAME sf = {{context->Eip, 0, AddrModeFlat}, {}, {context->Ebp, 0, AddrModeFlat}, {context->Esp, 0, AddrModeFlat}, 0};
-    SymInitialize(GetCurrentProcess(), NULL, TRUE);
+    string out="";
+    int skip = 0;
 
-    while(::StackWalk(IMAGE_FILE_MACHINE_I386, GetCurrentProcess(), GetCurrentThread(), &sf, context, NULL, ::SymFunctionTableAccess, ::SymGetModuleBase, NULL)) {
-        struct { IMAGEHLP_SYMBOL sym; stringType n; }
-		si = { { sizeof( IMAGEHLP_SYMBOL ), 0, 0, 0, sizeof(stringType) } };
-        IMAGEHLP_LINE li = { sizeof( IMAGEHLP_LINE ) };
-        DWORD off=0;
-		DWORD dwDisp=0;
-        if( SymGetSymFromAddr(GetCurrentProcess(), (DWORD)sf.AddrPC.Offset, &off, &si.sym) &&
-			SymGetLineFromAddr(GetCurrentProcess(), (DWORD)sf.AddrPC.Offset, &dwDisp, &li)) {
-            char *del = strrchr(li.FileName, '\\');
-            formatstring(t)("%s - %s [%d]\n", si.sym.Name, del ? del + 1 : li.FileName, li.LineNumber+dwDisp);
-            concatstring(out, t);
-        }
+    switch (er->ExceptionCode) {
+       case 0xE06D7363: { // C++ exception
+         UntypedException ue(*er);
+         if (std::exception * e = exception_cast<std::exception>(ue)) {
+			const std::type_info & ti = typeid(*e);
+			out += string(ti.name()) + ":" + string(e->what());
+         }
+		 else {
+			out += "Unknown C++ exception thrown.";
+         }
+         skip = 2; // skip RaiseException and _CxxThrowException
+       } break;
+       case EXCEPTION_ACCESS_VIOLATION: {
+         out += string("Access violation. Illegal ")
+              + (er->ExceptionInformation[0] ? "write" : "read")
+              + string(" by ")
+              + intToStr((int)er->ExceptionAddress)
+              + string(" at ")
+			  + intToStr(er->ExceptionInformation[1]);
+       } break;
+       default: {
+         out += "SEH exception thrown. Exception code: "
+              + er->ExceptionCode
+              + string(" at ")
+              + intToStr((int)er->ExceptionAddress);
+       }
     }
-    fatal(out);
+
+    generate_stack_trace(out, *context, skip);
+
+	if(fatalExit == true) {
+		fatal(out.c_str());
+	}
+	else {
+		ExceptionHandler::logError(out.c_str(), true);
+	}
 }
 #endif
 
 // =====================================================
 // 	class ExceptionHandler
 // =====================================================
+#if defined(WIN32) && !defined(__GNUC__)
+	void ExceptionHandler::handle(LPEXCEPTION_POINTERS pointers) {
+		string msg = "#1 An error occurred and " + string(mg_app_name) + " will close.\nPlease report this bug to: " + string(mailString);
+		msg += ", attaching the generated " + getCrashDumpFileName()+ " file.";
 
-class ExceptionHandler: public PlatformExceptionHandler{
-public:
-	virtual void handle() {
+		SystemFlags::OutputDebug(SystemFlags::debugError,"%s\n",msg.c_str());
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",msg.c_str());
+
+		stackdumper(0, pointers, false);
+
+        if(mainProgram && gameInitialized == true) {
+        	mainProgram->showMessage(msg.c_str());
+        }
+
+        message(msg.c_str(),GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
+}
+#endif
+
+	void ExceptionHandler::handle() {
 		string msg = "#1 An error occurred and " + string(mg_app_name) + " will close.\nPlease report this bug to: " + string(mailString);
 #ifdef WIN32
 		msg += ", attaching the generated " + getCrashDumpFileName()+ " file.";
@@ -280,71 +548,14 @@ public:
 		SystemFlags::OutputDebug(SystemFlags::debugError,"%s\n",msg.c_str());
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",msg.c_str());
 
-        Program *program = Program::getInstance();
-        if(program && gameInitialized == true) {
-            program->showMessage(msg.c_str());
+        if(mainProgram && gameInitialized == true) {
+        	mainProgram->showMessage(msg.c_str());
         }
 
-        message(msg.c_str());
+        message(msg.c_str(),GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
 	}
 
-#if defined(__GNUC__) && !defined(__FreeBSD__) && !defined(BSD)
-    static int getFileAndLine(void *address, char *file, size_t flen) {
-        int line=-1;
-        const int maxbufSize = 1024;
-        static char buf[maxbufSize+1]="";
-        //char *p=NULL;
-
-        // prepare command to be executed
-        // our program need to be passed after the -e parameter
-        //sprintf (buf, "/usr/bin/addr2line -C -e ./a.out -f -i %lx", addr);
-        sprintf(buf, "addr2line -C -e %s -f -i %p",application_binary.c_str(),address);
-
-        FILE* f = popen (buf, "r");
-        if (f == NULL) {
-            perror (buf);
-            return 0;
-        }
-
-        // get function name
-        char *ret = fgets (buf, maxbufSize, f);
-        if(ret == NULL) {
-        	pclose(f);
-        	return 0;
-        }
-
-        // get file and line
-        ret = fgets (buf, maxbufSize, f);
-        if(ret == NULL) {
-        	pclose(f);
-        	return 0;
-        }
-
-        if(strlen(buf) > 0 && buf[0] != '?') {
-            //int l;
-            char *p = buf;
-
-            // file name is until ':'
-            while(*p != 0 && *p != ':') {
-                p++;
-            }
-
-            *p++ = 0;
-            // after file name follows line number
-            strcpy (file , buf);
-            sscanf (p,"%d", &line);
-        }
-        else {
-            strcpy (file,"unknown");
-            line = 0;
-        }
-        pclose(f);
-
-        return line;
-    }
-#endif
-
-    static void logError(const char *msg, bool confirmToConsole) {
+    void ExceptionHandler::logError(const char *msg, bool confirmToConsole) {
 		string errorLogFile = "error.log";
 		if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
 			errorLogFile = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + errorLogFile;
@@ -356,8 +567,6 @@ public:
 	        }
 	        errorLogFile = userData + errorLogFile;
 		}
-
-		//printf("Attempting to write error to file [%s]\n",errorLogFile.c_str());
 
 #if defined(WIN32) && !defined(__MINGW32__)
 		FILE *fp = _wfopen(utf8_decode(errorLogFile).c_str(), L"w");
@@ -396,12 +605,18 @@ public:
 		}
     }
 
-	static void handleRuntimeError(const char *msg) {
+    void ExceptionHandler::handleRuntimeError(const megaglest_runtime_error &ex) {
+		const char *msg = ex.what();
+		handleRuntimeError(msg,false);
+    }
+
+	void ExceptionHandler::handleRuntimeError(const char *msg, bool getStackTraceString) {
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		static bool inErrorNow = false;
 		if(inErrorNow == true) {
-			printf("\n** Already in error handler, msg [%s]\n",msg);
+			printf("\n=====================================\n");
+			printf("\n** Already in error handler aborting, msg [%s]\n",msg);
 			fflush(stdout);
 			abort();
 			return;
@@ -410,136 +625,76 @@ public:
 
 		logError(msg,true);
 
-		Program *program = Program::getInstance();
-
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] program = %p gameInitialized = %d msg [%s]\n",__FILE__,__FUNCTION__,__LINE__,program,gameInitialized,msg);
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] [%s] gameInitialized = %d, program = %p\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,program);
-		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%s] gameInitialized = %d, program = %p\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,program);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] program = %p gameInitialized = %d msg [%s]\n",__FILE__,__FUNCTION__,__LINE__,mainProgram,gameInitialized,msg);
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] [%s] gameInitialized = %d, program = %p\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,mainProgram);
+		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%s] gameInitialized = %d, program = %p\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,mainProgram);
 
         string errMsg = (msg != NULL ? msg : "null");
 
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-        #if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__FreeBSD__) && !defined(BSD)
-        if(disableBacktrace == false && sdl_quitCalled == false) {
-        errMsg += "\nStack Trace:\n";
-        //errMsg += "To find line #'s use:\n";
-        //errMsg += "readelf --debug-dump=decodedline %s | egrep 0xaddress-of-stack\n";
-
-        const size_t max_depth = 15;
-        void *stack_addrs[max_depth];
-        size_t stack_depth = backtrace(stack_addrs, max_depth);
-        char **stack_strings = backtrace_symbols(stack_addrs, stack_depth);
-        //for (size_t i = 1; i < stack_depth; i++) {
-        //    errMsg += string(stack_strings[i]) + "\n";
-        //}
-
-        if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-        char szBuf[4096]="";
-        for(size_t i = 1; i < stack_depth; i++) {
-            //const unsigned int stackIndex = i-1;
-
-            //printf("In [%s::%s Line: %d] [%s] gameInitialized = %d, i = %d, stack_depth = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,i,stack_depth);
-
-            void *lineAddress = stack_addrs[i]; //getStackAddress(stackIndex);
-
-            //printf("In [%s::%s Line: %d] [%s] gameInitialized = %d, i = %d, stack_depth = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized,i,stack_depth);
-
-            size_t sz = 1024; // just a guess, template names will go much wider
-            char *function = static_cast<char *>(malloc(sz));
-            char *begin = 0;
-            char *end = 0;
-
-            // find the parentheses and address offset surrounding the mangled name
-            for (char *j = stack_strings[i]; *j; ++j) {
-                if (*j == '(') {
-                    begin = j;
-                }
-                else if (*j == '+') {
-                    end = j;
-                }
-            }
-            if (begin && end) {
-                *begin++ = '\0';
-                *end = '\0';
-                // found our mangled name, now in [begin, end)
-
-                int status;
-                char *ret = abi::__cxa_demangle(begin, function, &sz, &status);
-                if (ret) {
-                    // return value may be a realloc() of the input
-                    function = ret;
-                }
-                else {
-                    // demangling failed, just pretend it's a C function with no args
-                    strncpy(function, begin, sz);
-                    strncat(function, "()", sz);
-                    function[sz-1] = '\0';
-                }
-                //fprintf(out, "    %s:%s\n", stack.strings[i], function);
-
-                sprintf(szBuf,"%s:%s address [%p]",stack_strings[i],function,lineAddress);
-            }
-            else {
-                // didn't find the mangled name, just print the whole line
-                //fprintf(out, "    %s\n", stack.strings[i]);
-                sprintf(szBuf,"%s address [%p]",stack_strings[i],lineAddress);
-            }
-
-            errMsg += string(szBuf);
-            char file[4096]="";
-            int line = getFileAndLine(lineAddress, file, 4096);
-            if(line >= 0) {
-                errMsg += " line: " + intToStr(line);
-            }
-            errMsg += "\n";
-
-            free(function);
+        bool gotStackTrace = false;
+        if(getStackTraceString == true && disableBacktrace == false && sdl_quitCalled == false) {
+        	string stackTrace = getStackTrace();
+        	errMsg += stackTrace;
+        	gotStackTrace = true;
         }
-
-        free(stack_strings); // malloc()ed by backtrace_symbols
-        }
-        #endif
 
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
         logError(errMsg.c_str(),false);
 
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] [%s]\n",__FILE__,__FUNCTION__,__LINE__,errMsg.c_str());
+        if(gotStackTrace == true) {
+        	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] [%s]\n",__FILE__,__FUNCTION__,__LINE__,errMsg.c_str());
+        }
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%s]\n",__FILE__,__FUNCTION__,__LINE__,errMsg.c_str());
 
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		//abort();
 
-        if(program && gameInitialized == true) {
-			//printf("\nprogram->getState() [%p]\n",program->getState());
+        if(mainProgram && gameInitialized == true) {
         	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-			if(program->getState() != NULL) {
+			if(mainProgram->getState() != NULL) {
 				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-                program->showMessage(errMsg.c_str());
+				mainProgram->showMessage(errMsg.c_str());
                 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-                for(;GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false && program->isMessageShowing();) {
-                    //program->getState()->render();
-                    Window::handleEvent();
-                    program->loop();
 
-                    //printf("\nhandle error #1\n");
-                }
+				if(glActiveTexture != NULL) {
+					for(;GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false && mainProgram->isMessageShowing();) {
+						::Shared::Platform::Window::handleEvent();
+						try {
+							mainProgram->loop();
+						}
+						catch(const exception &e) {
+							printf("\n=====================================\n");
+							printf("\n** Already in error handler exiting errror rendering, msg [%s]\n",e.what());
+							fflush(stdout);
+							break;
+						}
+					}
+				}
 			}
 			else {
 				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-                program->showMessage(errMsg.c_str());
+				mainProgram->showMessage(errMsg.c_str());
                 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-                for(;GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false && program->isMessageShowing();) {
-                    //program->renderProgramMsgBox();
-                    Window::handleEvent();
-                    program->loop();
 
-                    //printf("\nhandle error #2\n");
-                }
+				if(glActiveTexture != NULL) {
+					for(;GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false && mainProgram->isMessageShowing();) {
+						::Shared::Platform::Window::handleEvent();
+						try {
+							mainProgram->loop();
+						}
+						catch(const exception &e) {
+							printf("\n=====================================\n");
+							printf("\n** Already in error handler exiting errror rendering, msg [%s]\n",e.what());
+							fflush(stdout);
+							break;
+						}
+					}
+				}
 			}
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
         }
@@ -559,14 +714,14 @@ public:
 #endif
             if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-			message(err);
+			message(err,GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
         }
 
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
         // Now try to shutdown threads if possible
-        delete program;
-        program = NULL;
+        delete mainProgram;
+        mainProgram = NULL;
         // END
 
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -582,7 +737,6 @@ public:
 		inErrorNow = false;
 		throw runtimeErrorMsg;
 #endif
-		//printf("In [%s::%s Line: %d] [%s] gameInitialized = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,gameInitialized);
 
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -602,22 +756,19 @@ public:
         abort();
 	}
 
-	static int DisplayMessage(const char *msg, bool exitApp) {
-		//printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
+	int ExceptionHandler::DisplayMessage(const char *msg, bool exitApp) {
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
 
-        Program *program = Program::getInstance();
-
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
 
-        if(program && gameInitialized == true) {
+        if(mainProgram && gameInitialized == true) {
         	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
-            program->showMessage(msg);
+        	mainProgram->showMessage(msg);
         }
         else {
         	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
-            message(msg);
+            message(msg,GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
         }
 
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
@@ -626,9 +777,8 @@ public:
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s\n",msg);
 
 		    // Now try to shutdown threads if possible
-			Program *program = Program::getInstance();
-		    delete program;
-		    program = NULL;
+		    delete mainProgram;
+		    mainProgram = NULL;
 		    // END
 
 		    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
@@ -644,19 +794,6 @@ public:
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] msg [%s] exitApp = %d\n",__FILE__,__FUNCTION__,__LINE__,msg,exitApp);
 	    return 0;
 	}
-};
-
-#if defined(__GNUC__)  && !defined(__FreeBSD__) && !defined(BSD)
-void handleSIGSEGV(int sig) {
-    char szBuf[4096]="";
-    sprintf(szBuf, "In [%s::%s Line: %d] Error detected: signal %d:\n",__FILE__,__FUNCTION__,__LINE__, sig);
-    printf("%s",szBuf);
-    //abort();
-
-    ExceptionHandler::handleRuntimeError(szBuf);
-}
-#endif
-
 
 // =====================================================
 // 	class MainWindow
@@ -684,24 +821,29 @@ void MainWindow::eventMouseDown(int x, int y, MouseButton mouseButton){
     int vy = metrics.toVirtualY(getH() - y);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventMouseDown] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventMouseDown] ERROR, program == NULL!");
     }
 
-    //printf("eventMouseDown popupMenu.getVisible() = %d\n",popupMenu.getVisible());
 	if(popupMenu.getVisible() == true && popupMenu.mouseClick(vx, vy)) {
 		std::pair<int,string> result = popupMenu.mouseClickedMenuItem(vx, vy);
-		//printf("In popup callback menuItemSelected [%s] menuIndexSelected = %d\n",result.second.c_str(),result.first);
 
 		popupMenu.setEnabled(false);
 		popupMenu.setVisible(false);
 
-		//printf("result.first = %d [%s] cancelLanguageSelection = %d\n",result.first,result.second.c_str(),cancelLanguageSelection);
-
 		// Exit game
 		if(result.first != cancelLanguageSelection) {
-			//toggleLanguage(result.second);
-		    this->triggerLanguageToggle = true;
-		    this->triggerLanguage = result.second;
+			Lang &lang= Lang::getInstance();
+			map<string,string> languageList = lang.getDiscoveredLanguageList(true);
+			for(map<string,string>::iterator iterMap = languageList.begin();
+				iterMap != languageList.end(); ++iterMap) {
+				string matchLanguage = iterMap->first + "-" + iterMap->second;
+				if(matchLanguage == result.second) {
+					this->triggerLanguageToggle = true;
+					this->triggerLanguage = iterMap->first;
+					break;
+				}
+			}
+
 		}
 
 		return;
@@ -752,7 +894,7 @@ void MainWindow::eventMouseUp(int x, int y, MouseButton mouseButton){
     int vy = metrics.toVirtualY(getH() - y);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventMouseUp] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventMouseUp] ERROR, program == NULL!");
     }
 
     SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -790,7 +932,7 @@ void MainWindow::eventMouseDoubleClick(int x, int y, MouseButton mouseButton) {
     int vy = metrics.toVirtualY(getH() - y);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventMouseDoubleClick] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventMouseDoubleClick] ERROR, program == NULL!");
     }
 
     SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -828,7 +970,7 @@ void MainWindow::eventMouseMove(int x, int y, const MouseState *ms){
     int vy = metrics.toVirtualY(getH() - y);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventMouseMove] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventMouseMove] ERROR, program == NULL!");
     }
 
     program->eventMouseMove(vx, vy, ms);
@@ -848,7 +990,7 @@ void MainWindow::eventMouseWheel(int x, int y, int zDelta) {
 	int vy = metrics.toVirtualY(getH() - y);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventMouseMove] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventMouseMove] ERROR, program == NULL!");
     }
 
     ProgramState *programState = program->getState();
@@ -864,43 +1006,24 @@ void MainWindow::render() {
 	if(popupMenu.getVisible() == true) {
 		Renderer &renderer= Renderer::getInstance();
 		renderer.renderPopupMenu(&popupMenu);
-
-		//printf("Render lang popup\n");
 	}
 }
 
 void MainWindow::showLanguages() {
 	Lang &lang= Lang::getInstance();
-	//PopupMenu popupMenu;
 	std::vector<string> menuItems;
-
-	vector<string> langResults;
-    string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
-
-    string userDataPath = getGameCustomCoreDataPath(data_path, "");
-	findAll(userDataPath + "data/lang/*.lng", langResults, true, false);
-	for(unsigned int i = 0; i < langResults.size(); ++i) {
-		string testLanguage = langResults[i];
-		menuItems.push_back(testLanguage);
+	map<string,string> languageList = lang.getDiscoveredLanguageList(true);
+	for(map<string,string>::iterator iterMap = languageList.begin();
+		iterMap != languageList.end(); ++iterMap) {
+		menuItems.push_back(iterMap->first + "-" + iterMap->second);
 	}
 
-	vector<string> langResults2;
-	findAll(data_path + "data/lang/*.lng", langResults2, true);
-	if(langResults2.empty() && langResults.empty()) {
-        throw runtime_error("There are no lang files");
-	}
-	for(unsigned int i = 0; i < langResults2.size(); ++i) {
-		string testLanguage = langResults2[i];
-		if(std::find(menuItems.begin(),menuItems.end(),testLanguage) == menuItems.end()) {
-			menuItems.push_back(testLanguage);
-		}
-	}
-	menuItems.push_back(lang.get("Exit"));
-	cancelLanguageSelection = menuItems.size()-1;
+	menuItems.push_back(lang.getString("Exit"));
+	cancelLanguageSelection = (int)menuItems.size()-1;
 
 	popupMenu.setW(100);
 	popupMenu.setH(100);
-	popupMenu.init(lang.get("GameMenuTitle"),menuItems);
+	popupMenu.init(lang.getString("GameMenuTitle"),menuItems);
 	popupMenu.setEnabled(true);
 	popupMenu.setVisible(true);
 }
@@ -927,7 +1050,7 @@ void MainWindow::toggleLanguage(string language) {
 		vector<string> langResults2;
 		findAll(data_path + "data/lang/*.lng", langResults2, true);
 		if(langResults2.empty() && langResults.empty()) {
-	        throw runtime_error("There are no lang files");
+	        throw megaglest_runtime_error("There are no lang files");
 		}
 		for(unsigned int i = 0; i < langResults2.size(); ++i) {
 			string testLanguage = langResults2[i];
@@ -950,23 +1073,21 @@ void MainWindow::toggleLanguage(string language) {
 		}
 	}
 	if(newLanguageSelected != currentLanguage) {
-		lang.loadStrings(newLanguageSelected);
+		lang.loadGameStrings(newLanguageSelected);
 		program->reloadUI();
-		program->consoleAddLine(lang.get("Language") + " " + newLanguageSelected);
+		program->consoleAddLine(lang.getString("Language") + " " + newLanguageSelected);
 	}
 }
 
 void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key.keysym.sym);
 
-	//SDL_keysym keystate = Window::getKeystate();
 	SDL_keysym keystate = key.keysym;
-	//printf("keystate.mod = %d key = %d lalt [%d] ralt [%d] alt [%d]\n",keystate.mod,key.keysym.unicode,(keystate.mod & KMOD_LALT),(keystate.mod & KMOD_RALT),(keystate.mod & KMOD_ALT));
 
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] key = [%c][%d]\n",__FILE__,__FUNCTION__,__LINE__,key,key);
 
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventKeyDown] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventKeyDown] ERROR, program == NULL!");
     }
 
     if(popupMenu.getVisible() == true && isKeyPressed(SDLK_ESCAPE,key) == true) {
@@ -974,11 +1095,6 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
     	this->popupMenu.setVisible(false);
     	return;
     }
-
-    //{
-    //Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
-    //printf("----------------------- key [%d] CameraModeLeft [%d]\n",key,configKeys.getCharKey("CameraModeLeft"));
-    //}
 
 	program->keyDown(key);
 
@@ -1005,13 +1121,18 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 	if(program != NULL && program->isInSpecialKeyCaptureEvent() == false) {
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+    	vector<int> modifiersToCheck;
+		modifiersToCheck.push_back(KMOD_LCTRL);
+		modifiersToCheck.push_back(KMOD_RCTRL);
+		modifiersToCheck.push_back(KMOD_LALT);
+		modifiersToCheck.push_back(KMOD_RALT);
+		modifiersToCheck.push_back(KMOD_LSHIFT);
+		modifiersToCheck.push_back(KMOD_RSHIFT);
+
 		Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
-		//if(key == configKeys.getCharKey("HotKeyShowDebug")) {
 		if(isKeyPressed(configKeys.getSDLKey("HotKeyShowDebug"),key) == true) {
-			//printf("debug key pressed keystate.mod = %d [%d]\n",keystate.mod,keystate.mod & (KMOD_LALT | KMOD_RALT));
 
 			Renderer &renderer= Renderer::getInstance();
-			//if(keystate.mod & (KMOD_LCTRL | KMOD_RCTRL)) {
 			if(keystate.mod & (KMOD_LALT | KMOD_RALT)) {
 				renderer.cycleShowDebugUILevel();
 			}
@@ -1020,10 +1141,9 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 				renderer.setShowDebugUI(!showDebugUI);
 			}
 		}
-		else if(keystate.mod & (KMOD_LCTRL | KMOD_RCTRL) &&
+		else if((keystate.mod & (KMOD_LCTRL | KMOD_RCTRL)) &&
 				isKeyPressed(configKeys.getSDLKey("SwitchLanguage"),key) == true) {
-			if(keystate.mod & (KMOD_LSHIFT | KMOD_RSHIFT)) {
-				//toggleLanguage("");
+			if((keystate.mod & (KMOD_LSHIFT | KMOD_RSHIFT))) {
 			    this->triggerLanguageToggle = true;
 			    this->triggerLanguage = "";
 			}
@@ -1031,20 +1151,28 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 				showLanguages();
 			}
 		}
-		//else if(key == configKeys.getCharKey("ReloadINI")) {
-		else if(isKeyPressed(configKeys.getSDLKey("ReloadINI"),key) == true) {
+		else if(isKeyPressed(configKeys.getSDLKey("ReloadINI"),key,modifiersToCheck) == true) {
 			Config &config = Config::getInstance();
 			config.reload();
 		}
-		//else if(key == configKeys.getCharKey("Screenshot")) {
-		else if(isKeyPressed(configKeys.getSDLKey("Screenshot"),key) == true) {
+		else if(isKeyPressed(configKeys.getSDLKey("Screenshot"),key,modifiersToCheck) == true) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot key pressed\n");
+
 	        string userData = Config::getInstance().getString("UserData_Root","");
 	        if(userData != "") {
         		endPathWithSlash(userData);
 	        }
 
 			string path = userData + GameConstants::folder_path_screenshots;
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot checking path [%s]\n",path.c_str());
+
+			if(isdir(path.c_str()) == false) {
+				createDirectoryPaths(path);
+			}
+
 			if(isdir(path.c_str()) == true) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot path [%s]\n",path.c_str());
+
 				Config &config= Config::getInstance();
 				string fileFormat = config.getString("ScreenShotFileType","jpg");
 
@@ -1060,24 +1188,30 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 #endif
 					if(f == NULL) {
 						Lang &lang= Lang::getInstance();
-						char szBuf[1024]="";
-						if(lang.get("ScreenshotSavedTo").length() > 0 && lang.get("ScreenshotSavedTo")[0] != '?') {
-							sprintf(szBuf,lang.get("ScreenshotSavedTo").c_str(),path.c_str());
+						char szBuf[8096]="";
+						if(lang.getString("ScreenshotSavedTo").length() > 0 && lang.getString("ScreenshotSavedTo")[0] != '?') {
+							snprintf(szBuf,8096,lang.getString("ScreenshotSavedTo").c_str(),path.c_str());
 						}
 						else {
-							sprintf(szBuf,"Screenshot will be saved to: %s",path.c_str());
+							snprintf(szBuf,8096,"Screenshot will be saved to: %s",path.c_str());
 						}
 
 						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] %s\n",__FILE__,__FUNCTION__,__LINE__,szBuf);
 
-						if(Config::getInstance().getBool("DisableScreenshotConsoleText","false") == false) {
+						bool showScreenshotSavedMsg = Config::getInstance().getBool("DisableScreenshotConsoleText","false");
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot console showScreenshotSavedMsg = %d\n",showScreenshotSavedMsg);
+
+						if(showScreenshotSavedMsg == false) {
+							if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot console [%s]\n",szBuf);
 							program->consoleAddLine(szBuf);
 						}
 
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Screenshot save to [%s]\n",path.c_str());
 						Renderer::getInstance().saveScreen(path);
 						break;
 					}
 					else {
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("CANNOT save Screenshot [%s]\n",path.c_str());
 						fclose(f);
 					}
 				}
@@ -1091,7 +1225,7 @@ void MainWindow::eventKeyDown(SDL_KeyboardEvent key) {
 void MainWindow::eventKeyUp(SDL_KeyboardEvent key) {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%d]\n",__FILE__,__FUNCTION__,__LINE__,key);
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventKeyUp] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventKeyUp] ERROR, program == NULL!");
     }
 
 	program->keyUp(key);
@@ -1101,7 +1235,7 @@ void MainWindow::eventKeyUp(SDL_KeyboardEvent key) {
 void MainWindow::eventKeyPress(SDL_KeyboardEvent c) {
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] [%d]\n",__FILE__,__FUNCTION__,__LINE__,c);
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventKeyPress] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventKeyPress] ERROR, program == NULL!");
     }
 
 	program->keyPress(c);
@@ -1110,7 +1244,6 @@ void MainWindow::eventKeyPress(SDL_KeyboardEvent c) {
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 		Config &configKeys = Config::getInstance(std::pair<ConfigType,ConfigType>(cfgMainKeys,cfgUserKeys));
-		//if(c == configKeys.getCharKey("HotKeyToggleOSMouseEnabled")) {
 		if(isKeyPressed(configKeys.getSDLKey("HotKeyToggleOSMouseEnabled"),c) == true) {
 			SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -1139,7 +1272,7 @@ void MainWindow::eventActivate(bool active) {
 
 void MainWindow::eventResize(SizeState sizeState) {
     if(program == NULL) {
-    	throw runtime_error("In [MainWindow::eventResize] ERROR, program == NULL!");
+    	throw megaglest_runtime_error("In [MainWindow::eventResize] ERROR, program == NULL!");
     }
 
 	program->resize(sizeState);
@@ -1183,23 +1316,28 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
             if(customPathValue != "") {
             	endPathWithSlash(customPathValue);
             }
-            pathCache[GameConstants::path_data_CacheLookupKey]=customPathValue;
+            pathCache[GameConstants::path_data_CacheLookupKey] = customPathValue;
+            Properties::setApplicationDataPath(pathCache[GameConstants::path_data_CacheLookupKey]);
+
             if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using custom data path [%s]\n",customPathValue.c_str());
         }
         else {
 
             printf("\nInvalid path specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
             printParameterHelp(argv[0],false);
-            return -1;
+            return 1;
         }
     }
     else if(config != NULL) {
     	if(config->getString("DataPath","") != "") {
     		string customPathValue = config->getString("DataPath","");
+
     		if(customPathValue != "") {
     			endPathWithSlash(customPathValue);
     		}
             pathCache[GameConstants::path_data_CacheLookupKey] = config->getString("DataPath","");
+            Properties::setApplicationDataPath(pathCache[GameConstants::path_data_CacheLookupKey]);
+
             if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using ini specified data path [%s]\n",config->getString("DataPath","").c_str());
     	}
     }
@@ -1224,7 +1362,7 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
 
             printf("\nInvalid path specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
             printParameterHelp(argv[0],false);
-            return -1;
+            return 1;
         }
     }
 
@@ -1248,7 +1386,7 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
 
             printf("\nInvalid path specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
             printParameterHelp(argv[0],false);
-            return -1;
+            return 1;
         }
     }
     else if(config != NULL) {
@@ -1259,6 +1397,29 @@ int setupGameItemPaths(int argc, char** argv, Config *config) {
     }
 
     Text::DEFAULT_FONT_PATH = pathCache[GameConstants::path_data_CacheLookupKey];
+    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_FONT_PATH]) == true) {
+        int foundParamIndIndex = -1;
+        hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_FONT_PATH]) + string("="),&foundParamIndIndex);
+        if(foundParamIndIndex < 0) {
+            hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_FONT_PATH]),&foundParamIndIndex);
+        }
+        string customPath = argv[foundParamIndIndex];
+        vector<string> paramPartTokens;
+        Tokenize(customPath,paramPartTokens,"=");
+        if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+            string customPathValue = paramPartTokens[1];
+            Properties::applyTagsToValue(customPathValue);
+
+            Text::DEFAULT_FONT_PATH_ABSOLUTE = customPathValue;
+            if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using custom fonts path [%s]\n",customPathValue.c_str());
+        }
+        else {
+
+            printf("\nInvalid path specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+            printParameterHelp(argv[0],false);
+            return 1;
+        }
+    }
 
     return 0;
 }
@@ -1272,6 +1433,7 @@ void setupLogging(Config &config, bool haveSpecialOutputCommandLineOption) {
     SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled  	= config.getBool("DebugUnitCommands","false");
     SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled  	= config.getBool("DebugPathFinder","false");
     SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled  			= config.getBool("DebugLUA","false");
+    LuaScript::setDebugModeEnabled(SystemFlags::getSystemSettingType(SystemFlags::debugLUA).enabled);
     SystemFlags::getSystemSettingType(SystemFlags::debugSound).enabled  		= config.getBool("DebugSound","false");
     SystemFlags::getSystemSettingType(SystemFlags::debugError).enabled  		= config.getBool("DebugError","true");
 
@@ -1280,6 +1442,32 @@ void setupLogging(Config &config, bool haveSpecialOutputCommandLineOption) {
     	endPathWithSlash(userData);
     }
 
+#ifdef HAVE_GOOGLE_BREAKPAD
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#1 In setting up errorHandlerPtr->set_dump_path [%p]...\n",errorHandlerPtr.get());
+	if(errorHandlerPtr.get() != NULL) {
+		string dumpFilePath;
+		if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+			dumpFilePath = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey);
+		}
+		else {
+    		dumpFilePath = userData;
+		}
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("#2 In setting up errorHandlerPtr->set_dump_path...\n");
+#if defined(WIN32)
+		wstring dumpfilepath = utf8_decode(dumpFilePath);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) wprintf(L"Hooking up google_breakpad::ExceptionHandler to save dmp files to [%s]...\n",dumpfilepath.c_str());
+		errorHandlerPtr->set_dump_path(dumpfilepath);
+#else
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Hooking up google_breakpad::ExceptionHandler to save dmp files to [%s]...\n",dumpFilePath.c_str());
+		//errorHandlerPtr->set_dump_path(dumpfilepath);
+		google_breakpad::MinidumpDescriptor descriptor(dumpFilePath);
+		errorHandlerPtr->set_minidump_descriptor(descriptor);
+#endif
+
+	}
+#endif
+
     string debugLogFile 			= config.getString("DebugLogFile","");
     if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
         debugLogFile = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + debugLogFile;
@@ -1287,8 +1475,6 @@ void setupLogging(Config &config, bool haveSpecialOutputCommandLineOption) {
     else {
     	debugLogFile = userData + debugLogFile;
     }
-
-    //printf("debugLogFile [%s]\n",debugLogFile.c_str());
 
     string debugWorldSynchLogFile 	= config.getString("DebugLogFileWorldSynch","");
     if(debugWorldSynchLogFile == "") {
@@ -1402,18 +1588,358 @@ void setupLogging(Config &config, bool haveSpecialOutputCommandLineOption) {
     }
 }
 
+void runTilesetValidationForPath(string tilesetPath, string tilesetName,
+		World &world, bool purgeUnusedFiles,bool purgeDuplicateFiles,
+		bool showDuplicateFiles, bool gitPurgeFiles,double &purgedMegaBytes) {
+	Checksum checksum;
+
+	bool techtree_errors = false;
+
+	std::map<string,vector<pair<string, string> >  > loadedFileList;
+	vector<string> pathList;
+	pathList.push_back(tilesetPath);
+	world.loadTileset(pathList, tilesetName,&checksum, loadedFileList);
+
+	// Fixup paths with ..
+	{
+		std::map<string,vector<pair<string, string> > > newLoadedFileList;
+		for( std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
+			iterMap != loadedFileList.end(); ++iterMap) {
+			string loadedFile = iterMap->first;
+
+			replaceAll(loadedFile,"//","/");
+			replaceAll(loadedFile,"\\\\","\\");
+			updatePathClimbingParts(loadedFile);
+
+			if(newLoadedFileList.find(loadedFile) != newLoadedFileList.end()) {
+				for(unsigned int xx1 = 0; xx1 < iterMap->second.size(); ++xx1) {
+					pair<string, string> &newVal = iterMap->second[xx1];
+					replaceAll(newVal.first,"//","/");
+					replaceAll(newVal.first,"\\\\","\\");
+					updatePathClimbingParts(newVal.first);
+					replaceAll(newVal.second,"//","/");
+					replaceAll(newVal.second,"\\\\","\\");
+					updatePathClimbingParts(newVal.second);
+
+					newLoadedFileList[loadedFile].push_back(newVal);
+				}
+			}
+			else {
+				for(unsigned int xx1 = 0; xx1 < iterMap->second.size(); ++xx1) {
+					pair<string, string> &newVal = iterMap->second[xx1];
+					replaceAll(newVal.first,"//","/");
+					replaceAll(newVal.first,"\\\\","\\");
+					updatePathClimbingParts(newVal.first);
+					replaceAll(newVal.second,"//","/");
+					replaceAll(newVal.second,"\\\\","\\");
+					updatePathClimbingParts(newVal.second);
+				}
+
+				newLoadedFileList[loadedFile] = iterMap->second;
+			}
+		}
+		loadedFileList = newLoadedFileList;
+	}
+
+	// Validate the faction setup to ensure we don't have any bad associations
+//			std::vector<std::string> resultErrors = world.validateFactionTypes();
+
+	// Now check for unused files in the techtree
+	std::map<string,vector<pair<string, string> > > foundFileList;
+	for(unsigned int i = 0; i < pathList.size(); ++i) {
+		string path = pathList[i];
+		endPathWithSlash(path);
+		path = path + tilesetName + "/";
+
+		replaceAll(path, "//", "/");
+		replaceAll(path, "\\\\", "\\");
+
+		vector<string> foundFiles = getFolderTreeContentsListRecursively(path + "*.", "");
+		for(unsigned int j = 0; j < foundFiles.size(); ++j) {
+			string file = foundFiles[j];
+			replaceAll(file, "//", "/");
+			replaceAll(file, "\\\\", "\\");
+
+			replaceAll(file,"//","/");
+			replaceAll(file,"\\\\","\\");
+
+			foundFileList[file].push_back(make_pair(path,path));
+		}
+	}
+
+	printf("Found tileset filecount = " MG_SIZE_T_SPECIFIER ", used = " MG_SIZE_T_SPECIFIER "\n",foundFileList.size(),loadedFileList.size());
+
+	int purgeCount = 0;
+	bool foundUnusedFile = false;
+	for( std::map<string,vector<pair<string, string> > >::iterator iterMap = foundFileList.begin();
+		iterMap != foundFileList.end(); ++iterMap) {
+		string foundFile = iterMap->first;
+		replaceAll(foundFile, "//", "/");
+		replaceAll(foundFile, "\\\\", "\\");
+
+		if(loadedFileList.find(foundFile) == loadedFileList.end() &&
+				foundFile.find("lang/") == foundFile.npos) {
+			if(foundUnusedFile == false) {
+				printf("\nLine ref: %d, Warning, unused files were detected - START:\n=====================\n",__LINE__);
+			}
+			foundUnusedFile = true;
+
+			printf("[%s]\n",foundFile.c_str());
+
+			string fileName = extractFileFromDirectoryPath(foundFile);
+			if(loadedFileList.find(fileName) != loadedFileList.end()) {
+				printf("possible match on [%s] ?\n",loadedFileList.find(fileName)->first.c_str());
+			}
+			else if(purgeUnusedFiles == true) {
+				off_t fileSize = getFileSize(foundFile);
+				// convert to MB
+				purgedMegaBytes += ((double)fileSize / 1048576.0);
+				purgeCount++;
+
+				if(gitPurgeFiles == true) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"git rm \"%s\"",foundFile.c_str());
+					bool gitOk = executeShellCommand(szBuf,0);
+					if(gitOk == false) {
+						throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+					}
+				}
+				else {
+					removeFile(foundFile);
+				}
+			}
+		}
+	}
+	if(foundUnusedFile == true) {
+		if(purgedMegaBytes > 0) {
+			printf("Purged %.2f MB (%d) in files\n",purgedMegaBytes,purgeCount);
+		}
+		printf("\nLine ref: %d, Warning, unused files were detected - END:\n",__LINE__);
+	}
+
+	if(showDuplicateFiles == true) {
+		std::map<uint32,vector<string> > mapDuplicateFiles;
+		// Now check for duplicate data content
+		for(std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
+			iterMap != loadedFileList.end(); ++iterMap) {
+			string fileName = iterMap->first;
+			Checksum checksum;
+			checksum.addFile(fileName);
+			uint32 crcValue = checksum.getSum();
+			mapDuplicateFiles[crcValue].push_back(fileName);
+		}
+
+		double duplicateMegaBytesPurged=0;
+		int duplicateCountPurged=0;
+
+		double duplicateMegaBytes=0;
+		int duplicateCount=0;
+
+		bool foundDuplicates = false;
+		for(std::map<uint32,vector<string> >::iterator iterMap = mapDuplicateFiles.begin();
+			iterMap != mapDuplicateFiles.end(); ++iterMap) {
+			vector<string> &fileList = iterMap->second;
+			if(fileList.size() > 1) {
+				if(foundDuplicates == false) {
+					foundDuplicates = true;
+					printf("\nWarning, duplicate files were detected - START:\n=====================\n");
+				}
+
+				map<string,int> parentList;
+				for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+					string duplicateFile = fileList[idx];
+					if(idx > 0) {
+						off_t fileSize = getFileSize(duplicateFile);
+						// convert to MB
+						duplicateMegaBytes += ((double)fileSize / 1048576.0);
+						duplicateCount++;
+					}
+					else {
+						printf("\n");
+					}
+
+					printf("[%s]\n",duplicateFile.c_str());
+					std::map<string,vector<pair<string, string> > >::iterator iterFind = loadedFileList.find(duplicateFile);
+					if(iterFind != loadedFileList.end()) {
+						for(unsigned int jdx = 0; jdx < iterFind->second.size(); jdx++) {
+							parentList[iterFind->second[jdx].first]++;
+						}
+					}
+				}
+
+				for(map<string,int>::iterator iterMap1 = parentList.begin();
+						iterMap1 != parentList.end(); ++iterMap1) {
+
+					if(iterMap1 == parentList.begin()) {
+						printf("\tParents:\n");
+					}
+					printf("\t[%s]\n",iterMap1->first.c_str());
+				}
+
+				if(purgeDuplicateFiles == true) {
+
+					string newCommonFileName = "";
+					for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+						string duplicateFile = fileList[idx];
+						string fileExt = extractExtension(duplicateFile);
+						if(fileExt == "wav" || fileExt == "ogg") {
+							off_t fileSize = getFileSize(duplicateFile);
+							if(idx == 0) {
+								newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
+
+								string expandedNewCommonFileName = newCommonFileName;
+
+								std::map<string,string> mapExtraTagReplacementValues;
+
+								mapExtraTagReplacementValues = Properties::getTagReplacementValues(&mapExtraTagReplacementValues);
+								Properties::applyTagsToValue(expandedNewCommonFileName,&mapExtraTagReplacementValues);
+								replaceAll(expandedNewCommonFileName, "//", "/");
+								createDirectoryPaths(extractDirectoryPathFromFile(expandedNewCommonFileName));
+
+								if(gitPurgeFiles == true) {
+									copyFileTo(duplicateFile, expandedNewCommonFileName);
+
+									char szBuf[8096]="";
+									snprintf(szBuf,8096,"git rm \"%s\"",duplicateFile.c_str());
+									bool gitOk = executeShellCommand(szBuf,0);
+									if(gitOk == false) {
+										throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+									}
+									printf("*** Duplicate file:\n[%s]\nwas git rm and copied to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+								}
+								else {
+									//int result = 0;
+									int result = rename(duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+									if(result != 0) {
+										char szBuf[8096]="";
+										char *errmsg = strerror(errno);
+										snprintf(szBuf,8096,"!!! Error [%s] Could not rename [%s] to [%s]!",errmsg,duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+										throw megaglest_runtime_error(szBuf);
+									}
+									else {
+										printf("*** Duplicate file:\n[%s]\nwas renamed to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+									}
+								}
+							}
+							else {
+								if(gitPurgeFiles == true) {
+									char szBuf[8096]="";
+									snprintf(szBuf,8096,"git rm \"%s\"",duplicateFile.c_str());
+									bool gitOk = executeShellCommand(szBuf,0);
+									if(gitOk == false) {
+										throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+									}
+									printf("*** Duplicate file:\n[%s]\nwas git rm\n",duplicateFile.c_str());
+								}
+								else {
+									removeFile(duplicateFile);
+								}
+								printf("*** Duplicate file:\n[%s]\nwas removed\n",duplicateFile.c_str());
+
+								// convert to MB
+								duplicateMegaBytesPurged += ((double)fileSize / 1048576.0);
+								duplicateCountPurged++;
+							}
+						}
+					}
+
+					std::map<string,int> mapUniqueParentList;
+
+					for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+						string duplicateFile = fileList[idx];
+						string fileExt = extractExtension(duplicateFile);
+						if(fileExt == "wav" || fileExt == "ogg") {
+							std::map<string,vector<pair<string, string> > >::iterator iterFind2 = loadedFileList.find(duplicateFile);
+							if(iterFind2 != loadedFileList.end()) {
+								for(unsigned int jdx1 = 0; jdx1 < iterFind2->second.size(); jdx1++) {
+									string parentFile = iterFind2->second[jdx1].first;
+									string searchText = iterFind2->second[jdx1].second;
+
+									if(mapUniqueParentList.find(parentFile) == mapUniqueParentList.end()) {
+										printf("*** Searching parent file:\n[%s]\nfor duplicate file reference:\n[%s]\nto replace with newname:\n[%s]\n",parentFile.c_str(),searchText.c_str(),newCommonFileName.c_str());
+										bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, false);
+										printf("foundText = %d\n",foundText);
+										if(foundText == false) {
+											char szBuf[8096]="";
+											snprintf(szBuf,8096,"Line ref = %d, Error finding text [%s] in file [%s]",__LINE__,searchText.c_str(),parentFile.c_str());
+											throw megaglest_runtime_error(szBuf);
+										}
+										mapUniqueParentList[parentFile]++;
+									}
+								}
+							}
+						}
+					}
+				}
+				else {
+					string newCommonFileName = "";
+					for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+						string duplicateFile = fileList[idx];
+						string fileExt = extractExtension(duplicateFile);
+						if(fileExt == "wav" || fileExt == "ogg") {
+							//off_t fileSize = getFileSize(duplicateFile);
+							if(idx == 0) {
+								newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
+								break;
+							}
+						}
+					}
+
+					for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+						string duplicateFile = fileList[idx];
+						string fileExt = extractExtension(duplicateFile);
+						if(fileExt == "wav" || fileExt == "ogg") {
+							std::map<string,vector<pair<string, string> > >::iterator iterFind4 = loadedFileList.find(duplicateFile);
+							if(iterFind4 != loadedFileList.end()) {
+								for(unsigned int jdx = 0; jdx < iterFind4->second.size(); jdx++) {
+									string parentFile = iterFind4->second[jdx].first;
+									string searchText = iterFind4->second[jdx].second;
+
+									bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, true);
+									if(foundText == false) {
+
+										char szBuf[8096]="";
+										snprintf(szBuf,8096,"Line ref = %d, Error finding text\n[%s]\nin file\n[%s]\nnew Common File [%s]\n",__LINE__,searchText.c_str(),parentFile.c_str(),newCommonFileName.c_str());
+										printf("\n\n=================================================\n%s",szBuf);
+
+										throw megaglest_runtime_error(szBuf);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if(foundDuplicates == true) {
+			printf("Duplicates %.2f MB (%d) in files\n",duplicateMegaBytes,duplicateCount);
+			printf("Duplicates purged %.2f MB (%d) in files\n",duplicateMegaBytesPurged,duplicateCountPurged);
+
+			printf("\nWarning, duplicate files were detected - END:\n");
+		}
+	}
+
+	if(techtree_errors == false) {
+		printf("\nValidation found NO ERRORS for tilesetPath [%s] tilesetName [%s]:\n",tilesetPath.c_str(), tilesetName.c_str());
+	}
+
+	printf("----------------------------------------------------------------");
+}
+
 void runTechValidationForPath(string techPath, string techName,
 		const std::vector<string> &filteredFactionList, World &world,
 		bool purgeUnusedFiles,bool purgeDuplicateFiles, bool showDuplicateFiles,
-		bool svnPurgeFiles,double &purgedMegaBytes) {
-	//Config &config = Config::getInstance();
+		bool gitPurgeFiles,double &purgedMegaBytes) {
+
+	string techTreeFolder = techPath + techName;
+	string techTreeFactionFolder = techTreeFolder + "/factions/";
 	vector<string> factionsList;
-	findDirs(techPath + techName + "/factions/", factionsList, false, false);
+	findDirs(techTreeFactionFolder, factionsList, false, false);
 
 	if(factionsList.empty() == false) {
 		Checksum checksum;
 		set<string> factions;
-		for(int j = 0; j < factionsList.size(); ++j) {
+		for(int j = 0; j < (int)factionsList.size(); ++j) {
 			if(	filteredFactionList.empty() == true ||
 				std::find(filteredFactionList.begin(),filteredFactionList.end(),factionsList[j]) != filteredFactionList.end()) {
 				factions.insert(factionsList[j]);
@@ -1422,7 +1948,7 @@ void runTechValidationForPath(string techPath, string techName,
 
 		printf("\n----------------------------------------------------------------");
 		printf("\nChecking techPath [%s] techName [%s] total faction count = %d\n",techPath.c_str(), techName.c_str(),(int)factionsList.size());
-		for(int j = 0; j < factionsList.size(); ++j) {
+		for(int j = 0; j < (int)factionsList.size(); ++j) {
 			if(	filteredFactionList.empty() == true ||
 				std::find(filteredFactionList.begin(),filteredFactionList.end(),factionsList[j]) != filteredFactionList.end()) {
 				printf("Using faction [%s]\n",factionsList[j].c_str());
@@ -1433,370 +1959,469 @@ void runTechValidationForPath(string techPath, string techName,
 			bool techtree_errors = false;
 
 			std::map<string,vector<pair<string, string> >  > loadedFileList;
-			//vector<string> pathList = config.getPathListForType(ptTechs,"");
 			vector<string> pathList;
 			pathList.push_back(techPath);
-			world.loadTech(pathList, techName, factions, &checksum, loadedFileList);
+			Config &config = Config::getInstance();
+			vector<string> otherTechPaths = config.getPathListForType(ptTechs,"");
+			pathList.insert(pathList.end(), otherTechPaths.begin(), otherTechPaths.end());
 
-			// Fixup paths with ..
-			{
-				std::map<string,vector<pair<string, string> > > newLoadedFileList;
-				for( std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
-					iterMap != loadedFileList.end(); ++iterMap) {
-					string loadedFile = iterMap->first;
+			try {
+				world.loadTech(pathList, techName, factions, &checksum, loadedFileList, true);
 
-					replaceAll(loadedFile,"//","/");
-					replaceAll(loadedFile,"\\\\","\\");
-					updatePathClimbingParts(loadedFile);
+				// Fixup paths with ..
+				{
+					std::map<string,vector<pair<string, string> > > newLoadedFileList;
+					for( std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
+						iterMap != loadedFileList.end(); ++iterMap) {
+						string loadedFile = iterMap->first;
 
-					if(newLoadedFileList.find(loadedFile) != newLoadedFileList.end()) {
-						for(unsigned int xx1 = 0; xx1 < iterMap->second.size(); ++xx1) {
-							newLoadedFileList[loadedFile].push_back(iterMap->second[xx1]);
-						}
-					}
-					else {
-						newLoadedFileList[loadedFile] = iterMap->second;
-					}
-				}
-				loadedFileList = newLoadedFileList;
-			}
+						replaceAll(loadedFile,"//","/");
+						replaceAll(loadedFile,"\\\\","\\");
+						updatePathClimbingParts(loadedFile);
 
-			// Validate the faction setup to ensure we don't have any bad associations
-			std::vector<std::string> resultErrors = world.validateFactionTypes();
-			if(resultErrors.empty() == false) {
-				techtree_errors = true;
-				// Display the validation errors
-				string errorText = "\nErrors were detected:\n=====================\n";
-				for(int i = 0; i < resultErrors.size(); ++i) {
-					if(i > 0) {
-						errorText += "\n";
-					}
-					errorText = errorText + resultErrors[i];
-				}
-				errorText += "\n=====================\n";
-				//throw runtime_error(errorText);
-				printf("%s",errorText.c_str());
-			}
+						if(newLoadedFileList.find(loadedFile) != newLoadedFileList.end()) {
+							for(unsigned int xx1 = 0; xx1 < iterMap->second.size(); ++xx1) {
+								pair<string, string> &newVal = iterMap->second[xx1];
+								replaceAll(newVal.first,"//","/");
+								replaceAll(newVal.first,"\\\\","\\");
+								updatePathClimbingParts(newVal.first);
+								replaceAll(newVal.second,"//","/");
+								replaceAll(newVal.second,"\\\\","\\");
+								updatePathClimbingParts(newVal.second);
 
-			// Validate the faction resource setup to ensure we don't have any bad associations
-			printf("\nChecking resources, count = %d\n",world.getTechTree()->getResourceTypeCount());
-
-			for(int i = 0; i < world.getTechTree()->getResourceTypeCount(); ++i) {
-				printf("Found techtree resource [%s]\n",world.getTechTree()->getResourceType(i)->getName().c_str());
-			}
-
-			resultErrors = world.validateResourceTypes();
-			if(resultErrors.empty() == false) {
-				techtree_errors = true;
-				// Display the validation errors
-				string errorText = "\nErrors were detected:\n=====================\n";
-				for(int i = 0; i < resultErrors.size(); ++i) {
-					if(i > 0) {
-						errorText += "\n";
-					}
-					errorText = errorText + resultErrors[i];
-				}
-				errorText += "\n=====================\n";
-				//throw runtime_error(errorText);
-				printf("%s",errorText.c_str());
-			}
-
-			// Now check for unused files in the techtree
-			std::map<string,vector<pair<string, string> > > foundFileList;
-			for(unsigned int i = 0; i < pathList.size(); ++i) {
-				string path = pathList[i];
-				endPathWithSlash(path);
-				path = path + techName + "/";
-
-				vector<string> foundFiles = getFolderTreeContentsListRecursively(path + "*.", "");
-				for(unsigned int j = 0; j < foundFiles.size(); ++j) {
-					string file = foundFiles[j];
-					if(	file.find("loading_screen") != string::npos ||
-							file.find("preview_screen") != string::npos ||
-							file.find("hud") != string::npos) {
-						continue;
-					}
-					if(file.find("/factions/") != string::npos) {
-						bool includeFaction = false;
-						for ( set<string>::iterator it = factions.begin(); it != factions.end(); ++it ) {
-							string currentFaction = *it;
-							if(file.find("/factions/" + currentFaction) != string::npos) {
-								includeFaction = true;
-								break;
+								newLoadedFileList[loadedFile].push_back(newVal);
 							}
 						}
-						if(includeFaction == false) {
+						else {
+							for(unsigned int xx1 = 0; xx1 < iterMap->second.size(); ++xx1) {
+								pair<string, string> &newVal = iterMap->second[xx1];
+								replaceAll(newVal.first,"//","/");
+								replaceAll(newVal.first,"\\\\","\\");
+								updatePathClimbingParts(newVal.first);
+								replaceAll(newVal.second,"//","/");
+								replaceAll(newVal.second,"\\\\","\\");
+								updatePathClimbingParts(newVal.second);
+							}
+
+							newLoadedFileList[loadedFile] = iterMap->second;
+						}
+					}
+					loadedFileList = newLoadedFileList;
+				}
+
+				// Validate the faction setup to ensure we don't have any bad associations
+				std::vector<std::string> resultErrors = world.validateFactionTypes();
+				if(resultErrors.empty() == false) {
+					techtree_errors = true;
+					// Display the validation errors
+					string errorText = "\nErrors were detected:\n=====================\n";
+					for(int i = 0; i < (int)resultErrors.size(); ++i) {
+						if(i > 0) {
+							errorText += "\n";
+						}
+						errorText = errorText + resultErrors[i];
+					}
+					errorText += "\n=====================\n";
+					printf("%s",errorText.c_str());
+				}
+
+				// Validate the faction resource setup to ensure we don't have any bad associations
+				printf("\nChecking resources, count = %d\n",world.getTechTree()->getResourceTypeCount());
+
+				for(int i = 0; i < world.getTechTree()->getResourceTypeCount(); ++i) {
+					printf("Found techtree resource [%s]\n",world.getTechTree()->getResourceType(i)->getName().c_str());
+				}
+
+				resultErrors = world.validateResourceTypes();
+				if(resultErrors.empty() == false) {
+					techtree_errors = true;
+					// Display the validation errors
+					string errorText = "\nErrors were detected:\n=====================\n";
+					for(int i = 0; i < (int)resultErrors.size(); ++i) {
+						if(i > 0) {
+							errorText += "\n";
+						}
+						errorText = errorText + resultErrors[i];
+					}
+					errorText += "\n=====================\n";
+					printf("%s",errorText.c_str());
+				}
+
+				// Now check for unused files in the techtree
+				std::map<string,vector<pair<string, string> > > foundFileList;
+				for(unsigned int i = 0; i < pathList.size(); ++i) {
+					string path = pathList[i];
+					endPathWithSlash(path);
+					path = path + techName + "/";
+
+					replaceAll(path, "//", "/");
+					replaceAll(path, "\\\\", "\\");
+
+					vector<string> foundFiles = getFolderTreeContentsListRecursively(path + "*.", "");
+					for(unsigned int j = 0; j < foundFiles.size(); ++j) {
+						string file = foundFiles[j];
+						replaceAll(file, "//", "/");
+						replaceAll(file, "\\\\", "\\");
+
+						// ignore loading screen, preview screen and hud
+						if(	file.find(GameConstants::LOADING_SCREEN_FILE) != string::npos ||
+								file.find(GameConstants::PREVIEW_SCREEN_FILE) != string::npos ||
+								file.find(GameConstants::HUD_SCREEN_FILE) != string::npos) {
 							continue;
 						}
-					}
 
-					replaceAll(file,"//","/");
-					replaceAll(file,"\\\\","\\");
-
-					foundFileList[file].push_back(make_pair(path,path));
-				}
-			}
-
-			printf("Found techtree filecount = %lu, used = %lu\n",(unsigned long)foundFileList.size(),(unsigned long)loadedFileList.size());
-
-//                        for( std::map<string,vector<string> >::iterator iterMap = loadedFileList.begin();
-//                        	iterMap != loadedFileList.end(); ++iterMap) {
-//                        	string foundFile = iterMap->first;
-//
-//							if(foundFile.find("golem_ack1.wav") != string::npos) {
-//								printf("FOUND file [%s]\n",foundFile.c_str());
-//							}
-//                        }
-
-			int purgeCount = 0;
-			bool foundUnusedFile = false;
-			for( std::map<string,vector<pair<string, string> > >::iterator iterMap = foundFileList.begin();
-				iterMap != foundFileList.end(); ++iterMap) {
-				string foundFile = iterMap->first;
-
-				if(loadedFileList.find(foundFile) == loadedFileList.end()) {
-					if(foundUnusedFile == false) {
-						printf("\nWarning, unused files were detected - START:\n=====================\n");
-					}
-					foundUnusedFile = true;
-
-					printf("[%s]\n",foundFile.c_str());
-
-					string fileName = extractFileFromDirectoryPath(foundFile);
-					if(loadedFileList.find(fileName) != loadedFileList.end()) {
-						printf("possible match on [%s] ?\n",loadedFileList.find(fileName)->first.c_str());
-					}
-					else if(purgeUnusedFiles == true) {
-						off_t fileSize = getFileSize(foundFile);
-						// convert to MB
-						purgedMegaBytes += ((double)fileSize / 1048576.0);
-						purgeCount++;
-
-						if(svnPurgeFiles == true) {
-							char szBuf[4096]="";
-							sprintf(szBuf,"svn delete \"%s\"",foundFile.c_str());
-							bool svnOk = executeShellCommand(szBuf,0);
-							if(svnOk == false) {
-								throw runtime_error("Call to command failed [" + string(szBuf) + "]");
+						// ignore commondata since we are not loading all factions
+						if(filteredFactionList.size() > 0) {
+							if(	file.find("/commondata/") != string::npos) {
+								continue;
 							}
 						}
-						else {
-							removeFile(foundFile);
+
+						if(file.find("/factions/") != string::npos) {
+							bool includeFaction = false;
+							for ( set<string>::iterator it = factions.begin(); it != factions.end(); ++it ) {
+								string currentFaction = *it;
+								if(file.find("/factions/" + currentFaction) != string::npos) {
+									includeFaction = true;
+									break;
+								}
+							}
+							if(includeFaction == false) {
+								continue;
+							}
 						}
+
+						replaceAll(file,"//","/");
+						replaceAll(file,"\\\\","\\");
+
+						foundFileList[file].push_back(make_pair(path,path));
 					}
 				}
-			}
-			if(foundUnusedFile == true) {
-				if(purgedMegaBytes > 0) {
-					printf("Purged %.2f MB (%d) in files\n",purgedMegaBytes,purgeCount);
-				}
-				printf("\nWarning, unused files were detected - END:\n");
-			}
 
-			if(showDuplicateFiles == true) {
-				std::map<int32,vector<string> > mapDuplicateFiles;
-				// Now check for duplicate data content
-				for(std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
-					iterMap != loadedFileList.end(); ++iterMap) {
-					string fileName = iterMap->first;
-					Checksum checksum;
-					checksum.addFile(fileName);
-					int32 crcValue = checksum.getSum();
-	//				if(crcValue == 0) {
-	//					char szBuf[4096]="";
-	//					sprintf(szBuf,"Error calculating CRC for file [%s]",fileName.c_str());
-	//					throw runtime_error(szBuf);
-	//				}
-	//				else {
-	//					printf("** CRC for file [%s] is [%d] and has %d parents\n",fileName.c_str(),crcValue,(int)iterMap->second.size());
-	//				}
-					mapDuplicateFiles[crcValue].push_back(fileName);
-				}
+				printf("Found techtree filecount = " MG_SIZE_T_SPECIFIER ", used = " MG_SIZE_T_SPECIFIER "\n",foundFileList.size(),loadedFileList.size());
 
-				double duplicateMegaBytesPurged=0;
-				int duplicateCountPurged=0;
+				int purgeCount = 0;
+				bool foundUnusedFile = false;
+				for( std::map<string,vector<pair<string, string> > >::iterator iterMap = foundFileList.begin();
+					iterMap != foundFileList.end(); ++iterMap) {
+					string foundFile = iterMap->first;
+					replaceAll(foundFile, "//", "/");
+					replaceAll(foundFile, "\\\\", "\\");
 
-				double duplicateMegaBytes=0;
-				int duplicateCount=0;
-
-				bool foundDuplicates = false;
-				for(std::map<int32,vector<string> >::iterator iterMap = mapDuplicateFiles.begin();
-					iterMap != mapDuplicateFiles.end(); ++iterMap) {
-					vector<string> &fileList = iterMap->second;
-					if(fileList.size() > 1) {
-						if(foundDuplicates == false) {
-							foundDuplicates = true;
-							printf("\nWarning, duplicate files were detected - START:\n=====================\n");
+					if(loadedFileList.find(foundFile) == loadedFileList.end() &&
+							foundFile.find("lang/") == foundFile.npos) {
+						if(foundUnusedFile == false) {
+							printf("\nLine ref: %d, Warning, unused files were detected - START:\n=====================\n",__LINE__);
 						}
+						foundUnusedFile = true;
 
-						map<string,int> parentList;
-						for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
-							string duplicateFile = fileList[idx];
-							if(idx > 0) {
-								off_t fileSize = getFileSize(duplicateFile);
-								// convert to MB
-								duplicateMegaBytes += ((double)fileSize / 1048576.0);
-								duplicateCount++;
+						printf("[%s]\n",foundFile.c_str());
+
+						string fileName = extractFileFromDirectoryPath(foundFile);
+						if(loadedFileList.find(fileName) != loadedFileList.end()) {
+							printf("possible match on [%s] ?\n",loadedFileList.find(fileName)->first.c_str());
+						}
+						else if(purgeUnusedFiles == true) {
+							off_t fileSize = getFileSize(foundFile);
+							// convert to MB
+							purgedMegaBytes += ((double)fileSize / 1048576.0);
+							purgeCount++;
+
+							if(gitPurgeFiles == true) {
+								char szBuf[8096]="";
+								snprintf(szBuf,8096,"git rm \"%s\"",foundFile.c_str());
+								bool gitOk = executeShellCommand(szBuf,0);
+								if(gitOk == false) {
+									throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+								}
 							}
 							else {
-								printf("\n");
-							}
-
-							printf("[%s]\n",duplicateFile.c_str());
-							std::map<string,vector<pair<string, string> > >::iterator iterFind = loadedFileList.find(duplicateFile);
-							if(iterFind != loadedFileList.end()) {
-								for(unsigned int jdx = 0; jdx < iterFind->second.size(); jdx++) {
-									parentList[iterFind->second[jdx].first]++;
-								}
-							}
-						}
-
-						for(map<string,int>::iterator iterMap1 = parentList.begin();
-								iterMap1 != parentList.end(); ++iterMap1) {
-
-							if(iterMap1 == parentList.begin()) {
-								printf("\tParents:\n");
-							}
-							printf("\t[%s]\n",iterMap1->first.c_str());
-						}
-
-						if(purgeDuplicateFiles == true) {
-							string newCommonFileName = "";
-							for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
-								string duplicateFile = fileList[idx];
-								string fileExt = extractExtension(duplicateFile);
-								if(fileExt == "wav" || fileExt == "ogg") {
-									off_t fileSize = getFileSize(duplicateFile);
-									if(idx == 0) {
-										newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
-
-										string expandedNewCommonFileName = newCommonFileName;
-
-										std::map<string,string> mapExtraTagReplacementValues;
-										mapExtraTagReplacementValues["$COMMONDATAPATH"] = techPath + techName + "/commondata/";
-										mapExtraTagReplacementValues = Properties::getTagReplacementValues(&mapExtraTagReplacementValues);
-										Properties::applyTagsToValue(expandedNewCommonFileName,&mapExtraTagReplacementValues);
-										createDirectoryPaths(extractDirectoryPathFromFile(expandedNewCommonFileName));
-
-										if(svnPurgeFiles == true) {
-											copyFileTo(duplicateFile, expandedNewCommonFileName);
-
-											char szBuf[4096]="";
-											sprintf(szBuf,"svn delete \"%s\"",duplicateFile.c_str());
-											bool svnOk = executeShellCommand(szBuf,0);
-											if(svnOk == false) {
-												throw runtime_error("Call to command failed [" + string(szBuf) + "]");
-											}
-											printf("*** Duplicate file:\n[%s]\nwas svn deleted and copied to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
-										}
-										else {
-											//int result = 0;
-											int result = rename(duplicateFile.c_str(),expandedNewCommonFileName.c_str());
-											if(result != 0) {
-												char szBuf[4096]="";
-												char *errmsg = strerror(errno);
-												sprintf(szBuf,"!!! Error [%s] Could not rename [%s] to [%s]!",errmsg,duplicateFile.c_str(),expandedNewCommonFileName.c_str());
-												throw runtime_error(szBuf);
-											}
-											else {
-												printf("*** Duplicate file:\n[%s]\nwas renamed to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
-											}
-										}
-									}
-									else {
-										if(svnPurgeFiles == true) {
-											char szBuf[4096]="";
-											sprintf(szBuf,"svn delete \"%s\"",duplicateFile.c_str());
-											bool svnOk = executeShellCommand(szBuf,0);
-											if(svnOk == false) {
-												throw runtime_error("Call to command failed [" + string(szBuf) + "]");
-											}
-											printf("*** Duplicate file:\n[%s]\nwas svn deleted\n",duplicateFile.c_str());
-										}
-										else {
-											removeFile(duplicateFile);
-										}
-										printf("*** Duplicate file:\n[%s]\nwas removed\n",duplicateFile.c_str());
-
-										// convert to MB
-										duplicateMegaBytesPurged += ((double)fileSize / 1048576.0);
-										duplicateCountPurged++;
-									}
-								}
-							}
-
-							std::map<string,int> mapUniqueParentList;
-
-							for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
-								string duplicateFile = fileList[idx];
-								string fileExt = extractExtension(duplicateFile);
-								if(fileExt == "wav" || fileExt == "ogg") {
-									std::map<string,vector<pair<string, string> > >::iterator iterFind2 = loadedFileList.find(duplicateFile);
-									if(iterFind2 != loadedFileList.end()) {
-										for(unsigned int jdx1 = 0; jdx1 < iterFind2->second.size(); jdx1++) {
-											string parentFile = iterFind2->second[jdx1].first;
-											string searchText = iterFind2->second[jdx1].second;
-
-											if(mapUniqueParentList.find(parentFile) == mapUniqueParentList.end()) {
-												printf("*** Searching parent file:\n[%s]\nfor duplicate file reference:\n[%s]\nto replace with newname:\n[%s]\n",parentFile.c_str(),searchText.c_str(),newCommonFileName.c_str());
-												bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, false);
-												printf("foundText = %d\n",foundText);
-												if(foundText == false) {
-													char szBuf[4096]="";
-													sprintf(szBuf,"Error finding text [%s] in file [%s]",searchText.c_str(),parentFile.c_str());
-													throw runtime_error(szBuf);
-												}
-												mapUniqueParentList[parentFile]++;
-											}
-										}
-									}
-								}
-							}
-						}
-						else {
-							string newCommonFileName = "";
-							for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
-								string duplicateFile = fileList[idx];
-								string fileExt = extractExtension(duplicateFile);
-								if(fileExt == "wav" || fileExt == "ogg") {
-									off_t fileSize = getFileSize(duplicateFile);
-									if(idx == 0) {
-										newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
-										break;
-									}
-								}
-							}
-							for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
-								string duplicateFile = fileList[idx];
-								string fileExt = extractExtension(duplicateFile);
-								if(fileExt == "wav" || fileExt == "ogg") {
-									std::map<string,vector<pair<string, string> > >::iterator iterFind4 = loadedFileList.find(duplicateFile);
-									if(iterFind4 != loadedFileList.end()) {
-										for(unsigned int jdx = 0; jdx < iterFind4->second.size(); jdx++) {
-											string parentFile = iterFind4->second[jdx].first;
-											string searchText = iterFind4->second[jdx].second;
-
-											//printf("*** Searching parent file:\n[%s]\nfor duplicate file reference:\n[%s]\nto replace with newname:\n[%s]\n",parentFile.c_str(),searchText.c_str(),newCommonFileName.c_str());
-											bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, true);
-											//printf("foundText = %d\n",foundText);
-											if(foundText == false) {
-												char szBuf[4096]="";
-												sprintf(szBuf,"Error finding text [%s] in file [%s]",searchText.c_str(),parentFile.c_str());
-												throw runtime_error(szBuf);
-											}
-										}
-									}
-								}
+								removeFile(foundFile);
 							}
 						}
 					}
 				}
-				if(foundDuplicates == true) {
-					printf("Duplicates %.2f MB (%d) in files\n",duplicateMegaBytes,duplicateCount);
-					printf("Duplicates purged %.2f MB (%d) in files\n",duplicateMegaBytesPurged,duplicateCountPurged);
-
-					printf("\nWarning, duplicate files were detected - END:\n");
+				if(foundUnusedFile == true) {
+					if(purgedMegaBytes > 0) {
+						printf("Purged %.2f MB (%d) in files\n",purgedMegaBytes,purgeCount);
+					}
+					printf("\nLine ref: %d, Warning, unused files were detected - END:\n",__LINE__);
 				}
+
+				if(showDuplicateFiles == true) {
+					std::map<uint32,vector<string> > mapDuplicateFiles;
+					// Now check for duplicate data content
+					for(std::map<string,vector<pair<string, string> > >::iterator iterMap = loadedFileList.begin();
+						iterMap != loadedFileList.end(); ++iterMap) {
+						string fileName = iterMap->first;
+						Checksum checksum;
+						checksum.addFile(fileName);
+						uint32 crcValue = checksum.getSum();
+						if(crcValue == 0) {
+							char szBuf[8096]="";
+							snprintf(szBuf,8096,"Error calculating CRC for file [%s]",fileName.c_str());
+							throw megaglest_runtime_error(szBuf);
+						}
+						mapDuplicateFiles[crcValue].push_back(fileName);
+					}
+
+					double duplicateMegaBytesPurged=0;
+					int duplicateCountPurged=0;
+
+					double duplicateMegaBytes=0;
+					int duplicateCount=0;
+
+					bool foundDuplicates = false;
+					for(std::map<uint32,vector<string> >::iterator iterMap = mapDuplicateFiles.begin();
+						iterMap != mapDuplicateFiles.end(); ++iterMap) {
+						vector<string> &fileList = iterMap->second;
+						if(fileList.size() > 1) {
+							if(foundDuplicates == false) {
+								foundDuplicates = true;
+								printf("\nWarning, duplicate files were detected - START:\n=====================\n");
+							}
+
+							printf("----- START duplicate files for CRC [%u] count [" MG_SIZE_T_SPECIFIER "] first file is [%s]\n",iterMap->first,fileList.size(),fileList[0].c_str());
+
+							map<string,int> parentList;
+							for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+								string duplicateFile = fileList[idx];
+								if(idx > 0) {
+									off_t fileSize = getFileSize(duplicateFile);
+									// convert to MB
+									duplicateMegaBytes += ((double)fileSize / 1048576.0);
+									duplicateCount++;
+								}
+								else {
+									printf("\n");
+								}
+
+								printf("[%s]\n",duplicateFile.c_str());
+								std::map<string,vector<pair<string, string> > >::iterator iterFind = loadedFileList.find(duplicateFile);
+								if(iterFind != loadedFileList.end()) {
+									for(unsigned int jdx = 0; jdx < iterFind->second.size(); jdx++) {
+										parentList[iterFind->second[jdx].first]++;
+									}
+								}
+
+								string newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
+								string expandedNewCommonFileName = newCommonFileName;
+								std::map<string,string> mapExtraTagReplacementValues;
+								string techCommonData = techPath + techName + "/commondata/";
+								replaceAll(techCommonData, "//", "/");
+								mapExtraTagReplacementValues["$COMMONDATAPATH"] = techCommonData;
+								mapExtraTagReplacementValues = Properties::getTagReplacementValues(&mapExtraTagReplacementValues);
+								Properties::applyTagsToValue(expandedNewCommonFileName,&mapExtraTagReplacementValues);
+								replaceAll(expandedNewCommonFileName, "//", "/");
+							}
+
+							printf("----- Finding parents for duplicate files [" MG_SIZE_T_SPECIFIER "] first file is [%s]\n",fileList.size(),fileList[0].c_str());
+
+							for(map<string,int>::iterator iterMap1 = parentList.begin();
+									iterMap1 != parentList.end(); ++iterMap1) {
+
+								if(iterMap1 == parentList.begin()) {
+									printf("\tParents:\n");
+								}
+								printf("\t[%s]\n",iterMap1->first.c_str());
+							}
+
+							if(purgeDuplicateFiles == true) {
+
+								printf("----- move / remove duplicate files [" MG_SIZE_T_SPECIFIER "] first file is [%s]\n",fileList.size(),fileList[0].c_str());
+								// First move first duplicate to commondata and delete all other copies
+								string newCommonFileName = "";
+								for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+									string duplicateFile = fileList[idx];
+									string fileExt = extractExtension(duplicateFile);
+									if(fileExt == "wav" || fileExt == "ogg") {
+										off_t fileSize = getFileSize(duplicateFile);
+
+										printf("#1 [%u / " MG_SIZE_T_SPECIFIER "] removing duplicate [%s]\n",idx,fileList.size(),duplicateFile.c_str());
+
+										if(idx == 0) {
+											newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
+
+											string expandedNewCommonFileName = newCommonFileName;
+
+											std::map<string,string> mapExtraTagReplacementValues;
+
+											string techCommonData = techPath + techName + "/commondata/";
+											replaceAll(techCommonData, "//", "/");
+
+											mapExtraTagReplacementValues["$COMMONDATAPATH"] = techCommonData;
+											mapExtraTagReplacementValues = Properties::getTagReplacementValues(&mapExtraTagReplacementValues);
+											Properties::applyTagsToValue(expandedNewCommonFileName,&mapExtraTagReplacementValues);
+											replaceAll(expandedNewCommonFileName, "//", "/");
+											createDirectoryPaths(extractDirectoryPathFromFile(expandedNewCommonFileName));
+
+											if(gitPurgeFiles == true) {
+												copyFileTo(duplicateFile, expandedNewCommonFileName);
+
+												char szBuf[8096]="";
+												snprintf(szBuf,8096,"git rm \"%s\"",duplicateFile.c_str());
+												bool gitOk = executeShellCommand(szBuf,0);
+												if(gitOk == false) {
+													throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+												}
+												printf("*** Duplicate file:\n[%s]\nwas git rm and copied to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+											}
+											else {
+												printf("moving duplicate [%s] to common data [%s] expanded to [%s]\n",duplicateFile.c_str(),newCommonFileName.c_str(),expandedNewCommonFileName.c_str());
+
+												int result = rename(duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+												if(result != 0) {
+													char szBuf[8096]="";
+													char *errmsg = strerror(errno);
+													snprintf(szBuf,8096,"!!! Error [%s] Could not rename [%s] to [%s]!",errmsg,duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+													throw megaglest_runtime_error(szBuf);
+												}
+												else {
+													printf("*** Duplicate file:\n[%s]\nwas renamed to:\n[%s]\n",duplicateFile.c_str(),expandedNewCommonFileName.c_str());
+												}
+											}
+										}
+										else {
+											if(gitPurgeFiles == true) {
+												char szBuf[8096]="";
+												snprintf(szBuf,8096,"git rm \"%s\"",duplicateFile.c_str());
+												bool gitOk = executeShellCommand(szBuf,0);
+												if(gitOk == false) {
+													throw megaglest_runtime_error("Call to command failed [" + string(szBuf) + "]");
+												}
+												printf("*** Duplicate file:\n[%s]\nwas git rm\n",duplicateFile.c_str());
+											}
+											else {
+												printf("removing duplicate [%s]\n",duplicateFile.c_str());
+												removeFile(duplicateFile);
+											}
+											printf("*** Duplicate file:\n[%s]\nwas removed\n",duplicateFile.c_str());
+
+											// convert to MB
+											duplicateMegaBytesPurged += ((double)fileSize / 1048576.0);
+											duplicateCountPurged++;
+										}
+									}
+								}
+
+								printf("----- update XML files for duplicate files [" MG_SIZE_T_SPECIFIER "] first file is [%s]\n",fileList.size(),fileList[0].c_str());
+								std::map<string,int> mapUniqueParentList;
+
+								// Update the XML files to point to the new single copy in commondata
+								for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+									string duplicateFile = fileList[idx];
+									string fileExt = extractExtension(duplicateFile);
+									if(fileExt == "wav" || fileExt == "ogg") {
+										std::map<string,vector<pair<string, string> > >::iterator iterFind2 = loadedFileList.find(duplicateFile);
+										if(iterFind2 != loadedFileList.end()) {
+											for(unsigned int jdx1 = 0; jdx1 < iterFind2->second.size(); jdx1++) {
+												string parentFile = iterFind2->second[jdx1].first;
+												string searchText = iterFind2->second[jdx1].second;
+
+												if(mapUniqueParentList.find(parentFile) == mapUniqueParentList.end()) {
+													printf("*** Searching parent file:\n[%s]\nfor duplicate file reference:\n[%s]\nto replace with newname:\n[%s]\n",parentFile.c_str(),searchText.c_str(),newCommonFileName.c_str());
+													bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, false);
+													printf("foundText = %d\n",foundText);
+													if(foundText == false) {
+
+														string techCommonData = techPath + techName + "/commondata/";
+														replaceAll(techCommonData, "//", "/");
+
+														if(StartsWith(searchText, techCommonData) == true) {
+															printf("WARNING #1 [%d] techCommonData check\n[%s]\n[%s]\n[%s]\n[%s]\n",
+																	foundText,parentFile.c_str(),techCommonData.c_str(),searchText.c_str(),newCommonFileName.c_str());
+
+															replaceAll(searchText, techCommonData, "$COMMONDATAPATH/");
+															foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, false);
+
+															printf("WARNING #2 [%d] techCommonData check\n[%s]\n[%s]\n[%s]\n[%s]\n",
+																	foundText,parentFile.c_str(),techCommonData.c_str(),searchText.c_str(),newCommonFileName.c_str());
+														}
+														if(foundText == false) {
+															char szBuf[8096]="";
+															snprintf(szBuf,8096,"Line ref = %d, Error finding text\n[%s]\nin file\n[%s]\nnew Common File [%s]\n",__LINE__,searchText.c_str(),parentFile.c_str(),newCommonFileName.c_str());
+															printf("\n\n=================================================\n%s",szBuf);
+
+															throw megaglest_runtime_error(szBuf);
+														}
+													}
+													mapUniqueParentList[parentFile]++;
+												}
+											}
+										}
+									}
+								}
+							}
+							else {
+
+								string newCommonFileName = "";
+								for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+									string duplicateFile = fileList[idx];
+									string fileExt = extractExtension(duplicateFile);
+									if(fileExt == "wav" || fileExt == "ogg") {
+										//off_t fileSize = getFileSize(duplicateFile);
+										if(idx == 0) {
+											newCommonFileName = "$COMMONDATAPATH/sounds/" + extractFileFromDirectoryPath(duplicateFile);
+											break;
+										}
+									}
+								}
+
+								for(unsigned int idx = 0; idx < fileList.size(); ++idx) {
+									string duplicateFile = fileList[idx];
+									string fileExt = extractExtension(duplicateFile);
+									if(fileExt == "wav" || fileExt == "ogg") {
+										std::map<string,vector<pair<string, string> > >::iterator iterFind4 = loadedFileList.find(duplicateFile);
+										if(iterFind4 != loadedFileList.end()) {
+											for(unsigned int jdx = 0; jdx < iterFind4->second.size(); jdx++) {
+												string parentFile = iterFind4->second[jdx].first;
+												string searchText = iterFind4->second[jdx].second;
+
+												bool foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, true);
+
+												if(foundText == false) {
+													string techCommonData = techPath + techName + "/commondata/";
+													replaceAll(techCommonData, "//", "/");
+
+													if(StartsWith(searchText, techCommonData) == true) {
+														replaceAll(searchText, techCommonData, "$COMMONDATAPATH/");
+														foundText = searchAndReplaceTextInFile(parentFile, searchText, newCommonFileName, true);
+
+													}
+													if(foundText == false) {
+
+														// Check if the sound file already references commandata
+														foundText = searchAndReplaceTextInFile(parentFile, newCommonFileName, newCommonFileName, true);
+														if(foundText == false) {
+															char szBuf[8096]="";
+															snprintf(szBuf,8096,"Line ref = %d, Error finding text\n[%s]\nin file\n[%s]\nnew Common File [%s]\n",__LINE__,searchText.c_str(),parentFile.c_str(),newCommonFileName.c_str());
+															printf("\n\n=================================================\n%s",szBuf);
+
+															throw megaglest_runtime_error(szBuf);
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+
+
+							printf("----- END duplicate files [" MG_SIZE_T_SPECIFIER "] first file is [%s]\n",fileList.size(),fileList[0].c_str());
+						}
+					}
+					if(foundDuplicates == true) {
+						printf("Duplicates %.2f MB (%d) in files\n",duplicateMegaBytes,duplicateCount);
+						printf("Duplicates purged %.2f MB (%d) in files\n",duplicateMegaBytesPurged,duplicateCountPurged);
+
+						printf("\nWarning, duplicate files were detected - END:\n");
+					}
+				}
+			}
+			catch(const megaglest_runtime_error &ex) {
+				techtree_errors = true;
+				printf("\n\n****ERROR**** detected while validating the techName: %s\nMESSAGE: %s\n",techName.c_str(),ex.what());
 			}
 
 			if(techtree_errors == false) {
@@ -1808,22 +2433,221 @@ void runTechValidationForPath(string techPath, string techName,
 		}
 		printf("----------------------------------------------------------------");
 	}
+	else if(folderExists(techTreeFolder) == true) {
+		printf("\nWarning, No factions were found for the techtree located in: [%s]\n",techTreeFolder.c_str());
+	}
 }
 
+
+void runTechTranslationExtractionForPath(string techPath, string techName,
+		const std::vector<string> &filteredFactionList, World &world) {
+	vector<string> factionsList;
+	findDirs(techPath + techName + "/factions/", factionsList, false, false);
+
+	if(factionsList.empty() == false) {
+		Checksum checksum;
+		set<string> factions;
+		for(int j = 0; j < (int)factionsList.size(); ++j) {
+			if(	filteredFactionList.empty() == true ||
+				std::find(filteredFactionList.begin(),filteredFactionList.end(),factionsList[j]) != filteredFactionList.end()) {
+				factions.insert(factionsList[j]);
+			}
+		}
+
+		printf("\n----------------------------------------------------------------");
+		printf("\nChecking techPath [%s] techName [%s] total faction count = %d\n",techPath.c_str(), techName.c_str(),(int)factionsList.size());
+		for(int j = 0; j < (int)factionsList.size(); ++j) {
+			if(	filteredFactionList.empty() == true ||
+				std::find(filteredFactionList.begin(),filteredFactionList.end(),factionsList[j]) != filteredFactionList.end()) {
+				printf("Using faction [%s]\n",factionsList[j].c_str());
+			}
+		}
+
+		if(factions.empty() == false) {
+			std::map<string,vector<pair<string, string> >  > loadedFileList;
+			vector<string> pathList;
+			pathList.push_back(techPath);
+			Config &config = Config::getInstance();
+			vector<string> otherTechPaths = config.getPathListForType(ptTechs,"");
+			pathList.insert(pathList.end(), otherTechPaths.begin(), otherTechPaths.end());
+
+			try {
+				world.loadTech(pathList, techName, factions, &checksum, loadedFileList, true);
+
+				const TechTree *techtree = world.getTechTree();
+				string translationFile = techtree->getPath();
+				endPathWithSlash(translationFile);
+				translationFile += "lang/" + techName + "_default.lng";
+				if(fileExists(translationFile) == false) {
+					string txFilePath = extractDirectoryPathFromFile(translationFile);
+					createDirectoryPaths(txFilePath);
+
+#if defined(WIN32) && !defined(__MINGW32__)
+					FILE *fp = _wfopen(utf8_decode(translationFile).c_str(), L"w");
+					std::ofstream txFile(fp);
+#else
+					std::ofstream txFile;
+					txFile.open(translationFile.c_str(), ios_base::out | ios_base::trunc);
+#endif
+
+					if(txFile.is_open() == true) {
+						txFile << "TechTreeName=" << techName << std::endl;
+
+						txFile << "; --------------" << std::endl;
+						txFile << "; Types of Armor" << std::endl;
+						for(int index = 0; index < techtree->getArmorTypeCount(); ++index) {
+							const ArmorType *at = techtree->getArmorTypeByIndex(index);
+							txFile << "ArmorTypeName_" << at->getName(false) << "=" << at->getName(false) << std::endl;
+						}
+
+						txFile << "; -------------- " << std::endl;
+						txFile << "; Types of Attack" << std::endl;
+						for(int index = 0; index < techtree->getAttackTypeCount(); ++index) {
+							const AttackType *at = techtree->getAttackTypeByIndex(index);
+							txFile << "AttackTypeName_" << at->getName(false) << "=" << at->getName(false) << std::endl;
+						}
+
+						txFile << "; ------------------" << std::endl;
+						txFile << "; Types of Resources" << std::endl;
+						for(int index = 0; index < techtree->getResourceTypeCount(); ++index) {
+							const ResourceType *rt = techtree->getResourceType(index);
+							txFile << "ResourceTypeName_" << rt->getName(false) << "=" << rt->getName(false) << std::endl;
+						}
+
+						txFile << "; -----------------" << std::endl;
+						txFile << "; Types of Factions" << std::endl;
+						txFile << "FactionName_" << GameConstants::OBSERVER_SLOTNAME << "=" << GameConstants::OBSERVER_SLOTNAME << std::endl;
+						txFile << "FactionName_" << GameConstants::RANDOMFACTION_SLOTNAME << "=" << GameConstants::RANDOMFACTION_SLOTNAME << std::endl;
+
+						for(int index = 0; index < techtree->getTypeCount(); ++index) {
+							const FactionType *ft = techtree->getType(index);
+							txFile << "FactionName_" << ft->getName(false) << "=" << ft->getName(false) << std::endl;
+
+							txFile << "; ----------------------------------" << std::endl;
+							txFile << "; Types of Upgrades for this Faction" << std::endl;
+							for(int upgradeIndex = 0; upgradeIndex < ft->getUpgradeTypeCount(); ++upgradeIndex) {
+								const UpgradeType *upt = ft->getUpgradeType(upgradeIndex);
+								txFile << "UpgradeTypeName_" << upt->getName(false) << "=" << upt->getName(false) << std::endl;
+							}
+
+							txFile << "; -------------------------------" << std::endl;
+							txFile << "; Types of Units for this Faction" << std::endl;
+							for(int unitIndex = 0; unitIndex < ft->getUnitTypeCount(); ++unitIndex) {
+								const UnitType *ut = ft->getUnitType(unitIndex);
+								txFile << "UnitTypeName_" << ut->getName(false) << "=" << ut->getName(false) << std::endl;
+
+								txFile << "; --------------------" << std::endl;
+								txFile << "; Levels for this Unit" << std::endl;
+								for(int levelIndex = 0; levelIndex < ut->getLevelCount(); ++levelIndex) {
+									const Level *level = ut->getLevel(levelIndex);
+									txFile << "LevelName_" << level->getName(false) << "=" << level->getName(false) << std::endl;
+								}
+
+								txFile << "; -------------------------------" << std::endl;
+								txFile << "; Types of Commands for this Unit" << std::endl;
+								for(int commandIndex = 0; commandIndex < ut->getCommandTypeCount(); ++commandIndex) {
+									const CommandType *ct = ut->getCommandType(commandIndex);
+									txFile << "CommandName_" << ct->getName(false) << "=" << ct->getName(false) << std::endl;
+								}
+							}
+						}
+					}
+					txFile.close();
+
+#if defined(WIN32) && !defined(__MINGW32__)
+				if(fp) {
+					fclose(fp);
+				}
+#endif
+
+				}
+				else {
+					printf("\n** Cannot product techtree translation file [%s] for techPath [%s] techName [%s] because the file already exists!\n",translationFile.c_str(),techPath.c_str(), techName.c_str());
+				}
+			}
+			catch(const megaglest_runtime_error &ex) {
+				printf("\n\n****ERROR**** detected while loading the techName: %s\nMESSAGE: %s\n",techName.c_str(),ex.what());
+			}
+
+		}
+		printf("----------------------------------------------------------------");
+	}
+}
+
+void runTechTranslationExtraction(int argc, char** argv) {
+	printf("====== Started Translation Extraction ======\n");
+
+	Config &config = Config::getInstance();
+
+    // Did the user pass a specific list of factions to validate?
+    std::vector<string> filteredFactionList;
+
+    vector<string> results;
+    findDirs(config.getPathListForType(ptTechs), results);
+    vector<string> techTreeFiles = results;
+    // Did the user pass a specific list of techtrees to validate?
+    std::vector<string> filteredTechTreeList;
+    if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) + string("=")) == true) {
+        int foundParamIndIndex = -1;
+        hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) + string("="),&foundParamIndIndex);
+        string filterList = argv[foundParamIndIndex];
+        vector<string> paramPartTokens;
+        Tokenize(filterList,paramPartTokens,"=");
+        if(paramPartTokens.size() >= 2) {
+            string techtreeList = paramPartTokens[1];
+            Tokenize(techtreeList,filteredTechTreeList,",");
+
+            if(filteredTechTreeList.empty() == false) {
+                printf("Filtering techtrees and only looking for the following:\n");
+                for(int idx = 0; idx < (int)filteredTechTreeList.size(); ++idx) {
+                    filteredTechTreeList[idx] = trim(filteredTechTreeList[idx]);
+                    printf("%s\n",filteredTechTreeList[idx].c_str());
+                }
+            }
+        }
+    }
+
+    {
+    printf("\n---------------- Loading factions inside world ----------------");
+    World world;
+
+    vector<string> techPaths = config.getPathListForType(ptTechs);
+    for(int idx = 0; idx < (int)techPaths.size(); idx++) {
+        string &techPath = techPaths[idx];
+		endPathWithSlash(techPath);
+
+        for(int idx2 = 0; idx2 < (int)techTreeFiles.size(); idx2++) {
+            string &techName = techTreeFiles[idx2];
+
+            if(	filteredTechTreeList.empty() == true ||
+                std::find(filteredTechTreeList.begin(),filteredTechTreeList.end(),techName) != filteredTechTreeList.end()) {
+
+            	runTechTranslationExtractionForPath(techPath, techName,
+            			filteredFactionList,world);
+            }
+        }
+    }
+
+    printf("\n====== Finished Translation ======\n");
+    }
+
+}
+
+
 void runTechValidationReport(int argc, char** argv) {
-	//disableBacktrace=true;
 	printf("====== Started Validation ======\n");
 
 	bool purgeDuplicateFiles = false;
 	bool showDuplicateFiles = true;
 	bool purgeUnusedFiles = false;
-	bool svnPurgeFiles = false;
+	bool gitPurgeFiles = false;
 
 	double purgedMegaBytes=0;
 	Config &config = Config::getInstance();
 
 	// Did the user pass a specific scenario to validate?
 	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) + string("=")) == true) {
+
         int foundParamIndIndex = -1;
         hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) + string("="),&foundParamIndIndex);
 
@@ -1832,7 +2656,6 @@ void runTechValidationReport(int argc, char** argv) {
         Tokenize(filterList,paramPartTokens,"=");
 
         if(paramPartTokens.size() >= 2) {
-        	vector<string> optionList;
             string validateScenarioName = paramPartTokens[1];
 
 			printf("Filtering scenario: %s\n",validateScenarioName.c_str());
@@ -1847,25 +2670,22 @@ void runTechValidationReport(int argc, char** argv) {
             {
             printf("\n---------------- Loading scenario inside world ----------------\n");
 
+            bool scenarioFound = false;
             World world;
-            double purgedMegaBytes=0;
             std::vector<string> filteredFactionList;
 
             vector<string> scenarioPaths = config.getPathListForType(ptScenarios);
-            for(int idx = 0; idx < scenarioPaths.size(); idx++) {
+            for(int idx = 0; idx < (int)scenarioPaths.size(); idx++) {
                 string &scenarioPath = scenarioPaths[idx];
         		endPathWithSlash(scenarioPath);
 
-                //printf("techPath [%s]\n",techPath.c_str());
-
         		vector<string> scenarioList;
         		findDirs(scenarioPath, scenarioList, false, false);
-                for(int idx2 = 0; idx2 < scenarioList.size(); idx2++) {
+                for(int idx2 = 0; idx2 < (int)scenarioList.size(); idx2++) {
                     string &scenarioName = scenarioList[idx2];
 
-                    //printf("Found Scenario [%s] looking for [%s]\n",scenarioName.c_str(),validateScenarioName.c_str());
-
                     if(scenarioName == validateScenarioName) {
+                    	scenarioFound = true;
 
                     	string file = scenarioPath + scenarioName + "/" + scenarioName + ".xml";
 
@@ -1876,28 +2696,44 @@ void runTechValidationReport(int argc, char** argv) {
 
                     	// Self Contained techtree?
                     	string scenarioTechtree = scenarioPath + scenarioName + "/" + techName + "/" + techName + ".xml";
+
+                    	printf("\nFound Scenario [%s] looking for techtree [%s]...\n",scenarioName.c_str(),scenarioTechtree.c_str());
+
                     	if(fileExists(scenarioTechtree) == true) {
                     		string techPath = scenarioPath + scenarioName + "/";
 
-                    		printf("Found Scenario [%s] with custom techtree [%s] validating...\n",scenarioName.c_str(),techName.c_str());
+                    		printf("\nFound Scenario [%s] with custom techtree [%s] validating...\n",scenarioName.c_str(),techName.c_str());
                     		runTechValidationForPath(techPath, techName, filteredFactionList,
                     					world, 	purgeUnusedFiles, showDuplicateFiles, false, false, purgedMegaBytes);
                     	}
-//
-//
-//                    	runTechValidationForPath(techPath, techName, filteredFactionList,
-//                    			world, 	purgeUnusedFiles,purgedMegaBytes);
+                    	else {
+                    	    vector<string> techPaths = config.getPathListForType(ptTechs);
+                    	    for(int idx = 0; idx < (int)techPaths.size(); idx++) {
+                    	        string &techPath = techPaths[idx];
+                    			endPathWithSlash(techPath);
+                    			scenarioTechtree = techPath + "/" + techName + "/" + techName + ".xml";
+                    			if(fileExists(scenarioTechtree) == true) {
+                    				printf("\nFound Scenario [%s] with techtree [%s] validating...\n",scenarioName.c_str(),techName.c_str());
+                    				runTechValidationForPath(techPath, techName, filteredFactionList,
+                    					world, 	purgeUnusedFiles, showDuplicateFiles, false, false, purgedMegaBytes);
+
+                    				break;
+                    			}
+                    	    }
+                    	}
                     }
                 }
             }
 
+            if(scenarioFound == false) {
+            	printf("\nWARNING, the scenario [%s] was NOT FOUND!\n",validateScenarioName.c_str());
+            }
             printf("\n====== Finished Validation ======\n");
             }
             return;
         }
         else {
             printf("\nInvalid missing scenario specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-            //printParameterHelp(argv[0],false);
             return;
         }
     }
@@ -1918,7 +2754,7 @@ void runTechValidationReport(int argc, char** argv) {
 
             if(filteredFactionList.empty() == false) {
                 printf("Filtering factions and only looking for the following:\n");
-                for(int idx = 0; idx < filteredFactionList.size(); ++idx) {
+                for(int idx = 0; idx < (int)filteredFactionList.size(); ++idx) {
                     filteredFactionList[idx] = trim(filteredFactionList[idx]);
                     printf("%s\n",filteredFactionList[idx].c_str());
                 }
@@ -1949,7 +2785,7 @@ void runTechValidationReport(int argc, char** argv) {
 
             if(filteredTechTreeList.empty() == false) {
                 printf("Filtering techtrees and only looking for the following:\n");
-                for(int idx = 0; idx < filteredTechTreeList.size(); ++idx) {
+                for(int idx = 0; idx < (int)filteredTechTreeList.size(); ++idx) {
                     filteredTechTreeList[idx] = trim(filteredTechTreeList[idx]);
                     printf("%s\n",filteredTechTreeList[idx].c_str());
                 }
@@ -1964,9 +2800,9 @@ void runTechValidationReport(int argc, char** argv) {
             		purgeDuplicateFiles = true;
             		printf("*NOTE All duplicate techtree files will be merged!\n");
             	}
-            	else if(paramPartTokens[2] == "svndelete") {
-            		svnPurgeFiles = true;
-            		printf("*NOTE All unused / duplicate techtree files will be removed from svn!\n");
+            	else if(paramPartTokens[2] == "gitdelete") {
+            		gitPurgeFiles = true;
+            		printf("*NOTE All unused / duplicate techtree files will be removed from git!\n");
             	}
             	else if(paramPartTokens[2] == "hideduplicates") {
             		showDuplicateFiles = false;
@@ -1982,9 +2818,9 @@ void runTechValidationReport(int argc, char** argv) {
             		purgeDuplicateFiles = true;
             		printf("*NOTE All duplicate techtree files will be merged!\n");
             	}
-            	else if(paramPartTokens[3] == "svndelete") {
-            		svnPurgeFiles = true;
-            		printf("*NOTE All unused / duplicate techtree files will be removed from svn!\n");
+            	else if(paramPartTokens[3] == "gitdelete") {
+            		gitPurgeFiles = true;
+            		printf("*NOTE All unused / duplicate techtree files will be removed from git!\n");
             	}
             	else if(paramPartTokens[3] == "hideduplicates") {
             		showDuplicateFiles = false;
@@ -2000,16 +2836,15 @@ void runTechValidationReport(int argc, char** argv) {
             		purgeDuplicateFiles = true;
             		printf("*NOTE All duplicate techtree files will be merged!\n");
             	}
-            	else if(paramPartTokens[4] == "svndelete") {
-            		svnPurgeFiles = true;
-            		printf("*NOTE All unused / duplicate techtree files will be removed from svn!\n");
+            	else if(paramPartTokens[4] == "gitdelete") {
+            		gitPurgeFiles = true;
+            		printf("*NOTE All unused / duplicate techtree files will be removed from git!\n");
             	}
             	else if(paramPartTokens[4] == "hideduplicates") {
             		showDuplicateFiles = false;
             		printf("*NOTE All duplicate techtree files will NOT be shown!\n");
             	}
             }
-
         }
     }
 
@@ -2018,13 +2853,11 @@ void runTechValidationReport(int argc, char** argv) {
     World world;
 
     vector<string> techPaths = config.getPathListForType(ptTechs);
-    for(int idx = 0; idx < techPaths.size(); idx++) {
+    for(int idx = 0; idx < (int)techPaths.size(); idx++) {
         string &techPath = techPaths[idx];
 		endPathWithSlash(techPath);
 
-        //printf("techPath [%s]\n",techPath.c_str());
-
-        for(int idx2 = 0; idx2 < techTreeFiles.size(); idx2++) {
+        for(int idx2 = 0; idx2 < (int)techTreeFiles.size(); idx2++) {
             string &techName = techTreeFiles[idx2];
 
             if(	filteredTechTreeList.empty() == true ||
@@ -2032,7 +2865,7 @@ void runTechValidationReport(int argc, char** argv) {
 
             	runTechValidationForPath(techPath, techName, filteredFactionList,
             			world, 	purgeUnusedFiles,purgeDuplicateFiles,
-            			showDuplicateFiles,svnPurgeFiles,purgedMegaBytes);
+            			showDuplicateFiles,gitPurgeFiles,purgedMegaBytes);
             }
         }
     }
@@ -2040,6 +2873,78 @@ void runTechValidationReport(int argc, char** argv) {
     printf("\n====== Finished Validation ======\n");
     }
 
+}
+
+void runTilesetValidationReport(int argc, char** argv) {
+	printf("====== Started Validation ======\n");
+
+	Config &config = Config::getInstance();
+
+	// Did the user pass a specific tileset to validate?
+	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) + string("=")) == true) {
+        int foundParamIndIndex = -1;
+        hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) + string("="),&foundParamIndIndex);
+
+        string filterList = argv[foundParamIndIndex];
+        vector<string> paramPartTokens;
+        Tokenize(filterList,paramPartTokens,"=");
+
+        if(paramPartTokens.size() >= 2) {
+            string validateTilesetName = paramPartTokens[1];
+
+			printf("Filtering tileset: %s\n",validateTilesetName.c_str());
+
+			bool purgeUnusedFiles = false;
+            if(paramPartTokens.size() >= 3) {
+            	if(paramPartTokens[2] == "purgeunused") {
+            		purgeUnusedFiles = true;
+            		printf("*NOTE All unused tileset files will be deleted!\n");
+            	}
+            }
+
+            {
+            printf("\n---------------- Loading tileset inside world ----------------\n");
+
+            World world;
+            double purgedMegaBytes=0;
+    		bool showDuplicateFiles = true;
+
+            bool tilesetFound = false;
+
+            vector<string> tilesetPaths = config.getPathListForType(ptTilesets);
+            for(int idx = 0; idx < (int)tilesetPaths.size(); idx++) {
+                string &tilesetPath = tilesetPaths[idx];
+        		endPathWithSlash(tilesetPath);
+
+        		vector<string> tilesetList;
+        		findDirs(tilesetPath, tilesetList, false, false);
+                for(int idx2 = 0; idx2 < (int)tilesetList.size(); idx2++) {
+                    string &tilesetName = tilesetList[idx2];
+                    if(tilesetName == validateTilesetName) {
+                    	tilesetFound = true;
+						runTilesetValidationForPath(tilesetPath, tilesetName,
+									world, 	purgeUnusedFiles, showDuplicateFiles,
+									false, false, purgedMegaBytes);
+                    }
+                }
+            }
+
+            if(tilesetFound == false) {
+            	printf("*ERROR The specified tileset [%s] was NOT FOUND!\n",validateTilesetName.c_str());
+            }
+            printf("\n====== Finished Validation ======\n");
+            }
+            return;
+        }
+        else {
+            printf("\nInvalid missing tileset specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+            return;
+        }
+    }
+	else {
+        printf("\nInvalid missing tileset specified on commandline\n\n");
+        return;
+	}
 }
 
 void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
@@ -2057,7 +2962,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
 
                 if(filteredPropertyList.empty() == false) {
                     printf("Filtering properties and only looking for the following:\n");
-                    for(int idx = 0; idx < filteredPropertyList.size(); ++idx) {
+                    for(int idx = 0; idx < (int)filteredPropertyList.size(); ++idx) {
                         filteredPropertyList[idx] = trim(filteredPropertyList[idx]);
                         printf("%s\n",filteredPropertyList[idx].c_str());
                     }
@@ -2072,7 +2977,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
 
         // Figure out the max # of tabs we need to format display nicely
         int tabCount = 1;
-        for(int i = 0; i < mergedMainSettings.size(); ++i) {
+        for(int i = 0; i < (int)mergedMainSettings.size(); ++i) {
             const pair<string,string> &nameValue = mergedMainSettings[i];
 
             bool displayProperty = false;
@@ -2086,7 +2991,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
             }
 
             if(displayProperty == true) {
-                int requredTabs = (nameValue.first.length() / 8)+1;
+                int requredTabs = ((int)nameValue.first.length() / 8)+1;
                 if(nameValue.first.length() % 8) {
                     requredTabs++;
                 }
@@ -2095,7 +3000,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
                 }
             }
         }
-        for(int i = 0; i < mergedKeySettings.size(); ++i) {
+        for(int i = 0; i < (int)mergedKeySettings.size(); ++i) {
             const pair<string,string> &nameValue = mergedKeySettings[i];
 
             bool displayProperty = false;
@@ -2109,7 +3014,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
             }
 
             if(displayProperty == true) {
-                int requredTabs = (nameValue.first.length() / 8)+1;
+                int requredTabs = ((int)nameValue.first.length() / 8)+1;
                 if(nameValue.first.length() % 8) {
                     requredTabs++;
                 }
@@ -2120,7 +3025,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
         }
 
         // Output the properties
-        for(int i = 0; i < mergedMainSettings.size(); ++i) {
+        for(int i = 0; i < (int)mergedMainSettings.size(); ++i) {
             const pair<string,string> &nameValue = mergedMainSettings[i];
 
             bool displayProperty = false;
@@ -2136,19 +3041,24 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
             if(displayProperty == true) {
                 printf("Property Name [%s]",nameValue.first.c_str());
 
-                int tabs = (nameValue.first.length() / 8) + 1;
+                int tabs = ((int)nameValue.first.length() / 8) + 1;
                 for(int j = 0; j < (tabCount - tabs); ++j) {
                     printf("\t");
                 }
 
-                printf("Value [%s]\n",nameValue.second.c_str());
+                string displayValue = nameValue.second;
+                if(nameValue.first == "TranslationGetURLPassword") {
+                	displayValue = "*****";
+                }
+
+                printf("Value [%s]\n",displayValue.c_str());
             }
         }
 
         printf("\n\nMain key binding settings report\n");
         printf("====================================\n");
 
-        for(int i = 0; i < mergedKeySettings.size(); ++i) {
+        for(int i = 0; i < (int)mergedKeySettings.size(); ++i) {
             const pair<string,string> &nameValue = mergedKeySettings[i];
 
             bool displayProperty = false;
@@ -2164,7 +3074,7 @@ void ShowINISettings(int argc, char **argv,Config &config,Config &configKeys) {
             if(displayProperty == true) {
                 printf("Property Name [%s]",nameValue.first.c_str());
 
-                int tabs = (nameValue.first.length() / 8) + 1;
+                int tabs = ((int)nameValue.first.length() / 8) + 1;
                 for(int j = 0; j < (tabCount - tabs); ++j) {
                     printf("\t");
                 }
@@ -2180,8 +3090,10 @@ void CheckForDuplicateData() {
 
     string duplicateWarnings="";
 
+    try {
+
+
     {
-  	vector<string> results;
 
   	string scenarioDir = "";
   	vector<string> pathList = config.getPathListForType(ptMaps,scenarioDir);
@@ -2190,13 +3102,13 @@ void CheckForDuplicateData() {
 	std::sort(maps.begin(),maps.end());
 
 	if(maps.empty() == true) {
-        throw runtime_error("No maps were found!");
+        throw megaglest_runtime_error("No maps were found!",true);
     }
-	else if(invalidMapList.size() > 0) {
+	else if(invalidMapList.empty() == false) {
 		string errorMsg = "Warning invalid maps were detected (will be ignored):\n";
-		for(int i = 0; i < invalidMapList.size(); ++i) {
-			char szBuf[4096]="";
-			sprintf(szBuf,"map [%s]\n",invalidMapList[i].c_str());
+		for(int i = 0; i < (int)invalidMapList.size(); ++i) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"map [%s]\n",invalidMapList[i].c_str());
 
 			errorMsg += szBuf;
 		}
@@ -2204,13 +3116,11 @@ void CheckForDuplicateData() {
 	}
 
 	vector<string> duplicateMapsToRename;
-	for(int i = 0; i < maps.size(); ++i) {
+	for(int i = 0; i < (int)maps.size(); ++i) {
 	    string map1 = maps[i];
-	    for(int j = 0; j < maps.size(); ++j) {
+	    for(int j = 0; j < (int)maps.size(); ++j) {
 	        if(i != j) {
                 string map2 = maps[j];
-
-                //printf("i = %d map1 [%s] j = %d map2 [%s]\n",i,map1.c_str(),j,map2.c_str());
 
                 if(map1 == map2) {
                 	if(std::find(duplicateMapsToRename.begin(),duplicateMapsToRename.end(),map1) == duplicateMapsToRename.end()) {
@@ -2222,7 +3132,7 @@ void CheckForDuplicateData() {
 	}
 	if(duplicateMapsToRename.empty() == false) {
 		string errorMsg = "Warning duplicate maps were detected and renamed:\n";
-		for(int i = 0; i < duplicateMapsToRename.size(); ++i) {
+		for(int i = 0; i < (int)duplicateMapsToRename.size(); ++i) {
 			string currentPath = pathList[1];
 			endPathWithSlash(currentPath);
 
@@ -2232,25 +3142,19 @@ void CheckForDuplicateData() {
 			newFile = newFile.substr( 0, newFile.length()-ext.length()-1);
 			newFile = newFile + "_custom." + ext;
 
-			char szBuf[4096]="";
+			char szBuf[8096]="";
 			int result = rename(oldFile.c_str(),newFile.c_str());
 			if(result != 0) {
 				char *errmsg = strerror(errno);
-				sprintf(szBuf,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
-				throw runtime_error(szBuf);
+				snprintf(szBuf,8096,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
+				throw megaglest_runtime_error(szBuf,true);
 			}
 			else {
-				sprintf(szBuf,"map [%s] in [%s]\nwas renamed to [%s]",duplicateMapsToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
+				snprintf(szBuf,8096,"map [%s] in [%s]\nwas renamed to [%s]",duplicateMapsToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
 			}
 			errorMsg += szBuf;
 		}
 		duplicateWarnings += errorMsg;
-
-//        Program *program = Program::getInstance();
-//        if(program) {
-//        	program->getState()->setForceMouseRender(true);
-//        }
-//        ExceptionHandler::DisplayMessage(errorMsg.c_str(), false);
 	}
     }
 
@@ -2261,13 +3165,13 @@ void CheckForDuplicateData() {
     findDirs(tilesetPaths, tileSets, false, true);
 
 	if (tileSets.empty()) {
-        throw runtime_error("No tilesets were found!");
+        throw megaglest_runtime_error("No tilesets were found!",true);
     }
 
 	vector<string> duplicateTilesetsToRename;
-	for(int i = 0; i < tileSets.size(); ++i) {
+	for(int i = 0; i < (int)tileSets.size(); ++i) {
 	    string tileSet1 = tileSets[i];
-	    for(int j = 0; j < tileSets.size(); ++j) {
+	    for(int j = 0; j < (int)tileSets.size(); ++j) {
 	        if(i != j) {
                 string tileSet2= tileSets[j];
                 if(tileSet1 == tileSet2) {
@@ -2281,7 +3185,7 @@ void CheckForDuplicateData() {
 	if(duplicateTilesetsToRename.empty() == false) {
 		string errorMsg = "Warning duplicate tilesets were detected and renamed:\n";
 
-		for(int i = 0; i < duplicateTilesetsToRename.size(); ++i) {
+		for(int i = 0; i < (int)duplicateTilesetsToRename.size(); ++i) {
 			string currentPath = tilesetPaths[1];
 			endPathWithSlash(currentPath);
 
@@ -2289,32 +3193,32 @@ void CheckForDuplicateData() {
 			string newFile = currentPath + duplicateTilesetsToRename[i];
 			newFile = newFile + "_custom";
 
-			char szBuf[4096]="";
+			char szBuf[8096]="";
 			int result = rename(oldFile.c_str(),newFile.c_str());
 			if(result != 0) {
 				char *errmsg = strerror(errno);
-				sprintf(szBuf,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
-				throw runtime_error(szBuf);
+				snprintf(szBuf,8096,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
+				throw megaglest_runtime_error(szBuf,true);
 			}
 			else {
-				sprintf(szBuf,"tileset [%s] in [%s]\nwas renamed to [%s]",duplicateTilesetsToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
+				snprintf(szBuf,8096,"tileset [%s] in [%s]\nwas renamed to [%s]",duplicateTilesetsToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
 
 				string tilesetName = extractFileFromDirectoryPath(oldFile);
 				oldFile = newFile + "/" + tilesetName + ".xml";
 				newFile = newFile + "/" + tilesetName + "_custom.xml";
 
-				//printf("\n\n\n###### RENAME [%s] to [%s]\n\n",oldFile.c_str(),newFile.c_str());
-				rename(oldFile.c_str(),newFile.c_str());
+				result = rename(oldFile.c_str(),newFile.c_str());
+
+				if(result != 0) {
+					char *errmsg = strerror(errno);
+					snprintf(szBuf,8096,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
+					throw megaglest_runtime_error(szBuf,true);
+				}
+
 			}
 			errorMsg += szBuf;
 		}
 		duplicateWarnings += errorMsg;
-
-//        Program *program = Program::getInstance();
-//        if(program) {
-//        	program->getState()->setForceMouseRender(true);
-//        }
-//        ExceptionHandler::DisplayMessage(errorMsg.c_str(), false);
 	}
     }
 
@@ -2323,13 +3227,13 @@ void CheckForDuplicateData() {
     vector<string> techTrees;
     findDirs(techPaths, techTrees, false, true);
 	if(techTrees.empty()) {
-        throw runtime_error("No tech-trees were found!");
+        throw megaglest_runtime_error("No tech-trees were found (dup)!",true);
 	}
 
 	vector<string> duplicateTechtreesToRename;
-	for(int i = 0; i < techTrees.size(); ++i) {
+	for(int i = 0; i < (int)techTrees.size(); ++i) {
 	    string techtree1 = techTrees[i];
-	    for(int j = 0; j < techTrees.size(); ++j) {
+	    for(int j = 0; j < (int)techTrees.size(); ++j) {
 	        if(i != j) {
                 string techtree2 = techTrees[j];
                 if(techtree1 == techtree2) {
@@ -2343,7 +3247,7 @@ void CheckForDuplicateData() {
 	if(duplicateTechtreesToRename.empty() == false) {
 		string errorMsg = "Warning duplicate techtrees were detected and renamed:\n";
 
-		for(int i = 0; i < duplicateTechtreesToRename.size(); ++i) {
+		for(int i = 0; i < (int)duplicateTechtreesToRename.size(); ++i) {
 			string currentPath = techPaths[1];
 			endPathWithSlash(currentPath);
 
@@ -2351,113 +3255,686 @@ void CheckForDuplicateData() {
 			string newFile = currentPath + duplicateTechtreesToRename[i];
 			newFile = newFile + "_custom";
 
-			char szBuf[4096]="";
+			char szBuf[8096]="";
 			int result = rename(oldFile.c_str(),newFile.c_str());
 			if(result != 0) {
 				char *errmsg = strerror(errno);
-				sprintf(szBuf,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
-				throw runtime_error(szBuf);
+				snprintf(szBuf,8096,"Error [%s]\nCould not rename [%s] to [%s]!",errmsg,oldFile.c_str(),newFile.c_str());
+				throw megaglest_runtime_error(szBuf,true);
 			}
 			else {
-				sprintf(szBuf,"techtree [%s] in [%s]\nwas renamed to [%s]",duplicateTechtreesToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
+				snprintf(szBuf,8096,"techtree [%s] in [%s]\nwas renamed to [%s]",duplicateTechtreesToRename[i].c_str(),oldFile.c_str(),newFile.c_str());
 
 				string tilesetName = extractFileFromDirectoryPath(oldFile);
 				oldFile = newFile + "/" + tilesetName + ".xml";
 				newFile = newFile + "/" + tilesetName + "_custom.xml";
 
-				//printf("\n\n\n###### RENAME [%s] to [%s]\n\n",oldFile.c_str(),newFile.c_str());
-				rename(oldFile.c_str(),newFile.c_str());
+				int rename_result = rename(oldFile.c_str(),newFile.c_str());
+				if(rename_result != 0) {
+					printf("Error renaming [%s] to [%s]\n",oldFile.c_str(),newFile.c_str());
+				}
 			}
 			errorMsg += szBuf;
 		}
 		duplicateWarnings += errorMsg;
-
-//        Program *program = Program::getInstance();
-//        if(program) {
-//        	program->getState()->setForceMouseRender(true);
-//        }
-//        ExceptionHandler::DisplayMessage(errorMsg.c_str(), false);
 	}
     }
 
+    }
+    catch(const megaglest_runtime_error &ex) {
+		if(mainProgram) {
+			mainProgram->getState()->setForceMouseRender(true);
+		}
+		ExceptionHandler::DisplayMessage(ex.what(), false);
+    }
+
     if(duplicateWarnings != "") {
-		Program *program = Program::getInstance();
-		if(program) {
-			program->getState()->setForceMouseRender(true);
+		if(mainProgram) {
+			mainProgram->getState()->setForceMouseRender(true);
 		}
 		ExceptionHandler::DisplayMessage(duplicateWarnings.c_str(), false);
     }
 }
 
-int glestMain(int argc, char** argv) {
-#ifdef SL_LEAK_DUMP
-	AllocRegistry memoryLeaks = AllocRegistry::getInstance();
-#endif
+int handleCreateDataArchivesCommand(int argc, char** argv) {
+	int return_value = 1;
+	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]),&foundParamIndIndex);
+		}
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string compress_item = paramPartTokens[1];
+			bool includeMainData = false;
+			if(paramPartTokens.size() >= 3 && paramPartTokens[2] == "include_main") {
+				includeMainData = true;
+			}
 
-	application_binary= executable_path(argv[0],true);
-	mg_app_name = GameConstants::application_name;
-	mailStringSupport = mailString;
-    SystemFlags::ENABLE_THREADED_LOGGING = false;
-    disableBacktrace = false;
-	bool foundInvalidArgs = false;
-	preCacheThread=NULL;
+			Config &config = Config::getInstance();
+			string fileArchiveExtension = config.getString("FileArchiveExtension","");
+			string fileArchiveCompressCommand = config.getString("FileArchiveCompressCommand","");
+			string fileArchiveCompressCommandParameters = config.getString("FileArchiveCompressCommandParameters","");
+			int32 fileArchiveCompressCommandSuccessResult = config.getInt("FileArchiveCompressCommandSuccessResult","0");
 
-	Properties::setApplicationPath(executable_path(argv[0]));
-	Properties::setGameVersion(glestVersionString);
+		    string userData = config.getString("UserData_Root","");
+		    if(userData != "") {
+		    	endPathWithSlash(userData);
+		    }
 
-    ServerSocket::setMaxPlayerCount(GameConstants::maxPlayers);
-    SystemFlags::VERBOSE_MODE_ENABLED  = false;
-    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERBOSE_MODE]) == true) {
-        SystemFlags::VERBOSE_MODE_ENABLED  = true;
-    }
+			int typesSelected = 0;
+			if(compress_item == "techtrees" || compress_item == "all") {
+				typesSelected++;
 
-	//vector<string> results;
-	//findAll("/home/softcoder/Code/megaglest/trunk/mk/linux//äöüß/maps/*.gbm", results, false, true);
-	//findAll("C:\\Documents and Settings\\SoftCoder\\Application Data\\人間五\\maps\\*", results, false, true);
-	//for(unsigned int i = 0; i < results.size(); ++i) {
-	//	string file = results[i];
-	//	printf("FILE: [%s]\n",file.c_str());
-	//}
-	//return -1;
+				vector<string> pathList = config.getPathListForType(ptTechs,"");
+				vector<string> results;
+				findDirs(pathList, results);
 
-    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_BACKTRACE]) == true) {
-        disableBacktrace = true;
-    }
+				printf("Techtrees found:\n===========================================\n");
+				for(unsigned int i = 0; i < results.size(); ++i) {
+					string name = results[i];
 
-//    UErrorCode status = U_ZERO_ERROR;
-//	u_init(&status);
-//	if (U_SUCCESS(status)) {
-//		printf("everything is OK\n");
-//	}
-//	else {
-//		printf("error %s opening resource\n", u_errorName(status));
-//	}
+					for(unsigned int j = 0; j < pathList.size(); ++j) {
+						string techPath = pathList[j];
+						if(techPath != "") {
+							endPathWithSlash(techPath);
+						}
 
-    // TEST:
-    //string testfile = "/home/softcoder/Code/megaglest/trunk/mk/linux/techs/megapack/factions/egypt/units/desert_camp/../../upgrades/spear_weapons/images/piercing.bmp";
-    //updatePathClimbingParts(testfile);
-    //return -1;
-    //CHANGED relative path from [/home/softcoder/Code/megaglest/trunk/mk/linux/techs/megapack/factions/egypt/units/desert_camp/../../upgrades/spear_weapons/images/piercing.bmp] to [/home/softcoder/Code/megaglest/trunk/mk/linux/techs/megapack/factions/egypt/units/desert_camp/upgrades/spear_weapons/images/piercing.bmp]
+						vector<string> results2;
+						findDirs(techPath + name + "/factions", results2, false,true);
+						if(results2.empty() == false) {
+							string techtreePath = techPath + name;
+							if(includeMainData == false) {
+								if(techtreePath.find(userData) == techPath.npos) {
+									printf("Skipping techtree: [%s]\n",techtreePath.c_str());
+									continue;
+								}
+							}
 
+							string downloadArchive = techtreePath + fileArchiveExtension;
 
-#if defined(CUSTOM_DATA_INSTALL_PATH)
-    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nCUSTOM_DATA_INSTALL_PATH = [%s]\n\n",formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH)).c_str());
-#endif
+							if(fileExists(downloadArchive) == true) {
+								bool removed = removeFile(downloadArchive);
+								if(removed == false) {
+									printf("Error could not remove old file: [%s]\n",downloadArchive.c_str());
+								}
+							}
+							string compressCmd = getFullFileArchiveCompressCommand(
+									fileArchiveCompressCommand,
+									fileArchiveCompressCommandParameters,
+									downloadArchive,techtreePath );
 
-	const int knownArgCount = sizeof(GAME_ARGS) / sizeof(GAME_ARGS[0]);
-	for(int idx = 1; idx < argc; ++idx) {
-		if( hasCommandArgument(knownArgCount, (char **)&GAME_ARGS[0], argv[idx], NULL, 0, true) == false) {
-			foundInvalidArgs = true;
-			printf("\nInvalid argument: %s",argv[idx]);
+							printf("Running compression command: %s\n",compressCmd.c_str());
+
+							if(executeShellCommand(compressCmd,fileArchiveCompressCommandSuccessResult) == false) {
+								printf("Error could not create new file: [%s]\n",downloadArchive.c_str());
+							}
+
+							if(fileExists(downloadArchive) == true) {
+								off_t fileSize = getFileSize(downloadArchive);
+								// convert to MB
+								double megaBytes = ((double)fileSize / 1048576.0);
+								printf("%s [download archive %.2fMB]\n",name.c_str(),megaBytes);
+							}
+						}
+					}
+				}
+				printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",results.size());
+			}
+			if(compress_item == "tilesets" || compress_item == "all") {
+				typesSelected++;
+
+				vector<string> pathList = config.getPathListForType(ptTilesets,"");
+				vector<string> results;
+				findDirs(pathList, results);
+
+				printf("Tilesets found:\n===========================================\n");
+				for(unsigned int i = 0; i < results.size(); ++i) {
+					string name = results[i];
+
+					for(unsigned int j = 0; j < pathList.size(); ++j) {
+						string tilesetPath = pathList[j];
+						if(tilesetPath != "") {
+							endPathWithSlash(tilesetPath);
+						}
+
+						if(fileExists(tilesetPath + name + "/" + name + ".xml") == true) {
+							string tilesetDataPath = tilesetPath + name;
+							if(includeMainData == false) {
+								if(tilesetPath.find(userData) == tilesetPath.npos) {
+									printf("Skipping tileset data: [%s]\n",tilesetDataPath.c_str());
+									continue;
+								}
+							}
+
+							string downloadArchive = tilesetDataPath + fileArchiveExtension;
+
+							if(fileExists(downloadArchive) == true) {
+								bool removed = removeFile(downloadArchive);
+								if(removed == false) {
+									printf("Error could not remove old file: [%s]\n",downloadArchive.c_str());
+								}
+							}
+							string compressCmd = getFullFileArchiveCompressCommand(
+									fileArchiveCompressCommand,
+									fileArchiveCompressCommandParameters,
+									downloadArchive,tilesetDataPath );
+
+							printf("Running compression command: %s\n",compressCmd.c_str());
+
+							if(executeShellCommand(compressCmd,fileArchiveCompressCommandSuccessResult) == false) {
+								printf("Error could not create new file: [%s]\n",downloadArchive.c_str());
+							}
+
+							if(fileExists(downloadArchive) == true) {
+								off_t fileSize = getFileSize(downloadArchive);
+								// convert to MB
+								double megaBytes = ((double)fileSize / 1048576.0);
+								printf("%s [download archive %.2fMB]\n",name.c_str(),megaBytes);
+							}
+
+							break;
+						}
+					}
+				}
+				printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",results.size());
+
+			}
+			if(typesSelected == 0) {
+				printf("Compress item [%s] is not valid!\n",compress_item.c_str());
+				return_value = 1;
+			}
+
+			return_value = 0;
+		}
+		else {
+			printf("\nInvalid missing map specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+
+			return_value = 1;
 		}
 	}
 
-	if( hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_HELP]) == true ||
-		foundInvalidArgs == true) {
+	return return_value;
+}
 
-		printParameterHelp(argv[0],foundInvalidArgs);
-		return -1;
+int handleShowCRCValuesCommand(int argc, char** argv) {
+	int return_value = 1;
+	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]),&foundParamIndIndex);
+		}
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemName = paramPartTokens[1];
+
+			string file = Config::getMapPath(itemName,"",false);
+			if(file != "") {
+				Checksum checksum;
+				checksum.addFile(file);
+				uint32 crcValue = checksum.getSum();
+
+				printf("CRC value for map [%s] file [%s] is [%u]\n",itemName.c_str(),file.c_str(),crcValue);
+
+				return_value = 0;
+			}
+			else {
+				printf("Map [%s] was NOT FOUND\n",itemName.c_str());
+				return_value = 1;
+			}
+		}
+		else {
+			printf("\nInvalid missing map specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+
+			return_value = 1;
+		}
 	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]),&foundParamIndIndex);
+		}
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemName = paramPartTokens[1];
+
+			Config &config = Config::getInstance();
+			uint32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTilesets,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
+			if(crcValue != 0) {
+				printf("CRC value for tileset [%s] is [%u]\n",itemName.c_str(),crcValue);
+
+				return_value = 0;
+			}
+			else {
+				printf("Tileset [%s] was NOT FOUND\n",itemName.c_str());
+				return_value = 1;
+			}
+		}
+		else {
+			printf("\nInvalid missing tileset specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+
+			return_value = 1;
+		}
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]),&foundParamIndIndex);
+		}
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemName = paramPartTokens[1];
+
+			Config &config = Config::getInstance();
+			uint32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTechs,""), "/" + itemName + "/*", ".xml", NULL, true);
+			if(crcValue != 0) {
+				printf("CRC value for techtree [%s] is [%u]\n",itemName.c_str(),crcValue);
+
+				return_value = 0;
+			}
+			else {
+				printf("Techtree [%s] was NOT FOUND\n",itemName.c_str());
+
+				return_value = 1;
+			}
+		}
+		else {
+			printf("\nInvalid missing techtree specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+
+			return_value = 1;
+		}
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]),&foundParamIndIndex);
+		}
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemName = paramPartTokens[1];
+
+			Config &config = Config::getInstance();
+			uint32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptScenarios,""), "/" + itemName + "/*", ".xml", NULL, true);
+			if(crcValue != 0) {
+				printf("CRC value for scenario [%s] is [%u]\n",itemName.c_str(),crcValue);
+
+				return_value = 0;
+			}
+			else {
+				printf("Scenario [%s] was NOT FOUND\n",itemName.c_str());
+				return_value = 1;
+			}
+		}
+		else {
+			printf("\nInvalid missing scenario specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+
+			return_value = 0;
+		}
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]),&foundParamIndIndex);
+		}
+
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 3 && paramPartTokens[1].length() > 0) {
+			string itemName = paramPartTokens[1];
+			string itemNameFilter = paramPartTokens[2];
+			uint32 crcValue = getFolderTreeContentsCheckSumRecursively(itemName, itemNameFilter, NULL, true);
+
+			printf("CRC value for path [%s] filter [%s] is [%u]\n",itemName.c_str(),itemNameFilter.c_str(),crcValue);
+
+			return_value = 0;
+		}
+		else {
+			if(paramPartTokens.size() < 2) {
+				printf("\nInvalid missing path and filter specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+			}
+			if(paramPartTokens.size() < 3) {
+				printf("\nInvalid missing filter specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 3 ? paramPartTokens[2].c_str() : NULL));
+			}
+
+			return_value = 1;
+		}
+	}
+
+	return return_value;
+}
+
+int handleListDataCommand(int argc, char** argv) {
+	int return_value = 1;
+	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_MAPS]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_MAPS]),&foundParamIndIndex);
+		}
+
+		Config &config = Config::getInstance();
+	  	vector<string> pathList = config.getPathListForType(ptMaps,"");
+	  	vector<string> maps = MapPreview::findAllValidMaps(pathList,"",false,true);
+		std::sort(maps.begin(),maps.end());
+
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemNameFilter = paramPartTokens[1];
+			printf("Using filter for maps list [%s]\n",itemNameFilter.c_str());
+
+			vector<string> filteredMaps;
+			for(unsigned int i = 0; i < maps.size(); ++i) {
+				string mapName = maps[i];
+				if(itemNameFilter.find("*") != itemNameFilter.npos) {
+					if(StartsWith(mapName, itemNameFilter.substr(0,itemNameFilter.find("*"))) == true) {
+						filteredMaps.push_back(mapName);
+					}
+				}
+				else if(mapName == itemNameFilter) {
+					filteredMaps.push_back(mapName);
+				}
+			}
+			maps = filteredMaps;
+		}
+
+		printf("Maps found:\n===========================================\n");
+		for(unsigned int i = 0; i < maps.size(); ++i) {
+			string mapName = maps[i];
+			printf("%s\n",mapName.c_str());
+		}
+		printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",maps.size());
+
+		return_value = 0;
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TECHTRESS]),&foundParamIndIndex);
+		}
+
+		Config &config = Config::getInstance();
+	  	vector<string> pathList = config.getPathListForType(ptTechs,"");
+	  	vector<string> results;
+	  	findDirs(pathList, results);
+
+	  	bool showfactions=false;
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string cmd = paramPartTokens[1];
+			if(cmd == "showfactions") {
+				showfactions = true;
+			}
+			else {
+				throw megaglest_runtime_error("unknown command for techtreelist [" + cmd + "]");
+			}
+			printf("Using special command for techtree list [%s]\n",cmd.c_str());
+		}
+
+		printf("Techtrees found:\n===========================================\n");
+		for(unsigned int i = 0; i < results.size(); ++i) {
+			string name = results[i];
+
+			for(unsigned int j = 0; j < pathList.size(); ++j) {
+				string techPath = pathList[j];
+				if(techPath != "") {
+					endPathWithSlash(techPath);
+				}
+				vector<string> results2;
+				findDirs(techPath + name + "/factions", results2, false,true);
+				if(results2.empty() == false) {
+					string downloadArchive = techPath + name + ".7z";
+
+					if(fileExists(downloadArchive) == true) {
+						off_t fileSize = getFileSize(downloadArchive);
+						// convert to MB
+						double megaBytes = ((double)fileSize / 1048576.0);
+						printf("%s [download archive %.2fMB]\n",name.c_str(),megaBytes);
+					}
+					else {
+						printf("%s\n",name.c_str());
+					}
+
+					if(showfactions == true) {
+						printf("--> Factions:\n");
+						for(unsigned int k = 0; k < results2.size(); ++k) {
+							string name2 = results2[k];
+							printf("--> %s\n",name2.c_str());
+						}
+						printf("--> Total Factions: " MG_SIZE_T_SPECIFIER "\n",results2.size());
+						break;
+					}
+				}
+			}
+		}
+		printf("===========================================\nTotal Techtrees: " MG_SIZE_T_SPECIFIER "\n",results.size());
+
+		return_value = 0;
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_SCENARIOS]),&foundParamIndIndex);
+		}
+
+		Config &config = Config::getInstance();
+	  	vector<string> pathList = config.getPathListForType(ptScenarios,"");
+	  	vector<string> results;
+	  	findDirs(pathList, results);
+
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemNameFilter = paramPartTokens[1];
+			printf("Using filter for scenarios list [%s]\n",itemNameFilter.c_str());
+
+			vector<string> filtered;
+			for(unsigned int i = 0; i < results.size(); ++i) {
+				string name = results[i];
+				if(itemNameFilter.find("*") != itemNameFilter.npos) {
+					if(StartsWith(name, itemNameFilter.substr(0,itemNameFilter.find("*"))) == true) {
+						filtered.push_back(name);
+					}
+				}
+				else if(name == itemNameFilter) {
+					filtered.push_back(name);
+				}
+			}
+			results = filtered;
+		}
+
+		printf("Scenarios found:\n===========================================\n");
+		for(unsigned int i = 0; i < results.size(); ++i) {
+			string name = results[i];
+			printf("%s\n",name.c_str());
+		}
+		printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",results.size());
+
+		return_value = 0;
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TILESETS]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TILESETS]),&foundParamIndIndex);
+		}
+
+		Config &config = Config::getInstance();
+	  	vector<string> pathList = config.getPathListForType(ptTilesets,"");
+	  	vector<string> results;
+	  	findDirs(pathList, results);
+
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemNameFilter = paramPartTokens[1];
+			printf("Using filter for tilesets list [%s]\n",itemNameFilter.c_str());
+
+			vector<string> filtered;
+			for(unsigned int i = 0; i < results.size(); ++i) {
+				string name = results[i];
+				if(itemNameFilter.find("*") != itemNameFilter.npos) {
+					if(StartsWith(name, itemNameFilter.substr(0,itemNameFilter.find("*"))) == true) {
+						filtered.push_back(name);
+					}
+				}
+				else if(name == itemNameFilter) {
+					filtered.push_back(name);
+				}
+			}
+			results = filtered;
+		}
+
+		printf("Tilesets found:\n===========================================\n");
+		for(unsigned int i = 0; i < results.size(); ++i) {
+			string name = results[i];
+
+			for(unsigned int j = 0; j < pathList.size(); ++j) {
+				string tilesetPath = pathList[j];
+				if(tilesetPath != "") {
+					endPathWithSlash(tilesetPath);
+				}
+				if(fileExists(tilesetPath + name + "/" + name + ".xml") == true) {
+					string downloadArchive = tilesetPath + name + ".7z";
+					if(fileExists(downloadArchive) == true) {
+						off_t fileSize = getFileSize(downloadArchive);
+						// convert to MB
+						double megaBytes = ((double)fileSize / 1048576.0);
+						printf("%s [download archive %.2fMB]\n",name.c_str(),megaBytes);
+					}
+					else {
+						printf("%s\n",name.c_str());
+					}
+
+					break;
+				}
+			}
+		}
+		printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",results.size());
+
+		return_value = 0;
+	}
+
+	else if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) == true) {
+		int foundParamIndIndex = -1;
+		hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) + string("="),&foundParamIndIndex);
+		if(foundParamIndIndex < 0) {
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LIST_TUTORIALS]),&foundParamIndIndex);
+		}
+
+		Config &config = Config::getInstance();
+	  	vector<string> pathList = config.getPathListForType(ptTutorials,"");
+	  	vector<string> results;
+	  	findDirs(pathList, results);
+
+		string paramValue = argv[foundParamIndIndex];
+		vector<string> paramPartTokens;
+		Tokenize(paramValue,paramPartTokens,"=");
+		if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+			string itemNameFilter = paramPartTokens[1];
+			printf("Using filter for tutorials list [%s]\n",itemNameFilter.c_str());
+
+			vector<string> filtered;
+			for(unsigned int i = 0; i < results.size(); ++i) {
+				string name = results[i];
+				if(itemNameFilter.find("*") != itemNameFilter.npos) {
+					if(StartsWith(name, itemNameFilter.substr(0,itemNameFilter.find("*"))) == true) {
+						filtered.push_back(name);
+					}
+				}
+				else if(name == itemNameFilter) {
+					filtered.push_back(name);
+				}
+			}
+			results = filtered;
+		}
+
+		printf("Tutorials found:\n===========================================\n");
+		for(unsigned int i = 0; i < results.size(); ++i) {
+			string name = results[i];
+
+			for(unsigned int j = 0; j < pathList.size(); ++j) {
+				string tutorialsPath = pathList[j];
+				if(tutorialsPath != "") {
+					endPathWithSlash(tutorialsPath);
+				}
+				if(fileExists(tutorialsPath + name + "/" + name + ".xml") == true) {
+					string downloadArchive = tutorialsPath + name + ".7z";
+					if(fileExists(downloadArchive) == true) {
+						off_t fileSize = getFileSize(downloadArchive);
+						// convert to MB
+						double megaBytes = ((double)fileSize / 1048576.0);
+						printf("%s [download archive %.2fMB]\n",name.c_str(),megaBytes);
+					}
+					else {
+						printf("%s\n",name.c_str());
+					}
+
+					break;
+				}
+			}
+		}
+		printf("===========================================\nTotal: " MG_SIZE_T_SPECIFIER "\n",results.size());
+
+		return_value = 0;
+	}
+
+	return return_value;
+}
+
+int glestMain(int argc, char** argv) {
+#ifdef SL_LEAK_DUMP
+	//AllocInfo::set_application_binary(executable_path(argv[0],true));
+	string &app = AllocInfo::get_application_binary();
+	app = executable_path(argv[0],true);
+	//want_full_leak_stacktrace = true;
+	//want_full_leak_stacktrace_line_numbers = true;
+
+#endif
+
+//	printf("START ALLOC char 200\n");
+	//char *ptr = new char[200];
+//	printf("END ALLOC char 200\n");
+//	return -1;
+    SystemFlags::VERBOSE_MODE_ENABLED  = false;
+    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERBOSE_MODE]) == true) {
+        SystemFlags::VERBOSE_MODE_ENABLED  = true;
+        Thread::setEnableVerboseMode(true);
+        //LuaScript::setDebugModeEnabled(true);
+    }
+    // DEbug testing threads
+    //Thread::setEnableVerboseMode(true);
 
     if( hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true) {
     	//isMasterServerModeEnabled = true;
@@ -2488,14 +3965,51 @@ int glestMain(int argc, char** argv) {
 					printf("Disabled reading from console [%s]\n",headless_command.c_str());
 					disableheadless_console = true;
 				}
+				else if(headless_command == "lan") {
+					printf("Forcing local LAN mode [%s]\n",headless_command.c_str());
+					GlobalStaticFlags::setFlag(gsft_lan_mode);
+				}
 			}
 		}
     }
 
-	//off_t fileSize = getFileSize(argv[0]);
-	//double fSize = ((double)fileSize / 1048576.0);
-	//printf("[%ld] [%.2f]\n",fileSize,fSize);
-	//return -1;
+	PlatformExceptionHandler::application_binary= executable_path(argv[0],true);
+	mg_app_name = GameConstants::application_name;
+	mailStringSupport = mailString;
+    SystemFlags::ENABLE_THREADED_LOGGING = false;
+    disableBacktrace = false;
+	bool foundInvalidArgs = false;
+	preCacheThread=NULL;
+
+	Properties::setApplicationPath(executable_path(argv[0]));
+	Properties::setApplicationDataPath(executable_path(argv[0]));
+	Properties::setGameVersion(glestVersionString);
+
+    ServerSocket::setMaxPlayerCount(GameConstants::maxPlayers);
+
+    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_BACKTRACE]) == true) {
+        disableBacktrace = true;
+    }
+    PlatformExceptionHandler::disableBacktrace= disableBacktrace;
+
+#if defined(CUSTOM_DATA_INSTALL_PATH)
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\n\nCUSTOM_DATA_INSTALL_PATH = [%s]\n\n",formatPath(TOSTRING(CUSTOM_DATA_INSTALL_PATH)).c_str());
+#endif
+
+	const int knownArgCount = sizeof(GAME_ARGS) / sizeof(GAME_ARGS[0]);
+	for(int idx = 1; idx < argc; ++idx) {
+		if( hasCommandArgument(knownArgCount, (char **)&GAME_ARGS[0], argv[idx], NULL, 0, true) == false) {
+			foundInvalidArgs = true;
+			printf("\nInvalid argument: %s",argv[idx]);
+		}
+	}
+
+	if( hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_HELP]) == true ||
+		foundInvalidArgs == true) {
+
+		printParameterHelp(argv[0],foundInvalidArgs);
+		return 2;
+	}
 
 #ifdef WIN32
 	SocketManager winSockManager;
@@ -2507,25 +4021,155 @@ int glestMain(int argc, char** argv) {
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) 			== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_INFO]) 			== true ||
         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) 			== true ||
+        hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO]) 			== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) 				== true ||
         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS])    == true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]) 	== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS]) 	== true ||
-		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) 	== true) {
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) == true) {
 		haveSpecialOutputCommandLineOption = true;
 	}
 
 	if( haveSpecialOutputCommandLineOption == false ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) == true) {
 		printf("%s %s",extractFileFromDirectoryPath(argv[0]).c_str(),getNetworkPlatformFreeVersionString().c_str());
-		printf("\nCompiled using: %s on: %s",getCompilerNameString().c_str(),getCompileDateTime().c_str());
-		printf("\nSVN: [%s]",getSVNRevisionString().c_str());
+		printf("\nCompiled using: %s on: %s platform: %s endianness: %s",getCompilerNameString().c_str(),getCompileDateTime().c_str(),getPlatformNameString().c_str(),(::Shared::PlatformByteOrder::isBigEndian() == true ? "big" : "little"));
+
+//		printf("\n\nData type sizes int8 = " MG_SIZE_T_SPECIFIER " int16 = " MG_SIZE_T_SPECIFIER " int32 = " MG_SIZE_T_SPECIFIER " int64 = " MG_SIZE_T_SPECIFIER "\n\n",sizeof(int8),sizeof(int16),sizeof(int32),sizeof(int64));
+//
+//		Config::getInstance().setBool("DebugNetworkPackets",true,true);
+//		NetworkMessageIntro data(424336, "mg_version_x","player_x", 3, nmgstOk,444444, 555555, "english");
+//		unsigned char *buf = data.packMessage();
+//		printf("\nSend packet size = %u\n%s\n",data.getPackedSize(),data.toString().c_str());
+//		data.dump_packet("Send data", buf, data.getPackedSize());
+//		//delete [] buf;
+//
+//		NetworkMessageIntro data2;
+//		data2.unpackMessage(buf);
+//		printf("\nReceive packet size = %u\n%s\n",data2.getPackedSize(),data2.toString().c_str());
+//		data2.dump_packet("nReceive data", buf, data2.getPackedSize());
+//		delete [] buf;
+
+//		SwitchSetupRequest data("factionname", 3,-1,2,"softcoder",10, 11,"eng");
+//
+//		unsigned char *buf = data.packMessage();
+//		printf("\nSend packet size = %u\n%s\nTeam = %d faction [%s] currentFactionIndex = %d toFactionIndex = %d [%s] [%s] %d %d\n",data.getPackedSize(),buf,data.getToTeam(),data.getSelectedFactionName().c_str(),data.getCurrentFactionIndex(),data.getToFactionIndex(),data.getNetworkPlayerLanguage().c_str(),data.getNetworkPlayerName().c_str(),data.getNetworkPlayerStatus(),data.getSwitchFlags());
+//		//delete [] buf;
+//
+//		data.unpackMessage(buf);
+//		printf("\nGot packet size = %u\n%s\nTeam = %d faction [%s] currentFactionIndex = %d toFactionIndex = %d [%s] [%s] %d %d\n",data.getPackedSize(),buf,data.getToTeam(),data.getSelectedFactionName().c_str(),data.getCurrentFactionIndex(),data.getToFactionIndex(),data.getNetworkPlayerLanguage().c_str(),data.getNetworkPlayerName().c_str(),data.getNetworkPlayerStatus(),data.getSwitchFlags());
+//		delete [] buf;
+
+//		int8 a = 1;
+//		uint8 b = 2;
+//		int16 c = 3;
+//		uint16 d = 4;
+//		int32 e = 5;
+//		uint32 f = 6;
+//
+//		printf("\nPack test #1: [%d][%u][%d][%u][%d][%u]\n,",a,b,c,d,e,f);
+//
+//		unsigned char *buf = new unsigned char[100];
+//		unsigned int packedsize = pack(buf, "cChHlL",
+//				a,
+//				b,
+//				c,
+//				d,
+//				e,
+//				f);
+//
+//		printf("Pack test #2: [%u][%s]\n,",packedsize,buf);
+//
+//		int8 a1 = 0;
+//		uint8 b1 = 0;
+//		int16 c1 = 0;
+//		uint16 d1 = 0;
+//		int32 e1 = 0;
+//		uint32 f1 = 0;
+//
+//		unpack(buf, "cChHlL",
+//				&a1,
+//				&b1,
+//				&c1,
+//				&d1,
+//				&e1,
+//				&f1);
+//
+//		printf("UnPack test #3: [%d][%u][%d][%u][%d][%u]\n,",a1,b1,c1,d1,e1,f1);
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED == true) {
+			int8 testVar = 111;
+			printf("\nEndian value = %d",testVar);
+			testVar = ::Shared::PlatformByteOrder::toCommonEndian(testVar);
+			printf("\nEndian to common value = %d",testVar);
+			testVar = ::Shared::PlatformByteOrder::fromCommonEndian(testVar);
+			printf("\nEndian from common value = %d",testVar);
+
+			printf("\nint8 sizeof = " MG_SIZE_T_SPECIFIER "",sizeof(int8));
+			printf("\nSwitchSetupRequest sizeof = " MG_SIZE_T_SPECIFIER "",SwitchSetupRequest().getDataSize());
+		}
+
+		printf("\nGIT: [%s]",getGITRevisionString().c_str());
+
 #ifdef USE_STREFLOP
-//#	define STREFLOP_NO_DENORMALS
-//	streflop_init<streflop::Simple>();
-	printf(" - using STREFLOP\n");
+
+#if defined(STREFLOP_SSE)
+		const char *instruction_set = "[SSE]";
+#elif defined(STREFLOP_X87)
+		const char *instruction_set = "[X87]";
+#elif defined(STREFLOP_SOFT)
+		const char *instruction_set = "[SOFTFLOAT]";
+#else
+		const char *instruction_set = "[none]";
+#endif
+
+#if defined(STREFLOP_NO_DENORMALS)
+		const char *denormals = "[no-denormals]";
+#else
+		const char *denormals = "[denormals]";
+#endif
+
+		printf(" - using STREFLOP %s - %s\n",instruction_set,denormals);
 #endif
 	}
+
+    setGameVersion(glestVersionString);
+    setGameGITVersion(getRAWGITRevisionString());
+
+#ifdef WIN32
+	CheckPacketThrottling();
+#endif
+
+	if( hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_OPENGL_INFO]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_INFO]) 			== true ||
+        hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) 			== true ||
+        hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) 				== true ||
+        hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS])    == true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) 		== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) == true) {
+		VideoPlayer::setDisabled(true);
+	}
+
+	//throw megaglest_runtime_error("Test!");
 
 	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) == true) {
 		SDL_version ver;
@@ -2537,6 +4181,8 @@ int glestMain(int argc, char** argv) {
         // Prints the run-time version
         ver = *SDL_Linked_Version();
         print_SDL_version("SDL runtime version", &ver);
+        //const SDL_VideoInfo *vidInfo = SDL_GetVideoInfo();
+        //printf("Video card Memory: %u\n",vidInfo->video_mem);
 	}
 
 	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_INFO]) == true) {
@@ -2545,18 +4191,41 @@ int glestMain(int argc, char** argv) {
 
 	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) == true) {
 	    curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
-		printf("CURL version: %s\n", curlVersion->version);
+		printf("CURL version: %s [%s] SSL enabled: %d\n", curlVersion->version,(curlVersion->ssl_version != NULL ? curlVersion->ssl_version : ""),((curlVersion->features & CURL_VERSION_SSL) == CURL_VERSION_SSL ? true : false));
+		if(curlVersion->protocols != NULL && curlVersion->protocols[0] != NULL) {
+			printf("protocols: ");
+			for(unsigned int i = 0; curlVersion->protocols != NULL && curlVersion->protocols[i] != NULL; ++i) {
+					printf("%s ", curlVersion->protocols[i]);
+					if(i > 0 && i % 10 == 0) {
+						printf("\n           ");
+					}
+			}
+			printf("\n");
+		}
+	}
+
+	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO]) == true) {
+		printf("XERCES version: %s\n", XERCES_FULLVERSIONDOT);
 	}
 
 	if( (hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) 		  == true ||
 		 hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) 		  == true ||
 		 hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_INFO]) 		  == true ||
-         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) 		  == true) &&
+         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) 		  == true ||
+         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO])       == true) &&
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_OPENGL_INFO]) 		  == false &&
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]) == false &&
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS])  == false &&
-		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO])  == false) {
-		return -1;
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO])  == false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TILESET])   == false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) 	== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) 		== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) 	== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) 	== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) 	== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) 	== false &&
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) == false) {
+		return 0;
 	}
 
 	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MOD])) == true) {
@@ -2582,7 +4251,7 @@ int glestMain(int argc, char** argv) {
 		else {
 			printf("\nInvalid mod pathname specified on commandline [%s] mod [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
 			printParameterHelp(argv[0],foundInvalidArgs);
-			return -1;
+			return 1;
 		}
 	}
 
@@ -2610,6 +4279,41 @@ int glestMain(int argc, char** argv) {
 		Config &config = Config::getInstance();
 		setupGameItemPaths(argc, argv, &config);
 
+		if(config.getString("PlayerId","") == "") {
+			char  uuid_str[38];
+			get_uuid_string(uuid_str,sizeof(uuid_str));
+
+			config.setString("PlayerId",uuid_str);
+			config.save();
+		}
+		//printf("Players UUID: [%s]\n",config.getString("PlayerId","").c_str());
+
+		if(config.getBool("DisableLuaSandbox","false") == true) {
+			LuaScript::setDisableSandbox(true);
+		}
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DEBUG_NETWORK_PACKETS]) == true) {
+			printf("*NOTE: debugging network packets.\n");
+			config.setBool("DebugNetworkPackets",true,true);
+		}
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DEBUG_NETWORK_PACKET_SIZES]) == true) {
+			printf("*NOTE: debugging network packet SIZES.\n");
+			config.setBool("DebugNetworkPacketSizes",true,true);
+		}
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DEBUG_NETWORK_PACKET_STATS]) == true) {
+			printf("*NOTE: debugging network packet STATISTICS.\n");
+			config.setBool("DebugNetworkPacketStats",true,true);
+		}
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_ENABLE_NEW_PROTOCOL]) == true) {
+			printf("*NOTE: enabling new newtork protocol.\n");
+			NetworkMessage::useOldProtocol = false;
+		}
+
+		Socket::setBroadCastPort(config.getInt("BroadcastPort",intToStr(Socket::getBroadCastPort()).c_str()));
+
 		Socket::disableNagle = config.getBool("DisableNagle","false");
 		if(Socket::disableNagle) {
 			printf("*WARNING users wants to disable the socket nagle algorithm.\n");
@@ -2626,9 +4330,21 @@ int glestMain(int argc, char** argv) {
 		shutdownFadeSoundMilliseconds = config.getInt("ShutdownFadeSoundMilliseconds",intToStr(shutdownFadeSoundMilliseconds).c_str());
 
 	    string userData = config.getString("UserData_Root","");
-	    if(userData != "") {
-	    	endPathWithSlash(userData);
+		if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+			userData = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey);
+		}
+        if(userData != "") {
+        	endPathWithSlash(userData);
+        }
 
+        string data_path_check = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
+        string userDataPath_check = getGameCustomCoreDataPath(data_path_check, "");
+        if(data_path_check == userDataPath_check) {
+        	printf("****WARNING**** your game data path and user data path are the same.\nThis will likely create problems: %s\n",data_path_check.c_str());
+        	throw megaglest_runtime_error("Regular and User data paths cannot have the same value [" + userDataPath_check + "]");
+        }
+
+	    if(userData != "") {
 	        if(isdir(userData.c_str()) == false) {
 	        	createDirectoryPaths(userData);
 	        }
@@ -2639,20 +4355,96 @@ int glestMain(int argc, char** argv) {
         }
 	    setCRCCacheFilePath(crcCachePath);
 
+	    string savedGamePath = userData + "saved/";
+        if(isdir(savedGamePath.c_str()) == false) {
+        	createDirectoryPaths(savedGamePath);
+        }
+
 	    string tempDataPath = userData + "temp/";
+	    tempDataLocation = tempDataPath;
         if(isdir(tempDataPath.c_str()) == true) {
         	removeFolder(tempDataPath);
         }
         createDirectoryPaths(tempDataPath);
 
+
+    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_USE_PORTS]) == true) {
+			int foundParamIndIndex = -1;
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_USE_PORTS]) + string("="),&foundParamIndIndex);
+			if(foundParamIndIndex < 0) {
+				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_USE_PORTS]),&foundParamIndIndex);
+			}
+			string paramValue = argv[foundParamIndIndex];
+			vector<string> paramPartTokens;
+			Tokenize(paramValue,paramPartTokens,"=");
+			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+				string portsToUse = paramPartTokens[1];
+
+				vector<string> paramPartPortsTokens;
+				Tokenize(portsToUse,paramPartPortsTokens,",");
+				if(paramPartPortsTokens.size() >= 2 && paramPartPortsTokens[1].length() > 0) {
+					int internalPort = strToInt(paramPartPortsTokens[0]);
+					int externalPort = strToInt(paramPartPortsTokens[1]);
+
+					printf("Forcing internal port# %d, external port# %d\n",internalPort,externalPort);
+
+					config.setInt("PortServer",internalPort,true);
+					config.setInt("PortExternal",externalPort,true);
+					config.setInt("FTPServerPort",internalPort+1,true);
+
+					if(paramPartPortsTokens.size() >= 3 && paramPartPortsTokens[2].length() > 0) {
+						int statusPort = strToInt(paramPartPortsTokens[2]);
+
+						printf("Forcing status port# %d\n",statusPort);
+
+						config.setInt("ServerAdminPort",statusPort,true);
+					}
+				}
+				else {
+		            printf("\nInvalid ports specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+		            return 1;
+				}
+			}
+	        else {
+	            printf("\nInvalid missing ports specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+	            return 1;
+	        }
+    	}
+
+        if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_STATUS])) == true) {
+        	Ip ip("localhost");
+        	int port = Config::getInstance().getInt("ServerAdminPort", intToStr(GameConstants::serverAdminPort).c_str());
+        	ClientSocket clientSocket;
+        	clientSocket.setBlock(false);
+        	clientSocket.connect(ip, port);
+        	if(clientSocket.isConnected() == true) {
+        		clientSocket.setBlock(true);
+
+        		char szBuf[8096]="";
+        		clientSocket.receive(&szBuf[0],8095,false);
+        		std::cout << szBuf << std::endl;
+        	}
+        	else {
+        		std::cout << "Could not connect (possibly no clients connected) to host: " << ip.getString() << " port: " << port << std::endl;
+        	}
+
+        	return 0;
+        }
+
 	    if( hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_SOUND]) == true ||
 	    	hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true) {
-	    	config.setString("FactorySound","None");
+	    	config.setString("FactorySound","None",true);
 	    	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true) {
 	    		//Logger::getInstance().setMasterserverMode(true);
 	    		//Model::setMasterserverMode(true);
 	    		//Shared::Sound::Sound::setMasterserverMode(true);
 	    	}
+	    }
+
+	    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_OPENGL_CAPS_CHECK]) == true ||
+	    		config.getBool("CheckGlCaps") == false) {
+	    	printf("**WARNING** disabling opengl capability checking...\n");
+	    	config.setBool("CheckGlCaps",false,true);
 	    }
 
 	    bool enableATIHacks = config.getBool("EnableATIHacks","false");
@@ -2662,8 +4454,7 @@ int glestMain(int argc, char** argv) {
 	    }
 
         if(config.getBool("ForceFTGLFonts","false") == true || hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_FORCE_FTGLFONTS]) == true) {
-        	Font::forceFTGLFonts = true;
-        	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**WARNING** Forcing Legacy Fonts Enabled\n");
+        	::Shared::Graphics::Font::forceFTGLFonts = true;
         	printf("**WARNING** Forcing use of FTGL Fonts\n");
         }
         else {
@@ -2671,9 +4462,8 @@ int glestMain(int argc, char** argv) {
         }
 
         if(config.getBool("EnableLegacyFonts","false") == true || hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_ENABLE_LEGACYFONTS]) == true) {
-        	Font::forceLegacyFonts = true;
+        	::Shared::Graphics::Font::forceLegacyFonts = true;
         	Renderer::renderText3DEnabled = false;
-        	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**WARNING** Forcing Legacy Fonts Enabled\n");
         	printf("**WARNING** Forcing Legacy Fonts Enabled\n");
         }
         else {
@@ -2697,21 +4487,19 @@ int glestMain(int argc, char** argv) {
 				Tokenize(settings,paramPartTokens,"x");
 				if(paramPartTokens.size() >= 2) {
 					int newScreenWidth 	= strToInt(paramPartTokens[0]);
-					config.setInt("ScreenWidth",newScreenWidth);
+					config.setInt("ScreenWidth",newScreenWidth,true);
 
 					int newScreenHeight = strToInt(paramPartTokens[1]);
-					config.setInt("ScreenHeight",newScreenHeight);
+					config.setInt("ScreenHeight",newScreenHeight,true);
 				}
 				else {
 		            printf("\nInvalid missing resolution settings specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-		            //printParameterHelp(argv[0],false);
-		            return -1;
+		            return 1;
 				}
 			}
 	        else {
 	            printf("\nInvalid missing resolution setting specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-	            return -1;
+	            return 1;
 	        }
         }
 
@@ -2729,12 +4517,11 @@ int glestMain(int argc, char** argv) {
 				printf("Forcing colorbits [%s]\n",settings.c_str());
 
 				int newColorBits = strToInt(settings);
-				config.setInt("ColorBits",newColorBits);
+				config.setInt("ColorBits",newColorBits,true);
 			}
 			else {
 				printf("\nInvalid missing colorbits settings specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-				//printParameterHelp(argv[0],false);
-				return -1;
+				return 1;
 			}
 		}
 
@@ -2752,12 +4539,11 @@ int glestMain(int argc, char** argv) {
 				printf("Forcing depthbits [%s]\n",settings.c_str());
 
 				int newDepthBits = strToInt(settings);
-				config.setInt("DepthBits",newDepthBits);
+				config.setInt("DepthBits",newDepthBits,true);
 			}
 			else {
 				printf("\nInvalid missing depthbits setting specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-				//printParameterHelp(argv[0],false);
-				return -1;
+				return 1;
 			}
 		}
 
@@ -2775,13 +4561,42 @@ int glestMain(int argc, char** argv) {
 				printf("Forcing fullscreen [%s]\n",settings.c_str());
 
 				bool newFullScreenMode = strToBool(settings);
-				config.setBool("Windowed",!newFullScreenMode);
+				config.setBool("Windowed",!newFullScreenMode,true);
 			}
 			else {
 				printf("\nInvalid missing fullscreen setting specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-				//printParameterHelp(argv[0],false);
-				return -1;
+				return 1;
 			}
+		}
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SET_GAMMA]) == true) {
+			int foundParamIndIndex = -1;
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SET_GAMMA]) + string("="),&foundParamIndIndex);
+			if(foundParamIndIndex < 0) {
+				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SET_GAMMA]),&foundParamIndIndex);
+			}
+			string paramValue = argv[foundParamIndIndex];
+			vector<string> paramPartTokens;
+			Tokenize(paramValue,paramPartTokens,"=");
+			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+				string settings = paramPartTokens[1];
+				printf("Forcing gamma [%s]\n",settings.c_str());
+
+				float newGammaValue = strToFloat(settings);
+				config.setFloat("GammaValue",newGammaValue,true);
+			}
+			else {
+				printf("\nInvalid missing gamma setting specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+				return 1;
+			}
+		}
+
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_VIDEOS]) == true) {
+			VideoPlayer::setDisabled(true);
+		}
+		else if(config.getBool("EnableVideos","true") == false) {
+			VideoPlayer::setDisabled(true);
 		}
 
         // Set some statics based on ini entries
@@ -2792,19 +4607,20 @@ int glestMain(int argc, char** argv) {
 
 		// 256 for English
 		// 30000 for Chinese
-		Font::charCount    		= config.getInt("FONT_CHARCOUNT",intToStr(Font::charCount).c_str());
-		Font::fontTypeName 		= config.getString("FONT_TYPENAME",Font::fontTypeName.c_str());
-		Font::fontIsMultibyte 	= config.getBool("FONT_MULTIBYTE",intToStr(Font::fontIsMultibyte).c_str());
-		Font::fontIsRightToLeft	= config.getBool("FONT_RIGHTTOLEFT",intToStr(Font::fontIsRightToLeft).c_str());
-		Font::baseSize			= config.getInt("FONT_BASE_SIZE",intToStr(Font::baseSize).c_str());
-		Font::scaleFontValue				= config.getFloat("FONT_SCALE_SIZE",floatToStr(Font::scaleFontValue).c_str());
-		Font::scaleFontValueCenterHFactor	= config.getFloat("FONT_SCALE_CENTERH_FACTOR",floatToStr(Font::scaleFontValueCenterHFactor).c_str());
-		Font::langHeightText				= config.getString("FONT_HEIGHT_TEXT",Font::langHeightText.c_str());
+		::Shared::Graphics::Font::charCount    		= config.getInt("FONT_CHARCOUNT",intToStr(::Shared::Graphics::Font::charCount).c_str());
+		::Shared::Graphics::Font::fontTypeName 		= config.getString("FONT_TYPENAME",::Shared::Graphics::Font::fontTypeName.c_str());
+		::Shared::Graphics::Font::fontIsMultibyte 	= config.getBool("FONT_MULTIBYTE",intToStr(::Shared::Graphics::Font::fontIsMultibyte).c_str());
+		::Shared::Graphics::Font::fontIsRightToLeft	= config.getBool("FONT_RIGHTTOLEFT",intToStr(::Shared::Graphics::Font::fontIsRightToLeft).c_str());
+		::Shared::Graphics::Font::baseSize			= config.getInt("FONT_BASE_SIZE",intToStr(::Shared::Graphics::Font::baseSize).c_str());
+		::Shared::Graphics::Font::scaleFontValue				= config.getFloat("FONT_SCALE_SIZE",floatToStr(::Shared::Graphics::Font::scaleFontValue).c_str());
+		::Shared::Graphics::Font::scaleFontValueCenterHFactor	= config.getFloat("FONT_SCALE_CENTERH_FACTOR",floatToStr(::Shared::Graphics::Font::scaleFontValueCenterHFactor).c_str());
+		::Shared::Graphics::Font::langHeightText				= config.getString("FONT_HEIGHT_TEXT",::Shared::Graphics::Font::langHeightText.c_str());
+		::Shared::Graphics::Font::fontSupportMixedRightToLeft = config.getBool("FONT_RIGHTTOLEFT_MIXED_SUPPORT",intToStr(::Shared::Graphics::Font::fontSupportMixedRightToLeft).c_str());
 
 		// Example values:
 		// DEFAULT_CHARSET (English) = 1
 		// GB2312_CHARSET (Chinese)  = 134
-		Shared::Platform::charSet = config.getInt("FONT_CHARSET",intToStr(Shared::Platform::charSet).c_str());
+		::Shared::Platform::PlatformContextGl::charSet = config.getInt("FONT_CHARSET",intToStr(::Shared::Platform::PlatformContextGl::charSet).c_str());
 		if(config.getBool("No2DMouseRendering","false") == false) {
 			showCursor(false);
 		}
@@ -2812,17 +4628,23 @@ int glestMain(int argc, char** argv) {
 			SystemFlags::DEFAULT_HTTP_TIMEOUT = config.getInt("DEFAULT_HTTP_TIMEOUT",intToStr(SystemFlags::DEFAULT_HTTP_TIMEOUT).c_str());
 		}
 
-		bool allowAltEnterFullscreenToggle = config.getBool("AllowAltEnterFullscreenToggle",boolToStr(Window::getAllowAltEnterFullscreenToggle()).c_str());
-		Window::setAllowAltEnterFullscreenToggle(allowAltEnterFullscreenToggle);
+		bool allowAltEnterFullscreenToggle = config.getBool("AllowAltEnterFullscreenToggle",boolToStr(::Shared::Platform::Window::getAllowAltEnterFullscreenToggle()).c_str());
+		::Shared::Platform::Window::setAllowAltEnterFullscreenToggle(allowAltEnterFullscreenToggle);
 
 		if(config.getBool("noTeamColors","false") == true) {
 			MeshCallbackTeamColor::noTeamColors = true;
 		}
 
+
+		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_DEBUG]) == true) {
+			printf("Forcing LUA debugging enabled!\n");
+			config.setBool("DebugLUA",true, true);
+		}
+
         // Setup debug logging etc
 		setupLogging(config, haveSpecialOutputCommandLineOption);
 
-        SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::charSet = %d, Font::fontIsMultibyte = %d, fontIsRightToLeft = %d\n",__FILE__,__FUNCTION__,__LINE__,Font::charCount,Font::fontTypeName.c_str(),Shared::Platform::charSet,Font::fontIsMultibyte, Font::fontIsRightToLeft);
+        SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::PlatformContextGl::charSet = %d, Font::fontIsMultibyte = %d, fontIsRightToLeft = %d\n",__FILE__,__FUNCTION__,__LINE__,::Shared::Graphics::Font::charCount,::Shared::Graphics::Font::fontTypeName.c_str(),::Shared::Platform::PlatformContextGl::charSet,::Shared::Graphics::Font::fontIsMultibyte, ::Shared::Graphics::Font::fontIsRightToLeft);
 
 		NetworkInterface::setDisplayMessageFunction(ExceptionHandler::DisplayMessage);
 		MenuStateMasterserver::setDisplayMessageFunction(ExceptionHandler::DisplayMessage);
@@ -2847,57 +4669,25 @@ int glestMain(int argc, char** argv) {
 
         if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS]) == true) {
             ShowINISettings(argc,argv,config,configKeys);
-            return -1;
+            return 0;
         }
 
-        //setVBOSupported(false);
         // Explicitly disable VBO's
         if(config.getBool("DisableVBO","false") == true || hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_DISABLE_VBO]) == true) {
         	setVBOSupported(false);
-        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**WARNING** Disabling VBO's\n");
+        	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**INFO** Disabling VBOs\n");
         }
+        
+	if(config.getBool("DisableVertexInterpolation","false") || hasCommandArgument(argc, argv, GAME_ARGS[GAME_ARG_DISABLE_VERTEX_INTERPOLATION])) {
+		InterpolationData::setEnableInterpolation(false);
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**INFO** Disabling Interpolation\n");
+	}
+
 
         if(config.getBool("EnableVSynch","false") == true) {
-        	Window::setTryVSynch(true);
+        	::Shared::Platform::Window::setTryVSynch(true);
         	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("**ENABLED OPENGL VSYNCH**\n");
         }
-
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_USE_PORTS]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_USE_PORTS]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_USE_PORTS]),&foundParamIndIndex);
-			}
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
-				string portsToUse = paramPartTokens[1];
-
-				vector<string> paramPartPortsTokens;
-				Tokenize(portsToUse,paramPartPortsTokens,",");
-				if(paramPartPortsTokens.size() >= 2 && paramPartPortsTokens[1].length() > 0) {
-					int internalPort = strToInt(paramPartPortsTokens[0]);
-					int externalPort = strToInt(paramPartPortsTokens[1]);
-
-					printf("Forcing internal port# %d, external port# %d\n",internalPort,externalPort);
-
-					config.setInt("ServerPort",internalPort);
-					config.setInt("MasterServerExternalPort",externalPort);
-					config.setInt("FTPServerPort",internalPort+1);
-				}
-				else {
-		            printf("\nInvalid ports specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-		            //printParameterHelp(argv[0],false);
-		            return -1;
-				}
-			}
-	        else {
-	            printf("\nInvalid missing ports specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-	            return -1;
-	        }
-    	}
 
 		//float pingTime = Socket::getAveragePingMS("soft-haus.com");
 		//printf("Ping time = %f\n",pingTime);
@@ -2920,8 +4710,7 @@ int glestMain(int argc, char** argv) {
 			}
 	        else {
 	            printf("\nInvalid missing language specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-	            return -1;
+	            return 1;
 	        }
     	}
     	else {
@@ -2936,6 +4725,8 @@ int glestMain(int argc, char** argv) {
 		    char langValue[1024]="";
 		    wcstombs(langValue,sysLocale, 1023);
 			const char *lang_locale = &langValue[0];
+
+			delete [] sysLocale;
 #else
 			const char *lang_locale = setlocale(LC_ALL,"");
 #endif
@@ -2954,11 +4745,56 @@ int glestMain(int argc, char** argv) {
     		}
     	}
 
+    	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTO_TEST])) == true ||
+    		Config::getInstance().getBool("AutoTest","false") == true) {
+    		printf("Running in auto test mode\n");
+    	}
+		if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTO_TEST])) == true) {
+			Config::getInstance().setBool("AutoTest",true,true);
+
+			int foundParamIndIndex = -1;
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTO_TEST]) + string("="),&foundParamIndIndex);
+			if(foundParamIndIndex < 0) {
+				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTO_TEST]),&foundParamIndIndex);
+			}
+			string paramValue = argv[foundParamIndIndex];
+			vector<string> paramPartTokens;
+			Tokenize(paramValue,paramPartTokens,"=");
+			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+				vector<string> paramPartTokens2;
+				Tokenize(paramPartTokens[1],paramPartTokens2,",");
+				if(paramPartTokens2.empty() == false && paramPartTokens2[0].length() > 0) {
+					string newMaxSeconds = paramPartTokens2[0];
+					time_t newTimeMaxSeconds = strToInt(newMaxSeconds);
+					AutoTest::setMaxGameTime(newTimeMaxSeconds);
+					printf("Forcing maximum game time to [%ld] seconds (%.2f minutes)\n",(long int)newTimeMaxSeconds,((double)newTimeMaxSeconds / 60.0));
+				}
+				if(paramPartTokens2.size() >= 3 && paramPartTokens2[2].length() > 0) {
+					string autoTestCmd = paramPartTokens2[2];
+					if(autoTestCmd == "exit") {
+						printf("Detected auto test command [%s], will exit after game.\n",autoTestCmd.c_str());
+
+						AutoTest::setWantExitGameWhenDone(true);
+					}
+					else {
+						printf("WARNING: Detected and UNKNOWN auto test command [%s].\n",autoTestCmd.c_str());
+					}
+				}
+
+				if(paramPartTokens2.size() >= 2 && paramPartTokens2[1].length() > 0) {
+					string newGameSettingsFileToLoad = paramPartTokens2[1];
+
+					printf("About to auto test using game settings file [%s]\n",newGameSettingsFileToLoad.c_str());
+					AutoTest::setLoadGameSettingsFile(newGameSettingsFileToLoad);
+				}
+			}
+		}
+
     	Renderer &renderer= Renderer::getInstance();
-        lang.loadStrings(language,false, true);
+        lang.loadGameStrings(language,false, true);
 
         if(	lang.hasString("FONT_HEIGHT_TEXT")) {
-        	Font::langHeightText = config.getString("FONT_HEIGHT_TEXT",Font::langHeightText.c_str());
+        	::Shared::Graphics::Font::langHeightText = config.getString("FONT_HEIGHT_TEXT",::Shared::Graphics::Font::langHeightText.c_str());
         }
 
     	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_FONT_BASESIZE]) == true) {
@@ -2972,21 +4808,19 @@ int glestMain(int argc, char** argv) {
 			Tokenize(paramValue,paramPartTokens,"=");
 			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
 				string newfontBaseSize = paramPartTokens[1];
-				//printf("#1 Forcing font [%s] paramPartTokens.size() = %d, paramValue [%s]\n",newfont.c_str(),paramPartTokens.size(),paramValue.c_str());
 				printf("Forcing font base size[%s]\n",newfontBaseSize.c_str());
 
-				Font::baseSize = strToInt(newfontBaseSize);
+				::Shared::Graphics::Font::baseSize = strToInt(newfontBaseSize);
 			}
 	        else {
 	            printf("\nInvalid missing font base size specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
 
-	            return -1;
+	            return 1;
 	        }
     	}
 
-        SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::charSet = %d, Font::fontIsMultibyte = %d, Font::fontIsRightToLeft = %d\n",__FILE__,__FUNCTION__,__LINE__,Font::charCount,Font::fontTypeName.c_str(),Shared::Platform::charSet,Font::fontIsMultibyte,Font::fontIsRightToLeft);
-        if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::charSet = %d, Font::fontIsMultibyte = %d, Font::fontIsRightToLeft = %d\n",Font::charCount,Font::fontTypeName.c_str(),Shared::Platform::charSet,Font::fontIsMultibyte,Font::fontIsRightToLeft);
+        SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::PlatformContextGl::charSet = %d, Font::fontIsMultibyte = %d, Font::fontIsRightToLeft = %d\n",__FILE__,__FUNCTION__,__LINE__,::Shared::Graphics::Font::charCount,::Shared::Graphics::Font::fontTypeName.c_str(),::Shared::Platform::PlatformContextGl::charSet,::Shared::Graphics::Font::fontIsMultibyte,::Shared::Graphics::Font::fontIsRightToLeft);
+        if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Using Font::charCount = %d, Font::fontTypeName [%s] Shared::Platform::PlatformContextGl::charSet = %d, Font::fontIsMultibyte = %d, Font::fontIsRightToLeft = %d\n",::Shared::Graphics::Font::charCount,::Shared::Graphics::Font::fontTypeName.c_str(),::Shared::Platform::PlatformContextGl::charSet,::Shared::Graphics::Font::fontIsMultibyte,::Shared::Graphics::Font::fontIsRightToLeft);
 
     	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_USE_FONT]) == true) {
 			int foundParamIndIndex = -1;
@@ -2999,7 +4833,7 @@ int glestMain(int argc, char** argv) {
 			Tokenize(paramValue,paramPartTokens,"=");
 			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
 				string newfont = paramPartTokens[1];
-				//printf("#1 Forcing font [%s] paramPartTokens.size() = %d, paramValue [%s]\n",newfont.c_str(),paramPartTokens.size(),paramValue.c_str());
+
 				Properties::applyTagsToValue(newfont);
 				printf("Forcing font [%s]\n",newfont.c_str());
 
@@ -3012,181 +4846,63 @@ int glestMain(int argc, char** argv) {
 			}
 	        else {
 	            printf("\nInvalid missing font specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-	            return -1;
+	            return 1;
 	        }
     	}
 
-        SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]),&foundParamIndIndex);
-			}
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
-				string itemName = paramPartTokens[1];
-
-				string file = Map::getMapPath(itemName,"",false);
-				if(file != "") {
-					Checksum checksum;
-					checksum.addFile(file);
-					int32 crcValue = checksum.getSum();
-
-					printf("CRC value for map [%s] file [%s] is [%d]\n",itemName.c_str(),file.c_str(),crcValue);
-				}
-				else {
-					printf("Map [%s] was NOT FOUND\n",itemName.c_str());
-				}
-
-				return -1;
-			}
-	        else {
-	            printf("\nInvalid missing map specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-
-	            return -1;
-	        }
+    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]) == true) {
+    		return handleCreateDataArchivesCommand(argc, argv);
     	}
 
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]),&foundParamIndIndex);
-			}
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
-				string itemName = paramPartTokens[1];
-				int32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTilesets,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
-				if(crcValue != 0) {
-					printf("CRC value for tileset [%s] is [%d]\n",itemName.c_str(),crcValue);
-				}
-				else {
-					printf("Tileset [%s] was NOT FOUND\n",itemName.c_str());
-				}
-
-				return -1;
-			}
-	        else {
-	            printf("\nInvalid missing tileset specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-
-	            return -1;
-	        }
+    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_MAP_CRC]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TILESET_CRC]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]) == true) {
+    		return handleShowCRCValuesCommand(argc, argv);
     	}
 
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_TECHTREE_CRC]),&foundParamIndIndex);
-			}
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
-				string itemName = paramPartTokens[1];
-				int32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTechs,""), "/" + itemName + "/*", ".xml", NULL, true);
-				if(crcValue != 0) {
-					printf("CRC value for techtree [%s] is [%d]\n",itemName.c_str(),crcValue);
-				}
-				else {
-					printf("Techtree [%s] was NOT FOUND\n",itemName.c_str());
-				}
+    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) == true ||
+    		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) == true) {
+    		return handleListDataCommand(argc, argv);
 
-				return -1;
-			}
-	        else {
-	            printf("\nInvalid missing techtree specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-
-	            return -1;
-	        }
     	}
-
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_SCENARIO_CRC]),&foundParamIndIndex);
-			}
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
-				string itemName = paramPartTokens[1];
-				int32 crcValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptScenarios,""), "/" + itemName + "/*", ".xml", NULL, true);
-				if(crcValue != 0) {
-					printf("CRC value for scenario [%s] is [%d]\n",itemName.c_str(),crcValue);
-				}
-				else {
-					printf("Scenario [%s] was NOT FOUND\n",itemName.c_str());
-				}
-
-				return -1;
-			}
-	        else {
-	            printf("\nInvalid missing scenario specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	            //printParameterHelp(argv[0],false);
-
-	            return -1;
-	        }
-    	}
-
-    	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]) == true) {
-			int foundParamIndIndex = -1;
-			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]) + string("="),&foundParamIndIndex);
-			if(foundParamIndIndex < 0) {
-				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_PATH_CRC]),&foundParamIndIndex);
-			}
-
-			string paramValue = argv[foundParamIndIndex];
-			vector<string> paramPartTokens;
-			Tokenize(paramValue,paramPartTokens,"=");
-			if(paramPartTokens.size() >= 3 && paramPartTokens[1].length() > 0) {
-				string itemName = paramPartTokens[1];
-				string itemNameFilter = paramPartTokens[2];
-				//printf("\n\nitemName [%s] itemNameFilter [%s]\n",itemName.c_str(),itemNameFilter.c_str());
-				int32 crcValue = getFolderTreeContentsCheckSumRecursively(itemName, itemNameFilter, NULL, true);
-
-				printf("CRC value for path [%s] filter [%s] is [%d]\n",itemName.c_str(),itemNameFilter.c_str(),crcValue);
-
-				return -1;
-			}
-	        else {
-	        	if(paramPartTokens.size() < 2) {
-	        		printf("\nInvalid missing path and filter specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
-	        	}
-	        	if(paramPartTokens.size() < 3) {
-	        		printf("\nInvalid missing filter specified on commandline [%s] value [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 3 ? paramPartTokens[2].c_str() : NULL));
-	        	}
-
-	            //printParameterHelp(argv[0],false);
-
-	            return -1;
-	        }
-    	}
-
-		//vector<string> techPaths;
-		//vector<string> techDataPaths = config.getPathListForType(ptTechs);
-		//findDirs(techDataPaths, techPaths);
-
-        //int32 techCRC = getFolderTreeContentsCheckSumRecursively(techDataPaths, string("/") + "megapack" + string("/*"), ".xml", NULL, true);
-        //return -1;
-
-        //
-        //removeFolder("/home/softcoder/Code/megaglest/trunk/mk/linux/mydata/tilesets/mother_board");
-        //return -1;
-        //
 
 		program= new Program();
+		mainProgram = program;
+		renderer.setProgram(program);
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled == true) {
+			renderer.setAllowRenderUnitTitles(SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled);
+			SystemFlags::OutputDebug(SystemFlags::debugPathFinder,"In [%s::%s Line: %d] renderer.setAllowRenderUnitTitles = %d\n",__FILE__,__FUNCTION__,__LINE__,SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled);
+		}
+		renderer.setAllowRenderUnitTitles(true);
+
+		string screenShotsPath = userData + GameConstants::folder_path_screenshots;
+        if(isdir(screenShotsPath.c_str()) == false) {
+        	createDirectoryPaths(screenShotsPath);
+        }
+
+        // Cache Player textures - START
+        string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
+		std::map<int,Texture2D *> &crcPlayerTextureCache = CacheManager::getCachedItem< std::map<int,Texture2D *> >(GameConstants::playerTextureCacheLookupKey);
+        for(int index = 0; index < GameConstants::maxPlayers; ++index) {
+        	string playerTexture = getGameCustomCoreDataPath(data_path, "data/core/faction_textures/faction" + intToStr(index) + ".tga");
+        	if(fileExists(playerTexture) == true) {
+        		Texture2D *texture = Renderer::getInstance().newTexture2D(rsGlobal);
+        		if(texture) {
+        			texture->load(playerTexture);
+        		}
+        		crcPlayerTextureCache[index] = texture;
+        	}
+        	else {
+        		crcPlayerTextureCache[index] = NULL;
+        	}
+        }
+        // Cache Player textures - END
 
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -3201,12 +4917,52 @@ int glestMain(int argc, char** argv) {
 		//parse command line
 		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SERVER]) == true) {
 			program->initServer(mainWindow,false,true);
+			gameInitialized = true;
 		}
 		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true) {
 			program->initServer(mainWindow,false,true,true);
+			gameInitialized = true;
 		}
 		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTOSTART_LASTGAME])) == true) {
 			program->initServer(mainWindow,true,false);
+			gameInitialized = true;
+		}
+		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTOSTART_LAST_SAVED_GAME])) == true) {
+			string fileName = "";
+			int foundParamIndIndex = -1;
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_AUTOSTART_LAST_SAVED_GAME]) + string("="),&foundParamIndIndex);
+			if(foundParamIndIndex >= 0) {
+				string loadfileName = argv[foundParamIndIndex];
+				vector<string> paramPartTokens;
+				Tokenize(loadfileName,paramPartTokens,"=");
+				if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+					fileName = paramPartTokens[1];
+
+					if(fileExists(fileName) == false) {
+						// Save the file now
+						string saveGameFile = "saved/" + fileName;
+						if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+							saveGameFile = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + saveGameFile;
+						}
+						else {
+							saveGameFile = userData + saveGameFile;
+						}
+						if(fileExists(saveGameFile) == true) {
+							fileName = saveGameFile;
+						}
+					}
+
+					if(fileExists(fileName) == false) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"File specified for loading a saved game cannot be found: [%s]",fileName.c_str());
+						printf("\n\n======================================================================================\n%s\n======================================================================================\n\n\n",szBuf);
+
+						throw megaglest_runtime_error(szBuf);
+					}
+				}
+			}
+			program->initSavedGame(mainWindow,false,fileName);
+			gameInitialized = true;
 		}
 		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_PREVIEW_MAP])) == true) {
 			int foundParamIndIndex = -1;
@@ -3221,7 +4977,6 @@ int glestMain(int argc, char** argv) {
 				string autoloadMapName = paramPartTokens[1];
 
 				GameSettings *gameSettings = &startupGameSettings;
-				//int factionCount= 0;
 				gameSettings->setMap(autoloadMapName);
 				gameSettings->setTileset("forest");
 				gameSettings->setTech("megapack");
@@ -3235,7 +4990,7 @@ int glestMain(int argc, char** argv) {
 				for(int i = 0; i < GameConstants::maxPlayers; ++i) {
 					ControlType ct= ctClosed;
 
-					gameSettings->setNetworkPlayerStatuses(i, 0);
+					gameSettings->setNetworkPlayerStatuses(i, npst_None);
 					gameSettings->setFactionControl(i, ct);
 					gameSettings->setStartLocationIndex(i, i);
 					gameSettings->setResourceMultiplierIndex(i, 10);
@@ -3244,7 +4999,7 @@ int glestMain(int argc, char** argv) {
 
 				ControlType ct= ctHuman;
 
-				gameSettings->setNetworkPlayerStatuses(0, 0);
+				gameSettings->setNetworkPlayerStatuses(0, npst_None);
 				gameSettings->setFactionControl(0, ct);
 				gameSettings->setFactionTypeName(0, formatString(GameConstants::OBSERVER_SLOTNAME));
 				gameSettings->setTeam(0, GameConstants::maxPlayers + fpt_Observer - 1);
@@ -3258,14 +5013,56 @@ int glestMain(int argc, char** argv) {
 				gameSettings->setNetworkFramePeriod(config.getInt("NetworkSendFrameCount","20"));
 
 				program->initServer(mainWindow,gameSettings);
+				gameInitialized = true;
 			}
 			else {
 				printf("\nInvalid map name specified on commandline [%s] map [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
 				printParameterHelp(argv[0],foundInvalidArgs);
 				delete mainWindow;
-				return -1;
+				mainWindow=NULL;
+				return 1;
 			}
 		}
+
+		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CONNECT])) == true) {
+			int foundParamIndIndex = -1;
+			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CONNECT]) + string("="),&foundParamIndIndex);
+			if(foundParamIndIndex < 0) {
+				hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CONNECT]),&foundParamIndIndex);
+			}
+			string serverToConnectTo = argv[foundParamIndIndex];
+			vector<string> paramPartTokens;
+			Tokenize(serverToConnectTo,paramPartTokens,"=");
+			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
+				string autoConnectServer = paramPartTokens[1];
+
+				int port = config.getInt("PortServer",intToStr(GameConstants::serverPort).c_str());
+				vector<string> paramPartTokens2;
+				Tokenize(autoConnectServer,paramPartTokens2,":");
+				autoConnectServer = paramPartTokens2[0];
+				if(paramPartTokens2.size() >= 2 && paramPartTokens2[1].length() > 0) {
+					port = strToInt(paramPartTokens2[1]);
+				}
+
+				printf("Connecting to host [%s] using port: %d\n",autoConnectServer.c_str(),port);
+				if(autoConnectServer == "auto-connect") {
+					program->initClientAutoFindHost(mainWindow);
+				}
+				else {
+					program->initClient(mainWindow, autoConnectServer,port);
+				}
+				gameInitialized = true;
+			}
+			else {
+
+				printf("\nInvalid host specified on commandline [%s] host [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
+				printParameterHelp(argv[0],foundInvalidArgs);
+				delete mainWindow;
+				mainWindow=NULL;
+				return 1;
+			}
+		}
+
 		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CLIENT])) == true) {
 			int foundParamIndIndex = -1;
 			hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_CLIENT]) + string("="),&foundParamIndIndex);
@@ -3277,14 +5074,22 @@ int glestMain(int argc, char** argv) {
 			Tokenize(serverToConnectTo,paramPartTokens,"=");
 			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
 				string autoConnectServer = paramPartTokens[1];
-				program->initClient(mainWindow, autoConnectServer);
+
+				if(autoConnectServer == "auto-connect") {
+					program->initClientAutoFindHost(mainWindow);
+				}
+				else {
+					program->initClient(mainWindow, autoConnectServer);
+				}
+				gameInitialized = true;
 			}
 			else {
 
 				printf("\nInvalid host specified on commandline [%s] host [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
 				printParameterHelp(argv[0],foundInvalidArgs);
 				delete mainWindow;
-				return -1;
+				mainWindow=NULL;
+				return 1;
 			}
 		}
 		else if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_LOADSCENARIO])) == true) {
@@ -3299,13 +5104,16 @@ int glestMain(int argc, char** argv) {
 			Tokenize(scenarioName,paramPartTokens,"=");
 			if(paramPartTokens.size() >= 2 && paramPartTokens[1].length() > 0) {
 				string autoloadScenarioName = paramPartTokens[1];
+
 				program->initScenario(mainWindow, autoloadScenarioName);
+				gameInitialized = true;
 			}
 			else {
 				printf("\nInvalid scenario name specified on commandline [%s] scenario [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
 				printParameterHelp(argv[0],foundInvalidArgs);
 				delete mainWindow;
-				return -1;
+				mainWindow=NULL;
+				return 1;
 			}
 		}
 		else {
@@ -3314,23 +5122,15 @@ int glestMain(int argc, char** argv) {
 
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-        // Initialize Renderer
-		//Renderer &renderer= Renderer::getInstance();
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] OpenGL Info:\n%s\n",__FILE__,__FUNCTION__,__LINE__,renderer.getGlInfo().c_str());
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled == true) {
-			renderer.setAllowRenderUnitTitles(SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled);
-			SystemFlags::OutputDebug(SystemFlags::debugPathFinder,"In [%s::%s Line: %d] renderer.setAllowRenderUnitTitles = %d\n",__FILE__,__FUNCTION__,__LINE__,SystemFlags::getSystemSettingType(SystemFlags::debugPathFinder).enabled);
-		}
-		renderer.setAllowRenderUnitTitles(true);
-
 		if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_OPENGL_INFO]) == true) {
-			//Renderer &renderer= Renderer::getInstance();
 			printf("%s",renderer.getGlInfo().c_str());
 			printf("%s",renderer.getGlMoreInfo().c_str());
 
 			delete mainWindow;
-			return -1;
+			mainWindow=NULL;
+			return 0;
 		}
 
     	if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CONVERT_MODELS]) == true) {
@@ -3365,11 +5165,21 @@ int glestMain(int argc, char** argv) {
 				renderer.clearBuffers();
 				renderer.clearZBuffer();
 				renderer.reset2d();
-				renderer.renderText(
-						"Please wait, converting models...",
-						CoreData::getInstance().getMenuFontBig(),
-						Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
-						(metrics.getScreenH() / 2), true);
+
+				if(CoreData::getInstance().getMenuFontBig3D() != NULL) {
+					renderer.renderText3D(
+							"Please wait, converting models...",
+							CoreData::getInstance().getMenuFontBig3D(),
+							Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
+							(metrics.getScreenH() / 2), true);
+				}
+				else {
+					renderer.renderText(
+							"Please wait, converting models...",
+							CoreData::getInstance().getMenuFontBig(),
+							Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
+							(metrics.getScreenH() / 2), true);
+				}
 			    renderer.swapBuffers();
 
 				std::vector<string> models;
@@ -3381,98 +5191,92 @@ int glestMain(int argc, char** argv) {
 				}
 
 			    sleep(0);
-			    Window::handleEvent();
+			    ::Shared::Platform::Window::handleEvent();
 				SDL_PumpEvents();
 
-				char szTextBuf[1024]="";
+				int result = 0;
+				char szTextBuf[8096]="";
 				for(unsigned int i =0; i < models.size(); ++i) {
 					string &file = models[i];
-					bool modelLoadedOk = false;
-
+					
 					renderer.clearBuffers();
 					renderer.clearZBuffer();
 					renderer.reset2d();
-				    sprintf(szTextBuf,"Please wait, converting models [%d of %lu] ...",i,(long int)models.size());
-					renderer.renderText(
-							szTextBuf,
-							CoreData::getInstance().getMenuFontBig(),
-							Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
-							(metrics.getScreenH() / 2), true);
+				    snprintf(szTextBuf,8096,"Please wait, converting models [%u of " MG_SIZE_T_SPECIFIER "] ...",i,models.size());
+
+				    if(CoreData::getInstance().getMenuFontBig3D() != NULL) {
+						renderer.renderText3D(
+								szTextBuf,
+								CoreData::getInstance().getMenuFontBig3D(),
+								Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
+								(metrics.getScreenH() / 2), true);
+				    }
+				    else {
+						renderer.renderText(
+								szTextBuf,
+								CoreData::getInstance().getMenuFontBig(),
+								Vec3f(1.f, 1.f, 0.f), (metrics.getScreenW() / 2) - 400,
+								(metrics.getScreenH() / 2), true);
+				    }
 				    renderer.swapBuffers();
 
 				    sleep(0);
-				    Window::handleEvent();
+				    ::Shared::Platform::Window::handleEvent();
 					SDL_PumpEvents();
 
-					Model *model = renderer.newModel(rsGlobal);
 					try {
-						printf("About to load model [%s] [%d of %lu]\n",file.c_str(),i,(long int)models.size());
-						model->load(file);
-						modelLoadedOk = true;
-					}
-					catch(const exception &ex) {
-						printf("ERROR loading model [%s] message [%s]\n",file.c_str(),ex.what());
-					}
-
-					if(modelLoadedOk == true) {
+						printf("About to load model [%s] [%u of " MG_SIZE_T_SPECIFIER "]\n",file.c_str(),i,models.size());
+						Model *model = renderer.newModel(rsGlobal, file);
 						printf("About to save converted model [%s]\n",file.c_str());
 						model->save(file,textureFormat,keepsmallest);
+                        Renderer::getInstance().endModel(rsGlobal, model);
 					}
-
-					Renderer::getInstance().endModel(rsGlobal, model);
+					catch(const exception &ex) {
+						result = 1;
+						printf("ERROR loading model [%s] message [%s]\n",file.c_str(),ex.what());
+                    }
+					
 				}
 
 				delete mainWindow;
-				return -1;
+				mainWindow=NULL;
+				return result;
 			}
 			else {
 				printf("\nInvalid model specified on commandline [%s] texture [%s]\n\n",argv[foundParamIndIndex],(paramPartTokens.size() >= 2 ? paramPartTokens[1].c_str() : NULL));
 				printParameterHelp(argv[0],foundInvalidArgs);
 				delete mainWindow;
-				return -1;
+				mainWindow=NULL;
+				return 1;
 			}
     	}
 
 		if(	hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]) 	== true ||
 			hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS]) 	== true ||
 			hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO])    == true) {
-
 			runTechValidationReport(argc, argv);
 
 		    delete mainWindow;
-		    return -1;
+		    mainWindow=NULL;
+		    return 0;
+		}
+
+		if(	hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]) == true) {
+			runTechTranslationExtraction(argc, argv);
+		    delete mainWindow;
+		    mainWindow=NULL;
+		    return 0;
+		}
+
+		if(	hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) == true) {
+			runTilesetValidationReport(argc, argv);
+
+		    delete mainWindow;
+		    mainWindow=NULL;
+		    return 0;
 		}
 
 		gameInitialized = true;
-
-        // Setup the screenshots folder
-        if(userData != "") {
-        	endPathWithSlash(userData);
-        }
-
-		string screenShotsPath = userData + GameConstants::folder_path_screenshots;
-        if(isdir(screenShotsPath.c_str()) == false) {
-        	createDirectoryPaths(screenShotsPath);
-        }
-
-        // Cache Player textures - START
-        string data_path = getGameReadWritePath(GameConstants::path_data_CacheLookupKey);
-		std::map<int,Texture2D *> &crcPlayerTextureCache = CacheManager::getCachedItem< std::map<int,Texture2D *> >(GameConstants::playerTextureCacheLookupKey);
-        for(int index = 0; index < GameConstants::maxPlayers; ++index) {
-        	//string playerTexture = data_path + "data/core/faction_textures/faction" + intToStr(index) + ".tga";
-        	string playerTexture = getGameCustomCoreDataPath(data_path, "data/core/faction_textures/faction" + intToStr(index) + ".tga");
-        	if(fileExists(playerTexture) == true) {
-        		Texture2D *texture = Renderer::getInstance().newTexture2D(rsGlobal);
-        		if(texture) {
-        			texture->load(playerTexture);
-        		}
-        		crcPlayerTextureCache[index] = texture;
-        	}
-        	else {
-        		crcPlayerTextureCache[index] = NULL;
-        	}
-        }
-        // Cache Player textures - END
 
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -3486,28 +5290,42 @@ int glestMain(int argc, char** argv) {
         //int *foo = (int*)-1; // make a bad pointer
         //printf("%d\n", *foo);       // causes segfault
         // END
+
         bool startCRCPrecacheThread = config.getBool("PreCacheCRCThread","true");
         //printf("### In [%s::%s Line: %d] precache thread enabled = %d SystemFlags::VERBOSE_MODE_ENABLED = %d\n",__FILE__,__FUNCTION__,__LINE__,startCRCPrecacheThread,SystemFlags::VERBOSE_MODE_ENABLED);
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] precache thread enabled = %d\n",__FILE__,__FUNCTION__,__LINE__,startCRCPrecacheThread);
 		if(startCRCPrecacheThread == true) {
+			static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 			vector<string> techDataPaths = config.getPathListForType(ptTechs);
-			preCacheThread = new FileCRCPreCacheThread();
-			preCacheThread->setUniqueID(__FILE__);
+
+			FileCRCPreCacheThread::setPreCacheThreadCacheLookupKey(GameConstants::preCacheThreadCacheLookupKey);
+			FileCRCPreCacheThread * &preCacheCRCThreadPtr = CacheManager::getCachedItem< FileCRCPreCacheThread * >(GameConstants::preCacheThreadCacheLookupKey);
+			if(preCacheCRCThreadPtr == NULL) {
+				preCacheCRCThreadPtr = new FileCRCPreCacheThread();
+			}
+			preCacheThread = preCacheCRCThreadPtr;
+			preCacheThread->setUniqueID(mutexOwnerId);
 			preCacheThread->setTechDataPaths(techDataPaths);
 			//preCacheThread->setFileCRCPreCacheThreadCallbackInterface(&preCacheThreadGame);
 			preCacheThread->start();
 		}
 
+		std::auto_ptr<NavtiveLanguageNameListCacheGenerator> lngCacheGen;
+		std::auto_ptr<SimpleTaskThread> languageCacheGen;
+
+		bool startNativeLanguageNamesPrecacheThread = config.getBool("PreCacheNativeLanguageNamesThread","true");
+		if(startNativeLanguageNamesPrecacheThread == true &&
+				GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+			lngCacheGen.reset(new NavtiveLanguageNameListCacheGenerator());
+			languageCacheGen.reset(new SimpleTaskThread(lngCacheGen.get(),1));
+
+			languageCacheGen->start();
+		}
+
         // test
         //Shared::Platform::MessageBox(NULL,"Mark's test.","Test",0);
-        //throw runtime_error("test!");
+        //throw megaglest_runtime_error("test!");
         //ExceptionHandler::DisplayMessage("test!", false);
-
-		//Lang &lang= Lang::getInstance();
-		//string test = lang.get("ExitGameServer?");
-		//printf("[%s]",test.c_str());
-
-		//time_t lastTextureLoadEvent = time(NULL);
 
 		// Check for commands being input from stdin
 		string command="";
@@ -3525,21 +5343,25 @@ int glestMain(int argc, char** argv) {
 			cinfd[0].events = POLLIN;
 #else
 			h = GetStdHandle(STD_INPUT_HANDLE);
-			//DWORD dwMode; 
-			//GetConsoleMode(h, &dwMode); 
-			//SetConsoleMode(h, dwMode & ~ENABLE_MOUSE_INPUT); 
-			FlushConsoleInputBuffer(h); 
+			//DWORD dwMode;
+			//GetConsoleMode(h, &dwMode);
+			//SetConsoleMode(h, dwMode & ~ENABLE_MOUSE_INPUT);
+			FlushConsoleInputBuffer(h);
 #endif
 		}
 
 	    if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 	    	printf("Headless server is now running...\n");
+	    	printf("To shutdown type: quit\n");
+	    	printf("All commands require you to press ENTER\n");
 	    }
 
-	    //throw runtime_error("Test!");
+	    //throw megaglest_runtime_error("Test!");
+		//printf("About to throw an exception...\n");
+		//throw 123;
 
 		//main loop
-		while(program->isShutdownApplicationEnabled() == false && Window::handleEvent()) {
+		while(program->isShutdownApplicationEnabled() == false && ::Shared::Platform::Window::handleEvent()) {
 			if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 
 				if(disableheadless_console == false) {
@@ -3568,12 +5390,13 @@ int glestMain(int argc, char** argv) {
 				#endif
 					{
 
-						bool skip = true;
+
 #ifdef WIN32
+						bool skip = true;
 						DWORD nNumberOfCharsToRead = 1024;
 						DWORD nRead = 0;
 						INPUT_RECORD irInRec[1025];
-						
+
 						PeekConsoleInput(h,&irInRec[0],nNumberOfCharsToRead,&nRead);
 						for(int i = 0; i < nRead; ++i) {
 							INPUT_RECORD &inr = irInRec[i];
@@ -3590,7 +5413,7 @@ int glestMain(int argc, char** argv) {
 							}
 						}
 #else
-						skip = false;
+						bool skip = false;
 #endif
 						if(skip == false) {
 							getline(cin, command);
@@ -3635,7 +5458,7 @@ int glestMain(int argc, char** argv) {
 //					Texture2D * factionLogo = textureList[i];
 //					if(factionLogo != NULL) {
 //						printf("\n\n\n\n|||||||||||||||||||||||||| Load texture [%s]\n",factionLogo->getPath().c_str());
-//						//Renderer::findFactionLogoTexture(factionLogo);
+//						//Renderer::findTexture(factionLogo);
 //						renderer.initTexture(rsGlobal,factionLogo);
 //					}
 //				}
@@ -3664,6 +5487,30 @@ int glestMain(int argc, char** argv) {
 		SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	}
+	catch(const megaglest_runtime_error &e) {
+
+		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+			soundThreadManager = (program != NULL ? program->getSoundThreadManager(true) : NULL);
+			if(soundThreadManager) {
+				SoundRenderer &soundRenderer= SoundRenderer::getInstance();
+				soundRenderer.stopAllSounds(shutdownFadeSoundMilliseconds);
+				chronoshutdownFadeSound.start();
+			}
+			if(program != NULL &&
+				program->getTryingRendererInit() == true &&
+				program->getRendererInitOk() == false) {
+
+				message(e.what(),GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
+			}
+		}
+
+		if(program == NULL || program->getTryingRendererInit() == false ||
+			(program->getTryingRendererInit() == true &&
+				program->getRendererInitOk() == true)) {
+
+			ExceptionHandler::handleRuntimeError(e);
+		}
+	}
 	catch(const exception &e) {
 		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
 			soundThreadManager = (program != NULL ? program->getSoundThreadManager(true) : NULL);
@@ -3674,7 +5521,7 @@ int glestMain(int argc, char** argv) {
 			}
 		}
 
-		ExceptionHandler::handleRuntimeError(e.what());
+		ExceptionHandler::handleRuntimeError(e.what(),true);
 	}
 	catch(const char *e) {
 		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
@@ -3686,7 +5533,7 @@ int glestMain(int argc, char** argv) {
 			}
 		}
 
-		ExceptionHandler::handleRuntimeError(e);
+		ExceptionHandler::handleRuntimeError(e,true);
 	}
 	catch(const string &ex) {
 		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
@@ -3698,8 +5545,9 @@ int glestMain(int argc, char** argv) {
 			}
 		}
 
-		ExceptionHandler::handleRuntimeError(ex.c_str());
+		ExceptionHandler::handleRuntimeError(ex.c_str(),true);
 	}
+#if !defined(HAVE_GOOGLE_BREAKPAD)
 	catch(...) {
 		if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
 			soundThreadManager = (program != NULL ? program->getSoundThreadManager(true) : NULL);
@@ -3710,8 +5558,9 @@ int glestMain(int argc, char** argv) {
 			}
 		}
 
-		ExceptionHandler::handleRuntimeError("Unknown error!");
+		ExceptionHandler::handleRuntimeError("Unknown error [main]!",true);
 	}
+#endif
 
 	cleanupCRCThread();
 
@@ -3724,9 +5573,6 @@ int glestMain(int argc, char** argv) {
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-    //showCursor(true);
-    //restoreVideoMode(true);
-
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	GraphicComponent::clearRegisteredComponents();
 
@@ -3737,7 +5583,6 @@ int glestMain(int argc, char** argv) {
 		SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 		if( Config::getInstance().getString("FactorySound","") != "None" &&
 			soundRenderer.isVolumeTurnedOff() == false) {
-			//printf("chronoshutdownFadeSound.getMillis() = %llu\n",chronoshutdownFadeSound.getMillis());
 			for(;chronoshutdownFadeSound.getMillis() <= shutdownFadeSoundMilliseconds;) {
 				sleep(10);
 			}
@@ -3751,19 +5596,86 @@ int glestMain(int argc, char** argv) {
 	return 0;
 }
 
-int glestMainWrapper(int argc, char** argv) {
+#if defined(__GNUC__)  && !defined(__FreeBSD__) && !defined(BSD)
+void handleSIGSEGV(int sig) {
+    char szBuf[8096]="";
+    snprintf(szBuf, 8096,"In [%s::%s Line: %d] Error detected: signal %d:\n",__FILE__,__FUNCTION__,__LINE__, sig);
+    printf("%s",szBuf);
+    //abort();
 
-	//setlocale(LC_ALL, "zh_TW.UTF-8");
-	//setlocale(LC_ALL, "");
-
-#if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__FreeBSD__) && !defined(BSD)
-//#ifdef DEBUG
-	  //printf("MTRACE will be called...\n");
-      //mtrace ();
-//#endif
+    ExceptionHandler::handleRuntimeError(szBuf,true);
+}
 #endif
 
+#if defined(HAVE_GOOGLE_BREAKPAD)
+
+#if defined(WIN32)
+// Callback when minidump written.
+static bool MinidumpCallback(const wchar_t *dump_path,
+                             const wchar_t *minidump_id,
+                             void *context,
+                             EXCEPTION_POINTERS* exinfo,
+                             MDRawAssertionInfo* assertion,
+                             bool succeeded) {
+  printf("\n======= In MinidumpCallback...\n");
+  wprintf(L"\n***ERROR details captured:\nCrash minidump folder: %s\nfile: %s.dmp\nSucceeded: %d\n", (dump_path != NULL ? dump_path : L"(null)"),(minidump_id != NULL ? minidump_id : L"(null)"),succeeded);
+
+  if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+	  wchar_t szBuf[8096];
+	  int bufBytes = _snwprintf(szBuf,8096,L"An unhandled error was detected.\n\nA crash dump file has been created in the folder:\n%s\nCrash dump filename is: %s.dmp",dump_path,minidump_id);
+	  szBuf[bufBytes] = '\0';
+	  MessageBox(NULL, szBuf, L"Unhandled error", MB_OK|MB_SYSTEMMODAL);
+  }
+
+  return succeeded;
+}
+
+#else
+
+// Callback when minidump written.
+static bool MinidumpCallback(const google_breakpad::MinidumpDescriptor& descriptor,
+							void* context,
+							bool succeeded) {
+  printf("\n======= In MinidumpCallback...\n");
+  printf("\n***ERROR details captured:\nCrash minidump folder: %s\nfile: %s\nSucceeded: %d\n", descriptor.directory().c_str(),descriptor.path(),succeeded);
+
+  if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+	  char szBuf[8096];
+	  snprintf(szBuf,8096,"An unhandled error was detected.\n\nA crash dump file has been created in the folder:\n%s\nCrash dump filename is: %s",descriptor.directory().c_str(),descriptor.path());
+	  message(szBuf,GlobalStaticFlags::getIsNonGraphicalModeEnabled(),tempDataLocation);
+  }
+
+  return succeeded;
+}
+
+#endif
+
+#endif
+
+#ifdef WIN32
+void EnableCrashingOnCrashes() {
+    typedef BOOL (WINAPI *tGetPolicy)(LPDWORD lpFlags);
+    typedef BOOL (WINAPI *tSetPolicy)(DWORD dwFlags);
+    const DWORD EXCEPTION_SWALLOWING = 0x1;
+
+    HMODULE kernel32 = LoadLibraryA("kernel32.dll");
+	if(kernel32 != 0) {
+		tGetPolicy pGetPolicy = (tGetPolicy)GetProcAddress(kernel32, "GetProcessUserModeExceptionPolicy");
+		tSetPolicy pSetPolicy = (tSetPolicy)GetProcAddress(kernel32, "SetProcessUserModeExceptionPolicy");
+		if (pGetPolicy && pSetPolicy) {
+			DWORD dwFlags;
+			if (pGetPolicy(&dwFlags)) {
+				// Turn off the filter
+				pSetPolicy(dwFlags & ~EXCEPTION_SWALLOWING);
+			}
+		}
+	}
+}
+#endif
+
+int glestMainSEHWrapper(int argc, char** argv) {
 #ifdef WIN32_STACK_TRACE
+	//printf("Hooking up WIN32_STACK_TRACE...\n");
 __try {
 #endif
 
@@ -3781,6 +5693,7 @@ __try {
 #endif
 
 	initSpecialStrings();
+	IRCThread::setGlobalCacheContainerName(GameConstants::ircClientCacheLookupKey);
 	int result = glestMain(argc, argv);
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -3795,10 +5708,67 @@ __try {
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	return result;
-
 #ifdef WIN32_STACK_TRACE
-} __except(stackdumper(0, GetExceptionInformation()), EXCEPTION_CONTINUE_SEARCH) { return 0; }
+} __except(stackdumper(0, GetExceptionInformation(),true), EXCEPTION_CONTINUE_SEARCH) { return 0; }
 #endif
+
+}
+
+int glestMainWrapper(int argc, char** argv) {
+	//setlocale(LC_ALL, "zh_TW.UTF-8");
+	//setlocale(LC_ALL, "");
+
+#ifdef WIN32
+	EnableCrashingOnCrashes();
+#endif
+
+#if defined(HAVE_GOOGLE_BREAKPAD)
+/*
+	handler = new ExceptionHandler(const wstring& dump_path,
+                                                              FilterCallback filter,
+                                                              MinidumpCallback callback,
+                                                              void* callback_context,
+                                                              int handler_types,
+                                                              MINIDUMP_TYPE dump_type,
+                                                              const wchar_t* pipe_name,
+                                                              const CustomClientInfo* custom_info);
+*/
+
+	// See this link about swallowed exceptions in Win 7: http://blog.paulbetts.org/index.php/2010/07/20/the-case-of-the-disappearing-onload-exception-user-mode-callback-exceptions-in-x64/
+	//DWORD dwFlags;
+	//if (GetProcessUserModeExceptionPolicy(&dwFlags)) {
+	//	SetProcessUserModeExceptionPolicy(dwFlags & ~PROCESS_CALLBACK_FILTER_ENABLED); // turn off bit 1
+	//}
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Hooking up google_breakpad::ExceptionHandler...\n");
+
+#if defined(WIN32)
+	wstring dumpfilepath = utf8_decode(".");
+	//google_breakpad::ExceptionHandler handler(dumpfilepath, NULL, MinidumpCallback, NULL, true);
+	errorHandlerPtr.reset(new google_breakpad::ExceptionHandler(dumpfilepath, NULL, MinidumpCallback,
+											  NULL, google_breakpad::ExceptionHandler::HANDLER_ALL));
+#else
+	google_breakpad::MinidumpDescriptor descriptor(".");
+	errorHandlerPtr.reset(new google_breakpad::ExceptionHandler(descriptor, NULL, MinidumpCallback, NULL, true,-1));
+#endif
+
+//  ExceptionHandler(const wstring& dump_path,
+//                   FilterCallback filter,
+//                   MinidumpCallback callback,
+//                   void* callback_context,
+//                   int handler_types);
+
+#endif
+
+#if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__FreeBSD__) && !defined(BSD)
+//#ifdef DEBUG
+	  //printf("MTRACE will be called...\n");
+      //mtrace ();
+//#endif
+#endif
+
+	int result = glestMainSEHWrapper(argc, argv);
+	return result;
 }
 
 }}//end namespace

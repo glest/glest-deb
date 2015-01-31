@@ -46,7 +46,7 @@ string getGameReadWritePath(string lookupKey) {
 
 namespace MapEditor {
 
-const string mapeditorVersionString = "v1.6.0";
+const string mapeditorVersionString = "v1.6.1";
 const string MainWindow::winHeader = "MegaGlest Map Editor " + mapeditorVersionString;
 
 // ===============================================
@@ -67,7 +67,14 @@ wxString ToUnicode(const string& str) {
 
 MainWindow::MainWindow(string appPath)
 		: wxFrame(NULL, -1,  ToUnicode(winHeader), wxPoint(0,0), wxSize(1024, 768))
-		, lastX(0), lastY(0)
+		, glCanvas(NULL)
+		, program(NULL)
+		, lastX(0)
+		, lastY(0)
+		, panel(NULL)
+		, menuBar(NULL)
+		, fileDialog(NULL)
+
 		, currentBrush(btHeight)
 		, height(0)
 		, surface(1)
@@ -77,10 +84,8 @@ MainWindow::MainWindow(string appPath)
 		, startLocation(1)
 		, enabledGroup(ctHeight)
 		, fileModified(false)
-		, menuBar(NULL)
-		, panel(NULL)
-        , glCanvas(NULL)
-        , program(NULL), boxsizer(NULL), startupSettingsInited(false) {
+        , boxsizer(NULL)
+        ,startupSettingsInited(false) {
 
 	menuFile=NULL;
 	menuEdit=NULL;
@@ -113,11 +118,33 @@ void MainWindow::onToolPlayer(wxCommandEvent& event){
 	PopupMenu(menuBrushStartLocation);
 }
 
+void MainToolBar::onMouseMove(wxMouseEvent &event) {
+#ifdef WIN32
+	if(this->GetParent() != NULL && this->GetParent()->GetParent() != NULL) {
+		MainWindow *mainWindow = dynamic_cast<MainWindow *>(this->GetParent()->GetParent());
+		if(mainWindow != NULL) {
+			mainWindow->refreshMapRender();
+		}
+	}
+#endif
+	event.Skip();
+}
+
+BEGIN_EVENT_TABLE(MainToolBar, wxToolBar)
+
+	EVT_MOTION(MainToolBar::onMouseMove)
+
+END_EVENT_TABLE()
+
 void MainWindow::init(string fname) {
-#if wxCHECK_VERSION(2, 9, 1)
+#if wxCHECK_VERSION(2, 9, 3)
+	glCanvas->setCurrentGLContext();
+	//printf("setcurrent #1\n");
+#elif wxCHECK_VERSION(2, 9, 1)
 
 #else
 	glCanvas->SetCurrent();
+	//printf("setcurrent #2\n");
 #endif
 
 	//menus
@@ -170,6 +197,8 @@ void MainWindow::init(string fname) {
 	menuView = new wxMenu();
 	menuView->Append(miViewResetZoomAndPos, wxT("&Reset zoom and pos"));
     menuView->AppendCheckItem(miViewGrid, wxT("&Grid"));
+	menuView->AppendCheckItem(miViewHeightMap, wxT("H&eightMap"));
+	menuView->AppendCheckItem(miHideWater, wxT("Hide&Water"));
 	menuView->AppendSeparator();
 	menuView->Append(miViewHelp, wxT("&Help..."));
 	menuView->Append(miViewAbout, wxT("&About..."));
@@ -273,12 +302,13 @@ void MainWindow::init(string fname) {
 	fileName = "New (unsaved) map";
 	int status_widths[siCOUNT] = {
 		10, // empty
-		-2, // File name
-		-1, // File type
-		-2, // Current Object
-		-2, // Brush Type
-		-2, // Brush 'Value'
-		-1, // Brush Radius
+		-25, // File name
+		-6, // File type
+		-20, // Current Object
+		-14, // Brush Type
+		-20, // Brush 'Value'
+		-10, // Brush Radius
+		-25, // Position
 	};
 	CreateStatusBar(siCOUNT);
 	GetStatusBar()->SetStatusWidths(siCOUNT, status_widths);
@@ -289,8 +319,9 @@ void MainWindow::init(string fname) {
 	SetStatusText(wxT("Brush: Height"), siBRUSH_TYPE);
 	SetStatusText(wxT("Value: 0"), siBRUSH_VALUE);
 	SetStatusText(wxT("Radius: 1"), siBRUSH_RADIUS);
+	SetStatusText(wxT("Pos (Ingame): 0"), siPOS_VALUE);
 
-	wxToolBar *toolbar = new wxToolBar(this->panel, wxID_ANY);
+	wxToolBar *toolbar = new MainToolBar(this->panel, wxID_ANY);
 	toolbar->AddTool(miEditUndo, _("undo"), wxBitmap(edit_undo), _("Undo"));
 	toolbar->AddTool(miEditRedo, _("redo"), wxBitmap(edit_redo), _("Redo"));
 	toolbar->AddTool(miEditRandomizeHeights, _("randomizeHeights"), wxBitmap(edit_randomize_heights), _("Randomize Heights"));
@@ -324,7 +355,7 @@ void MainWindow::init(string fname) {
 	toolbar->AddTool(toolPlayer, _("brush_player"), wxBitmap(brush_players_player),  _("Player start position"));
 	toolbar->Realize();
 
-	wxToolBar *toolbar2 = new wxToolBar(this->panel, wxID_ANY);
+	wxToolBar *toolbar2 = new MainToolBar(this->panel, wxID_ANY);
 	toolbar2->AddTool(miBrushGradient + 1, _("brush_gradient_n5"), wxBitmap(brush_gradient_n5));
 	toolbar2->AddTool(miBrushGradient + 2, _("brush_gradient_n4"), wxBitmap(brush_gradient_n4));
 	toolbar2->AddTool(miBrushGradient + 3, _("brush_gradient_n3"), wxBitmap(brush_gradient_n3));
@@ -361,7 +392,7 @@ void MainWindow::init(string fname) {
 	toolbar2->Realize();
 
 	Config &config = Config::getInstance();
-	string iniFilePath = extractDirectoryPathFromFile(config.getFileName(false));
+
     string userData = config.getString("UserData_Root","");
     if(userData != "") {
     	endPathWithSlash(userData);
@@ -380,6 +411,7 @@ void MainWindow::init(string fname) {
 #else
 	//std::cout << "B" << std::endl;
 	wxIcon icon;
+	string iniFilePath = extractDirectoryPathFromFile(config.getFileName(false));
 	string icon_file = iniFilePath + "editor.ico";
 	std::ifstream testFile(icon_file.c_str());
 	if(testFile.good())	{
@@ -430,12 +462,21 @@ void MainWindow::init(string fname) {
 }
 
 void MainWindow::onClose(wxCloseEvent &event) {
-	if( wxMessageDialog(NULL, ToUnicode("Do you want to save the current map?"),
-		ToUnicode("Question"), wxYES_NO | wxYES_DEFAULT).ShowModal() == wxID_YES) {
-		wxCommandEvent ev;
-		MainWindow::onMenuFileSave(ev);
+	if(program != NULL && program->getMap()->getHasChanged() == true) {
+		if( wxMessageDialog(NULL, ToUnicode("Do you want to save the current map?"),
+			ToUnicode("Question"), wxYES_NO | wxYES_DEFAULT).ShowModal() == wxID_YES) {
+			wxCommandEvent ev;
+			MainWindow::onMenuFileSave(ev);
+		}
 	}
-	delete this;
+	delete program;
+	program = NULL;
+
+	//delete glCanvas;
+	if(glCanvas) glCanvas->Destroy();
+	glCanvas = NULL;
+
+	this->Destroy();
 }
 
 void MainWindow::setupStartupSettings() {
@@ -459,6 +500,9 @@ void MainWindow::setupStartupSettings() {
 }
 
 MainWindow::~MainWindow() {
+	delete fileDialog;
+	fileDialog = NULL;
+
 	delete program;
 	program = NULL;
 
@@ -492,7 +536,7 @@ void MainWindow::setExtension() {
 	if (extnsn == "gbm" || extnsn == "mgm") {
 		currentFile = cutLastExt(currentFile);
 	}
-	if (Program::getMap()->getMaxFactions() <= 4) {
+	if (Program::getMap()->getMaxFactions() <= 4 || Program::getMap()->getCliffLevel() == 0) {
 		SetStatusText(wxT(".gbm"), siFILE_TYPE);
 		currentFile += ".gbm";
 	}
@@ -564,6 +608,19 @@ void MainWindow::onMouseMove(wxMouseEvent &event, int x, int y) {
 			resourceUnderMouse = 0;
 			objectUnderMouse = currObject;
 		}
+
+		SetStatusText(wxT("Pos (Ingame): ")
+				+ ToUnicode(intToStr(program->getCellX(x))
+				+ ","
+				+ intToStr(program->getCellY(y))
+				+ " ("
+				+ intToStr(2*(program->getCellX(x)))
+				+ ","
+				+ intToStr(2*(program->getCellY(y)))
+				+ ")"), siPOS_VALUE);
+//#ifdef WIN32
+		//repaint = true;
+//#endif
 	}
 	lastX = x;
 	lastY = y;
@@ -581,7 +638,9 @@ void MainWindow::onPaint(wxPaintEvent &event) {
 		return;
 	}
 
-#if wxCHECK_VERSION(2, 9, 1)
+#if wxCHECK_VERSION(2, 9, 3)
+
+#elif wxCHECK_VERSION(2, 9, 1)
 	glCanvas->setCurrentGLContext();
 #endif
 
@@ -596,14 +655,18 @@ void MainWindow::onPaint(wxPaintEvent &event) {
 
 	lastPaintEvent.start();
 
-	if(panel) panel->Update();
-	if(menuBar) menuBar->Update();
+	if(panel) panel->Refresh(false);
+	if(menuBar) menuBar->Refresh(false);
 
+	refreshMapRender();
+	event.Skip();
+}
+
+void MainWindow::refreshMapRender() {
 	if(program && glCanvas) {
 		program->renderMap(glCanvas->GetClientSize().x, glCanvas->GetClientSize().y);
 		glCanvas->SwapBuffers();
 	}
-	event.Skip();
 }
 
 void MainWindow::onMenuFileLoad(wxCommandEvent &event) {
@@ -971,8 +1034,7 @@ void MainWindow::onMenuEditInfo(wxCommandEvent &event) {
 	simpleDialog.addValue("Author", program->getMap()->getAuthor());
 	if (!simpleDialog.show("Info",true)) return;
 
-    bool ischanged = false;
-	ischanged = program->setMapTitle(simpleDialog.getValue("Title"));
+    bool ischanged = program->setMapTitle(simpleDialog.getValue("Title"));
 	ischanged = (program->setMapDesc(simpleDialog.getValue("Description")) || ischanged);
 	ischanged = (program->setMapAuthor(simpleDialog.getValue("Author")) || ischanged);
 	if (ischanged)
@@ -988,10 +1050,10 @@ void MainWindow::onMenuEditAdvanced(wxCommandEvent &event) {
 	}
 
 	SimpleDialog simpleDialog;
-	simpleDialog.addValue("Height Factor", intToStr(program->getMap()->getHeightFactor()),"(lower means map is more more zoomed in)");
-	simpleDialog.addValue("Water Level", intToStr(program->getMap()->getWaterLevel()),"(water is visible below this, and walkable until 1.5 less)");
-	simpleDialog.addValue("Cliff Level", intToStr(program->getMap()->getCliffLevel()),"(neighboring fields with at least this heights difference are cliffs)");
-	simpleDialog.addValue("Camera Height", intToStr(program->getMap()->getCameraHeight()),"(you can give a camera heigth here default is 0 ;ignored if <20)");
+	simpleDialog.addValue("Height Factor", intToStr(program->getMap()->getHeightFactor()),"lower means more hill effect. Numbers above 100 are handled like this:\nx=x/100 ,so a 150 will mean 1.5 in the game.");
+	simpleDialog.addValue("Water Level", intToStr(program->getMap()->getWaterLevel()),"water is visible below this, and walkable until 1.5 less");
+	simpleDialog.addValue("Cliff Level", intToStr(program->getMap()->getCliffLevel()),"neighboring fields with at least this heights difference are cliffs");
+	simpleDialog.addValue("Camera Height", intToStr(program->getMap()->getCameraHeight()),"you can give a camera heigth here default is 0 ;ignored if <20");
 	if (!simpleDialog.show("Advanced")) return;
 
 	try {
@@ -1028,6 +1090,24 @@ void MainWindow::onMenuViewGrid(wxCommandEvent &event) {
 }
 
 
+void MainWindow::onMenuViewHeightMap(wxCommandEvent &event) {
+	if(program == NULL) {
+		return;
+	}
+
+	menuView->Check(miViewHeightMap, program->setHeightMapOnOff());    // miViewGrid event.GetId()
+	wxPaintEvent e;
+	onPaint(e);
+}
+void MainWindow::onMenuHideWater(wxCommandEvent &event) {
+	if(program == NULL) {
+		return;
+	}
+
+	menuView->Check(miHideWater, program->setHideWaterOnOff());    // miViewGrid event.GetId()
+	wxPaintEvent e;
+	onPaint(e);
+}
 void MainWindow::onMenuViewAbout(wxCommandEvent &event) {
 	MsgDialog(
 		this,
@@ -1330,6 +1410,8 @@ BEGIN_EVENT_TABLE(MainWindow, wxFrame)
 
 	EVT_MENU(miViewResetZoomAndPos, MainWindow::onMenuViewResetZoomAndPos)
 	EVT_MENU(miViewGrid, MainWindow::onMenuViewGrid)
+	EVT_MENU(miViewHeightMap, MainWindow::onMenuViewHeightMap)	
+	EVT_MENU(miHideWater, MainWindow::onMenuHideWater)
 	EVT_MENU(miViewAbout, MainWindow::onMenuViewAbout)
 	EVT_MENU(miViewHelp, MainWindow::onMenuViewHelp)
 
@@ -1369,6 +1451,13 @@ GlCanvas::~GlCanvas() {
 
 void GlCanvas::setCurrentGLContext() {
 #ifndef __APPLE__
+
+#if wxCHECK_VERSION(2, 9, 1)
+	if(this->context == NULL) {
+		this->context = new wxGLContext(this);
+	}
+#endif
+
 	if(this->context) { 
 		this->SetCurrent(*this->context);
 	}
@@ -1455,7 +1544,7 @@ bool SimpleDialog::show(const string &title, bool wide) {
 
 	vector<wxTextCtrl*> texts;
 	for (Values::iterator it = values.begin(); it != values.end(); ++it) {
-	    int helptextpos = it->second.find_first_of('|');
+	    size_t helptextpos = it->second.find_first_of('|');
 		sizer->Add(new wxStaticText(this, -1, ToUnicode(it->first)), 0, wxALL, 5);
 		wxTextCtrl *text = new wxTextCtrl(this, -1, ToUnicode(it->second.substr(0,helptextpos)));
 		if(wide) text->SetMinSize( wxSize((text->GetSize().GetWidth())*4, text->GetSize().GetHeight()));  // 4 time as wide as default
@@ -1524,7 +1613,7 @@ bool App::OnInit() {
     //exe_path = exe_path.BeforeLast(path_separator[0]);
     //exe_path += path_separator;
 
-	string appPath = "";
+	string appPath;
 //#if defined(__MINGW32__)
 
 #ifdef WIN32
@@ -1550,6 +1639,10 @@ bool App::OnInit() {
 #ifdef WIN32
 	wxPoint pos = mainWindow->GetScreenPosition();
 	wxSize size = mainWindow->GetSize();
+
+	mainWindow->SetSize(pos.x, pos.y, 1, 1, wxSIZE_FORCE);
+	//mainWindow->Update();
+
 	mainWindow->SetSize(pos.x, pos.y, size.x-1, size.y, wxSIZE_FORCE);
 	mainWindow->Update();
 #endif
@@ -1559,7 +1652,7 @@ bool App::OnInit() {
 
 int App::MainLoop() {
 	try {
-		//throw runtime_error("test");
+		//throw megaglest_runtime_error("test");
 		return wxApp::MainLoop();
 	}
 	catch (const exception &e) {
@@ -1582,7 +1675,6 @@ MsgDialog::MsgDialog(wxWindow *parent,
 					 const wxPoint& pos) {
 
 	m_sizerText = NULL;
-	// TODO: should we use main frame as parent by default here?
     if ( !wxDialog::Create(parent, wxID_ANY, caption,
                            pos, wxDefaultSize,
 						   style) ) {

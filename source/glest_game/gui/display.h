@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_DISPLAY_H_
 #define _GLEST_GAME_DISPLAY_H_
 
-#include <string>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <string>
 #include "texture.h"
 #include "util.h"
 #include "command_type.h"
@@ -102,6 +106,9 @@ public:
 	int computeDownY(int index) const;
 	int computeUpX(int index) const;
 	int computeUpY(int index) const;
+
+	void saveGame(XmlNode *rootNode) const;
+	void loadGame(const XmlNode *rootNode);
 
 private:
 	void calculateUpDimensions(int index);

@@ -8,6 +8,7 @@
 //	License, or (at your option) any later version
 // ==============================================================
 
+#define NOMINMAX
 #include "renderer.h"
 
 #include "texture_gl.h"
@@ -24,9 +25,10 @@
 #include "faction.h"
 #include "factory_repository.h"
 #include <cstdlib>
-#include <algorithm>
 #include "cache_manager.h"
 #include "network_manager.h"
+#include <algorithm>
+#include <iterator>
 #include "leak_dumper.h"
 
 using namespace Shared::Graphics;
@@ -37,8 +39,15 @@ using namespace Shared::Graphics;
 namespace Glest { namespace Game{
 
 uint32 Renderer::SurfaceData::nextUniqueId = 1;
-
 bool Renderer::renderText3DEnabled = true;
+
+const float SKIP_INTERPOLATION_DISTANCE = 20.0f;
+const string DEFAULT_CHAR_FOR_WIDTH_CALC = "V";
+
+enum PROJECTION_TO_INFINITY {
+	pti_D_IS_ZERO,
+	pti_N_OVER_D_IS_OUTSIDE
+};
 
 // =====================================================
 // 	class MeshCallbackTeamColor
@@ -153,12 +162,26 @@ bool VisibleQuadContainerCache::enableFrustumCalcs = true;
 
 // ==================== constructor and destructor ====================
 
-Renderer::Renderer() : BaseRenderer() {
+Renderer::Renderer() : BaseRenderer(), saveScreenShotThreadAccessor(new Mutex(CODE_AT_LINE)) {
 	//this->masterserverMode = masterserverMode;
 	//printf("this->masterserverMode = %d\n",this->masterserverMode);
 	//assert(0==1);
 
 	Renderer::rendererEnded = false;
+	shadowIntensity = 0;
+	shadowFrameSkip = 0;
+	triangleCount = 0;
+	smoothedRenderFps = 0;
+	shadowTextureSize = 0;
+	shadows = sDisabled;
+	shadowMapFrame = 0;
+	textures3D = false;
+	photoMode = false;
+	focusArrows = false;
+	pointCount = 0;
+	maxLights = 0;
+	waterAnim = 0;
+
 	this->allowRenderUnitTitles = false;
 	this->menu = NULL;
 	this->game = NULL;
@@ -175,20 +198,24 @@ Renderer::Renderer() : BaseRenderer() {
 	visibleFrameUnitListCameraKey = "";
 
 	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
+	quadCache.clearFrustumData();
 
 	lastRenderFps=MIN_FPS_NORMAL_RENDERING;
 	shadowsOffDueToMinRender=false;
 	shadowMapHandle=0;
 	shadowMapHandleValid=false;
 
-	list3d=0;
-	list3dValid=false;
-	list2d=0;
-	list2dValid=false;
-	list3dMenu=0;
-	list3dMenuValid=false;
-	customlist3dMenu=NULL;
+	//list3d=0;
+	//list3dValid=false;
+	//list2d=0;
+	//list2dValid=false;
+	//list3dMenu=0;
+	//list3dMenuValid=false;
+	//customlist3dMenu=NULL;
+	//this->mm3d = NULL;
+	this->custom_mm3d = NULL;
+
+	this->program = NULL;
 
 	//resources
 	for(int i=0; i < rsCount; ++i) {
@@ -204,7 +231,7 @@ Renderer::Renderer() : BaseRenderer() {
 	this->no2DMouseRendering = config.getBool("No2DMouseRendering","false");
 	this->maxConsoleLines= config.getInt("ConsoleMaxLines");
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Renderer::perspFarPlane [%f] this->no2DMouseRendering [%d] this->maxConsoleLines [%d]\n",__FILE__,__FUNCTION__,__LINE__,Renderer::perspFarPlane,this->no2DMouseRendering,this->maxConsoleLines);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] Renderer::perspFarPlane [%f] this->no2DMouseRendering [%d] this->maxConsoleLines [%d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,Renderer::perspFarPlane,this->no2DMouseRendering,this->maxConsoleLines);
 
 	GraphicsInterface &gi= GraphicsInterface::getInstance();
 	FactoryRepository &fr= FactoryRepository::getInstance();
@@ -230,8 +257,9 @@ Renderer::Renderer() : BaseRenderer() {
 	}
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+		static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 		saveScreenShotThread = new SimpleTaskThread(this,0,25);
-		saveScreenShotThread->setUniqueID(__FILE__);
+		saveScreenShotThread->setUniqueID(mutexOwnerId);
 		saveScreenShotThread->start();
 	}
 }
@@ -239,20 +267,27 @@ Renderer::Renderer() : BaseRenderer() {
 void Renderer::cleanupScreenshotThread() {
     if(saveScreenShotThread) {
 		saveScreenShotThread->signalQuit();
-		for(time_t elapsed = time(NULL);
-			getSaveScreenQueueSize() > 0 && difftime(time(NULL),elapsed) <= 7;) {
-			sleep(0);
-		}
-		if(saveScreenShotThread->canShutdown(true) == true &&
-				saveScreenShotThread->shutdownAndWait() == true) {
-			//printf("IN MenuStateCustomGame cleanup - C\n");
+//		for(time_t elapsed = time(NULL);
+//			getSaveScreenQueueSize() > 0 && difftime((long int)time(NULL),elapsed) <= 7;) {
+//			sleep(0);
+//		}
+//		if(saveScreenShotThread->canShutdown(true) == true &&
+//				saveScreenShotThread->shutdownAndWait() == true) {
+//			//printf("IN MenuStateCustomGame cleanup - C\n");
+//			delete saveScreenShotThread;
+//		}
+//		saveScreenShotThread = NULL;
+		if(saveScreenShotThread->shutdownAndWait() == true) {
 			delete saveScreenShotThread;
 		}
 		saveScreenShotThread = NULL;
 
-		if(getSaveScreenQueueSize() > 0) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] FORCING MEMORY CLEANUP and NOT SAVING screenshots, saveScreenQueue.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,saveScreenQueue.size());
 
+		if(getSaveScreenQueueSize() > 0) {
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] FORCING MEMORY CLEANUP and NOT SAVING screenshots, saveScreenQueue.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,saveScreenQueue.size());
+
+			static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
+			MutexSafeWrapper safeMutex(saveScreenShotThreadAccessor,mutexOwnerId);
 			for(std::list<std::pair<string,Pixmap2D *> >::iterator iter = saveScreenQueue.begin();
 				iter != saveScreenQueue.end(); ++iter) {
 				delete iter->second;
@@ -263,47 +298,70 @@ void Renderer::cleanupScreenshotThread() {
 }
 
 Renderer::~Renderer() {
-	delete modelRenderer;
-	modelRenderer = NULL;
-	delete textRenderer;
-	textRenderer = NULL;
-	delete textRenderer3D;
-	textRenderer3D = NULL;
-	delete particleRenderer;
-	particleRenderer = NULL;
+	try{
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	//resources
-	for(int i=0; i<rsCount; ++i){
-		delete modelManager[i];
-		modelManager[i] = NULL;
-		delete textureManager[i];
-		textureManager[i] = NULL;
-		delete particleManager[i];
-		particleManager[i] = NULL;
-		delete fontManager[i];
-		fontManager[i] = NULL;
+		delete modelRenderer;
+		modelRenderer = NULL;
+		delete textRenderer;
+		textRenderer = NULL;
+		delete textRenderer3D;
+		textRenderer3D = NULL;
+		delete particleRenderer;
+		particleRenderer = NULL;
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		//resources
+		for(int i=0; i<rsCount; ++i){
+			delete modelManager[i];
+			modelManager[i] = NULL;
+			delete textureManager[i];
+			textureManager[i] = NULL;
+			delete particleManager[i];
+			particleManager[i] = NULL;
+			delete fontManager[i];
+			fontManager[i] = NULL;
+		}
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		// Wait for the queue to become empty or timeout the thread at 7 seconds
+		cleanupScreenshotThread();
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		mapSurfaceData.clear();
+		quadCache = VisibleQuadContainerCache();
+		quadCache.clearFrustumData();
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		this->menu = NULL;
+		this->game = NULL;
+		this->gameCamera = NULL;
+
+		delete saveScreenShotThreadAccessor;
+		saveScreenShotThreadAccessor = NULL;
 	}
+	catch(const exception &e) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,szBuf);
 
-	// Wait for the queue to become empty or timeout the thread at 7 seconds
-    cleanupScreenshotThread();
-
-	mapSurfaceData.clear();
-	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
-
-	this->menu = NULL;
-	this->game = NULL;
-	this->gameCamera = NULL;
+		throw megaglest_runtime_error(szBuf);
+	}
 }
 
-void Renderer::simpleTask(BaseThread *callingThread) {
+void Renderer::simpleTask(BaseThread *callingThread,void *userdata) {
 	// This code reads pixmaps from a queue and saves them to disk
 	Pixmap2D *savePixMapBuffer=NULL;
 	string path="";
-	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
-	MutexSafeWrapper safeMutex(&saveScreenShotThreadAccessor,mutexOwnerId);
+	static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(saveScreenShotThreadAccessor,mutexOwnerId);
 	if(saveScreenQueue.empty() == false) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] saveScreenQueue.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,saveScreenQueue.size());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] saveScreenQueue.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,saveScreenQueue.size());
 
 		savePixMapBuffer = saveScreenQueue.front().second;
 		path = saveScreenQueue.front().first;
@@ -313,7 +371,7 @@ void Renderer::simpleTask(BaseThread *callingThread) {
 	safeMutex.ReleaseLock();
 
 	if(savePixMapBuffer != NULL) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] about to save [%s]\n",__FILE__,__FUNCTION__,__LINE__,path.c_str());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line %d] about to save [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,path.c_str());
 
 		savePixMapBuffer->save(path);
 		delete savePixMapBuffer;
@@ -344,72 +402,125 @@ void Renderer::reinitAll() {
 // ==================== init ====================
 
 void Renderer::init() {
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	Config &config= Config::getInstance();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	loadConfig();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	if(config.getBool("CheckGlCaps")){
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 		checkGlCaps();
 	}
 
-	if(config.getBool("FirstTime")){
-		config.setBool("FirstTime", false);
-		autoConfig();
-		config.save();
+	if(glActiveTexture == NULL) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error: glActiveTexture == NULL\nglActiveTexture is only supported if the GL version is 1.3 or greater,\nor if the ARB_multitexture extension is supported!");
+		throw megaglest_runtime_error(szBuf);
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	if(config.getBool("FirstTime")){
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		config.setBool("FirstTime", false);
+		autoConfig();
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		config.save();
+	}
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	modelManager[rsGlobal]->init();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	textureManager[rsGlobal]->init();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	fontManager[rsGlobal]->init();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	init2dList();
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	glHint(GL_FOG_HINT, GL_FASTEST);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//glHint(GL_GENERATE_MIPMAP_HINT, GL_FASTEST);
 	glHint(GL_LINE_SMOOTH_HINT, GL_FASTEST);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_FASTEST);
 	//glHint(GL_POINT_SMOOTH_HINT, GL_FASTEST);
 
 	//glHint(GL_POLYGON_SMOOTH_HINT, GL_FASTEST);
 	glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 }
 
 void Renderer::initGame(const Game *game, GameCamera *gameCamera) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	this->gameCamera = gameCamera;
 	VisibleQuadContainerCache::enableFrustumCalcs = Config::getInstance().getBool("EnableFrustrumCalcs","true");
 	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
+	quadCache.clearFrustumData();
 
 	SurfaceData::nextUniqueId = 1;
 	mapSurfaceData.clear();
 	this->game= game;
-	//worldToScreenPosCache.clear();
+	worldToScreenPosCache.clear();
 
 	//vars
 	shadowMapFrame= 0;
 	waterAnim= 0;
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
 
 	//check gl caps
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	checkGlOptionalCaps();
 
 	//shadows
 	if(shadows == sProjected || shadows == sShadowMapping) {
 		static_cast<ModelRendererGl*>(modelRenderer)->setSecondaryTexCoordUnit(2);
+		Config &config= Config::getInstance();
 
 		glGenTextures(1, &shadowMapHandle);
 		shadowMapHandleValid=true;
+
+		shadowIntensity= config.getFloat("ShadowIntensity","1.0");
+		if(game!=NULL){
+			shadowIntensity=shadowIntensity*game->getWorld()->getTileset()->getShadowIntense();
+			if(shadowIntensity > 1.0f){
+				shadowIntensity=1.0f;
+			}
+		}
+
 		glBindTexture(GL_TEXTURE_2D, shadowMapHandle);
 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -418,7 +529,7 @@ void Renderer::initGame(const Game *game, GameCamera *gameCamera) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 		if(shadows == sShadowMapping) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			//shadow mapping
 			glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
@@ -432,7 +543,7 @@ void Renderer::initGame(const Game *game, GameCamera *gameCamera) {
 				0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
 		}
 		else {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			//projected
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8,
@@ -443,7 +554,7 @@ void Renderer::initGame(const Game *game, GameCamera *gameCamera) {
 		shadowMapFrame= -1;
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	IF_DEBUG_EDITION( getDebugRenderer().init(); )
 
@@ -452,17 +563,68 @@ void Renderer::initGame(const Game *game, GameCamera *gameCamera) {
 	textureManager[rsGame]->init();
 	fontManager[rsGame]->init();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	init3dList();
 }
 
+void Renderer::manageDeferredParticleSystems() {
+
+//	if(deferredParticleSystems.empty() == false) {
+//		printf("deferredParticleSystems.size() = %d\n",(int)deferredParticleSystems.size());
+//	}
+
+	for(unsigned int i = 0; i < deferredParticleSystems.size(); ++i) {
+		std::pair<ParticleSystem *, ResourceScope> &deferredParticleSystem = deferredParticleSystems[i];
+		ParticleSystem *ps = deferredParticleSystem.first;
+		ResourceScope rs = deferredParticleSystem.second;
+		if(ps->getTextureFileLoadDeferred() != "" && ps->getTexture() == NULL) {
+			CoreData::TextureSystemType textureSystemId =
+					static_cast<CoreData::TextureSystemType>(
+							ps->getTextureFileLoadDeferredSystemId());
+			if(textureSystemId != CoreData::tsyst_NONE) {
+				Texture2D *texture= CoreData::getInstance().getTextureBySystemId(textureSystemId);
+				//printf("Loading texture from system [%d] [%p]\n",textureSystemId,texture);
+				ps->setTexture(texture);
+			}
+			else {
+				Texture2D *texture= newTexture2D(rs);
+				if(texture) {
+					texture->setFormat(ps->getTextureFileLoadDeferredFormat());
+					texture->getPixmap()->init(ps->getTextureFileLoadDeferredComponents());
+				}
+				if(texture) {
+					string textureFile = ps->getTextureFileLoadDeferred();
+					if(fileExists(textureFile) == false) {
+						textureFile = Config::findValidLocalFileFromPath(textureFile);
+					}
+					texture->load(textureFile);
+					ps->setTexture(texture);
+				}
+			}
+		}
+		if(dynamic_cast<GameParticleSystem *>(ps) != NULL) {
+			GameParticleSystem *gps = dynamic_cast<GameParticleSystem *>(ps);
+			if(gps != NULL && gps->getModelFileLoadDeferred() != "" && gps->getModel() == NULL) {
+                std::map<string,vector<pair<string, string> > > loadedFileList;
+                Model *model= newModel(rsGame, gps->getModelFileLoadDeferred(), false, &loadedFileList, NULL);
+                if(model)
+                    gps->setModel(model);
+			}
+		}
+		manageParticleSystem(ps, rs);
+		//printf("Managing ps [%p]\n",ps);
+	}
+	deferredParticleSystems.clear();
+	//printf("After deferredParticleSystems.size() = %d\n",deferredParticleSystems.size());
+}
+
 void Renderer::initMenu(const MainMenu *mm) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	this->menu = mm;
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
@@ -473,17 +635,19 @@ void Renderer::initMenu(const MainMenu *mm) {
 	fontManager[rsMenu]->init();
 	//modelRenderer->setCustomTexture(CoreData::getInstance().getCustomTexture());
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	init3dListMenu(mm);
+	//init3dListMenu(mm);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Renderer::reset3d() {
 	assertGl();
 	glLightModeli(GL_LIGHT_MODEL_COLOR_CONTROL, GL_SEPARATE_SPECULAR_COLOR);
-	glCallList(list3d);
+	//glCallList(list3d);
+	render3dSetup();
+
 	pointCount= 0;
 	triangleCount= 0;
 	assertGl();
@@ -492,18 +656,25 @@ void Renderer::reset3d() {
 void Renderer::reset2d() {
 	assertGl();
 	glLightModeli(GL_LIGHT_MODEL_COLOR_CONTROL, GL_SINGLE_COLOR);
-	glCallList(list2d);
+	//glCallList(list2d);
+	render2dMenuSetup();
 	assertGl();
 }
 
 void Renderer::reset3dMenu() {
 	assertGl();
 	glLightModeli(GL_LIGHT_MODEL_COLOR_CONTROL, GL_SINGLE_COLOR);
-	if(this->customlist3dMenu != NULL) {
-		glCallList(*this->customlist3dMenu);
+
+	//printf("In [%s::%s Line: %d] this->custom_mm3d [%p] this->mm3d [%p]\n",__FILE__,__FUNCTION__,__LINE__,this->custom_mm3d,this->mm3d);
+
+	if(this->custom_mm3d != NULL) {
+		render3dMenuSetup(this->custom_mm3d);
+		//glCallList(*this->customlist3dMenu);
 	}
 	else {
-		glCallList(list3dMenu);
+		render3dMenuSetup(this->menu);
+		//render3dMenuSetup(this->mm3d);
+		//glCallList(list3dMenu);
 	}
 
 	assertGl();
@@ -513,7 +684,7 @@ void Renderer::reset3dMenu() {
 
 void Renderer::end() {
 	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
+	quadCache.clearFrustumData();
 
 	if(Renderer::rendererEnded == true) {
 		return;
@@ -541,10 +712,10 @@ void Renderer::end() {
 	}
 
 	//delete 2d list
-	if(list2dValid == true) {
-		glDeleteLists(list2d, 1);
-		list2dValid=false;
-	}
+	//if(list2dValid == true) {
+	//	glDeleteLists(list2d, 1);
+	//	list2dValid=false;
+	//}
 
 	Renderer::rendererEnded = true;
 }
@@ -553,7 +724,7 @@ void Renderer::endScenario() {
 	this->game= NULL;
 	this->gameCamera = NULL;
 	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
+	quadCache.clearFrustumData();
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
@@ -571,12 +742,12 @@ void Renderer::endScenario() {
 		shadowMapHandleValid=false;
 	}
 
-	if(list3dValid == true) {
-		glDeleteLists(list3d, 1);
-		list3dValid=false;
-	}
+	//if(list3dValid == true) {
+	//	glDeleteLists(list3d, 1);
+	//	list3dValid=false;
+	//}
 
-	//worldToScreenPosCache.clear();
+	worldToScreenPosCache.clear();
 	ReleaseSurfaceVBOs();
 	mapSurfaceData.clear();
 }
@@ -584,9 +755,20 @@ void Renderer::endScenario() {
 void Renderer::endGame(bool isFinalEnd) {
 	this->game= NULL;
 	this->gameCamera = NULL;
+	Config &config= Config::getInstance();
 
-	quadCache = VisibleQuadContainerCache();
-	quadCache.clearFrustrumData();
+	try {
+		quadCache = VisibleQuadContainerCache();
+		quadCache.clearFrustumData();
+	}
+	catch(const exception &e) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,szBuf);
+
+		abort();
+	}
 
 	if(isFinalEnd) {
 		//delete resources
@@ -613,13 +795,14 @@ void Renderer::endGame(bool isFinalEnd) {
 		glDeleteTextures(1, &shadowMapHandle);
 		shadowMapHandleValid=false;
 	}
+	shadowIntensity= config.getFloat("ShadowIntensity","1.0");
 
-	if(list3dValid == true) {
-		glDeleteLists(list3d, 1);
-		list3dValid=false;
-	}
+	//if(list3dValid == true) {
+	//	glDeleteLists(list3d, 1);
+	//	list3dValid=false;
+	//}
 
-	//worldToScreenPosCache.clear();
+	worldToScreenPosCache.clear();
 	ReleaseSurfaceVBOs();
 	mapSurfaceData.clear();
 }
@@ -645,12 +828,12 @@ void Renderer::endMenu() {
 		return;
 	}
 
-	if(this->customlist3dMenu != NULL) {
-		glDeleteLists(*this->customlist3dMenu,1);
-	}
-	else {
-		glDeleteLists(list3dMenu, 1);
-	}
+	//if(this->customlist3dMenu != NULL) {
+	//	glDeleteLists(*this->customlist3dMenu,1);
+	//}
+	//else {
+	//	glDeleteLists(list3dMenu, 1);
+	//}
 }
 
 void Renderer::reloadResources() {
@@ -684,7 +867,7 @@ void Renderer::initTexture(ResourceScope rs, Texture *texture) {
 void Renderer::endTexture(ResourceScope rs, Texture *texture, bool mustExistInList) {
 	string textureFilename = texture->getPath();
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] free texture from manager [%s]\n",__FILE__,__FUNCTION__,__LINE__,textureFilename.c_str());
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] free texture from manager [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,textureFilename.c_str());
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
@@ -695,8 +878,8 @@ void Renderer::endTexture(ResourceScope rs, Texture *texture, bool mustExistInLi
 	if(rs == rsGlobal) {
 		std::map<string,Texture2D *> &crcFactionPreviewTextureCache = CacheManager::getCachedItem< std::map<string,Texture2D *> >(GameConstants::factionPreviewTextureCacheLookupKey);
 		if(crcFactionPreviewTextureCache.find(textureFilename) != crcFactionPreviewTextureCache.end()) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] textureFilename [%s]\n",__FILE__,__FUNCTION__,__LINE__,textureFilename.c_str());
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] free texture from cache [%s]\n",__FILE__,__FUNCTION__,__LINE__,textureFilename.c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] textureFilename [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,textureFilename.c_str());
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] free texture from cache [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,textureFilename.c_str());
 
 			crcFactionPreviewTextureCache.erase(textureFilename);
 		}
@@ -710,12 +893,12 @@ void Renderer::endLastTexture(ResourceScope rs, bool mustExistInList) {
 	textureManager[rs]->endLastTexture(mustExistInList);
 }
 
-Model *Renderer::newModel(ResourceScope rs){
+Model *Renderer::newModel(ResourceScope rs,const string &path,bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList, string *sourceLoader){
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return NULL;
 	}
 
-	return modelManager[rs]->newModel();
+	return modelManager[rs]->newModel(path,deletePixMapAfterLoad,loadedFileList,sourceLoader);
 }
 
 void Renderer::endModel(ResourceScope rs, Model *model,bool mustExistInList) {
@@ -765,7 +948,7 @@ Font3D *Renderer::newFont3D(ResourceScope rs){
 	return fontManager[rs]->newFont3D();
 }
 
-void Renderer::endFont(Font *font, ResourceScope rs, bool mustExistInList) {
+void Renderer::endFont(::Shared::Graphics::Font *font, ResourceScope rs, bool mustExistInList) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
@@ -781,12 +964,20 @@ void Renderer::resetFontManager(ResourceScope rs) {
 	fontManager[rsGlobal]->init();
 }
 
+void Renderer::addToDeferredParticleSystemList(std::pair<ParticleSystem *, ResourceScope> deferredParticleSystem) {
+	deferredParticleSystems.push_back(deferredParticleSystem);
+}
+
 void Renderer::manageParticleSystem(ParticleSystem *particleSystem, ResourceScope rs){
 	particleManager[rs]->manage(particleSystem);
 }
 
 bool Renderer::validateParticleSystemStillExists(ParticleSystem * particleSystem,ResourceScope rs) const {
 	return particleManager[rs]->validateParticleSystemStillExists(particleSystem);
+}
+
+void Renderer::removeParticleSystemsForParticleOwner(ParticleOwner * particleOwner,ResourceScope rs) {
+	return particleManager[rs]->removeParticleSystemsForParticleOwner(particleOwner);
 }
 
 void Renderer::cleanupParticleSystems(vector<ParticleSystem *> &particleSystems, ResourceScope rs) {
@@ -817,7 +1008,7 @@ void Renderer::swapBuffers() {
 		return;
 	}
 	//glFlush(); // should not be required - http://www.opengl.org/wiki/Common_Mistakes
-	glFlush();
+	//glFlush();
 
 	GraphicsInterface::getInstance().getCurrentContext()->swapBuffers();
 }
@@ -859,17 +1050,23 @@ void Renderer::setupLighting() {
 	}
 
     //unit lights (not projectiles)
+
 	if(timeFlow->isTotalNight()) {
-        for(int i = 0; i < world->getFactionCount() && lightCount < maxLights; ++i) {
-            for(int j = 0; j < world->getFaction(i)->getUnitCount() && lightCount < maxLights; ++j) {
-                Unit *unit= world->getFaction(i)->getUnit(j);
+		VisibleQuadContainerCache &qCache = getQuadCache();
+		if(qCache.visibleQuadUnitList.empty() == false) {
+			//bool modelRenderStarted = false;
+			for(int visibleUnitIndex = 0;
+					visibleUnitIndex < (int)qCache.visibleQuadUnitList.size() && lightCount < maxLights;
+					++visibleUnitIndex) {
+				Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
+
 				if(world->toRenderUnit(unit) &&
 					unit->getCurrVector().dist(gameCamera->getPos()) < maxLightDist &&
-                    unit->getType()->getLight() && unit->isOperative()){
-					//printf("$$$ Show light # %d / %d for Unit [%d - %s]\n",lightCount,maxLights,unit->getId(),unit->getFullName().c_str());
+					unit->getType()->getLight() && unit->isOperative()) {
+					//printf("$$$ Show light for faction: %s # %d / %d for Unit [%d - %s]\n",world->getFaction(i)->getType()->getName().c_str(),lightCount,maxLights,unit->getId(),unit->getFullName().c_str());
 
 					Vec4f pos= Vec4f(unit->getCurrVector());
-                    pos.y+=4.f;
+					pos.y+=4.f;
 
 					GLenum lightEnum= GL_LIGHT0 + lightCount;
 
@@ -880,17 +1077,45 @@ void Renderer::setupLighting() {
 					glLightfv(lightEnum, GL_SPECULAR, Vec4f(unit->getType()->getLightColor()*0.3f).ptr());
 					glLightf(lightEnum, GL_QUADRATIC_ATTENUATION, 0.05f);
 
-                    ++lightCount;
+					++lightCount;
 
 					const GameCamera *gameCamera= game->getGameCamera();
 
 					if(Vec3f(pos).dist(gameCamera->getPos())<Vec3f(nearestLightPos).dist(gameCamera->getPos())){
 						nearestLightPos= pos;
 					}
-                }
-            }
-        }
-    }
+				}
+			}
+		}
+	}
+
+	assertGl();
+}
+
+void Renderer::setupLightingForRotatedModel() {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	const World *world= game->getWorld();
+	//const GameCamera *gameCamera= game->getGameCamera();
+	const TimeFlow *timeFlow= world->getTimeFlow();
+	float time= timeFlow->getTime();
+
+	assertGl();
+
+    //sun/moon light
+	Vec3f lightColor= timeFlow->computeLightColor();
+	Vec3f fogColor= world->getTileset()->getFogColor();
+	Vec4f lightPos= timeFlow->isDay()? computeSunPos(time): computeMoonPos(time);
+	//nearestLightPos= lightPos;
+
+	glLightfv(GL_LIGHT0, GL_POSITION, lightPos.ptr());
+	glLightfv(GL_LIGHT0, GL_AMBIENT, Vec4f(lightColor*lightAmbFactor, 1.f).ptr());
+	glLightfv(GL_LIGHT0, GL_DIFFUSE, Vec4f(lightColor, 1.f).ptr());
+	glLightfv(GL_LIGHT0, GL_SPECULAR, Vec4f(0.0f, 0.0f, 0.f, 1.f).ptr());
+
+	glFogfv(GL_FOG_COLOR, Vec4f(fogColor*lightColor, 1.f).ptr());
 
 	assertGl();
 }
@@ -917,58 +1142,12 @@ void Renderer::loadCameraMatrix(const Camera *camera) {
 	glTranslatef(-position.x, -position.y, -position.z);
 }
 
-enum PROJECTION_TO_INFINITY { D_IS_ZERO, N_OVER_D_IS_OUTSIDE };
-
 static Vec2i _unprojectMap(const Vec2i& pt,const GLdouble* model,const GLdouble* projection,const GLint* viewport,const char* label=NULL) {
 	Vec3d a,b;
 	/*  note viewport[3] is height of window in pixels  */
 	GLint realy = viewport[3] - (GLint) pt.y;
 	gluUnProject(pt.x,realy,0,model,projection,viewport,&a.x,&a.y,&a.z);
 	gluUnProject(pt.x,realy,1,model,projection,viewport,&b.x,&b.y,&b.z);
-
-/*
-	//We could use some vector3d class, but this will do fine for now
-	//ray
-	b.x -= a.x;
-	b.y -= a.y;
-	b.z -= a.z;
-	float rayLength = streflop::sqrtf(a.x*a.x + a.y*a.y + a.z*a.z);
-	//normalize
-	b.x /= rayLength;
-	b.y /= rayLength;
-	b.z /= rayLength;
-
-	//T = [planeNormal.(pointOnPlane - rayOrigin)]/planeNormal.rayDirection;
-	//pointInPlane = rayOrigin + (rayDirection * T);
-
-	float dot1, dot2;
-
-	float pointInPlaneX = 0;
-	float pointInPlaneY = 0;
-	float pointInPlaneZ = 0;
-	float planeNormalX = 0;
-	float planeNormalY = 0;
-	float planeNormalZ = -1;
-
-	pointInPlaneX -= a.x;
-	pointInPlaneY -= a.y;
-	pointInPlaneZ -= a.z;
-
-	dot1 = (planeNormalX * pointInPlaneX) + (planeNormalY * pointInPlaneY) + (planeNormalZ * pointInPlaneZ);
-	dot2 = (planeNormalX * b.x) + (planeNormalY * b.y) + (planeNormalZ * b.z);
-
-	float t = dot1/dot2;
-
-	b.x *= t;
-	b.y *= t;
-	//b.z *= t;
-	//we don't need the z coordinate in my case
-
-	//return Vec2i(b.x + a.x, b.z + a.z);
-	return Vec2i(b.x + a.x, b.z + a.z);
-*/
-
-
 
 	// junk values if you were looking parallel to the XZ plane; this shouldn't happen as the camera can't do this?
 	const Vec3f
@@ -979,48 +1158,28 @@ static Vec2i _unprojectMap(const Vec2i& pt,const GLdouble* model,const GLdouble*
 		u = stop-start,
 		w = start-plane;
 	const float d = norm.x*u.x + norm.y*u.y + norm.z*u.z;
-#ifdef USE_STREFLOP
-	if(streflop::fabs(d) < 0.00001)
-#else
-	if(fabs(d) < 0.00001)
-#endif
-		throw D_IS_ZERO;
+	if(std::fabs(d) < 0.00001)
+		throw pti_D_IS_ZERO;
 
 	const float nd = -(norm.x*w.x + norm.y*w.y + norm.z*w.z) / d;
 	if(nd < 0.0 || nd >= 1.0)
-		throw N_OVER_D_IS_OUTSIDE;
+		throw pti_N_OVER_D_IS_OUTSIDE;
 
 	const Vec3f i = start + u*nd;
 	//const Vec2i pos(i.x,i.z);
 
 	Vec2i pos;
 	if(strcmp(label,"tl") == 0) {
-#ifdef USE_STREFLOP
-		pos = Vec2i(streflop::floor(i.x),streflop::floor(i.z));
-#else
-		pos = Vec2i(floor(i.x),floor(i.z));
-#endif
+		pos = Vec2i(std::floor(i.x),std::floor(i.z));
 	}
 	else if(strcmp(label,"tr") == 0) {
-#ifdef USE_STREFLOP
-		pos = Vec2i(streflop::ceil(i.x),streflop::floor(i.z));
-#else
-		pos = Vec2i(ceil(i.x),floor(i.z));
-#endif
+		pos = Vec2i(std::ceil(i.x),std::floor(i.z));
 	}
 	else if(strcmp(label,"bl") == 0) {
-#ifdef USE_STREFLOP
-		pos = Vec2i(streflop::floor(i.x),streflop::ceil(i.z));
-#else
-		pos = Vec2i(floor(i.x),ceil(i.z));
-#endif
+		pos = Vec2i(std::floor(i.x),std::ceil(i.z));
 	}
 	else if(strcmp(label,"br") == 0) {
-#ifdef USE_STREFLOP
-		pos = Vec2i(streflop::ceil(i.x),streflop::ceil(i.z));
-#else
-		pos = Vec2i(ceil(i.x),ceil(i.z));
-#endif
+		pos = Vec2i(std::ceil(i.x),std::ceil(i.z));
 	}
 
 	if(false) { // print debug info
@@ -1036,34 +1195,8 @@ static Vec2i _unprojectMap(const Vec2i& pt,const GLdouble* model,const GLdouble*
 
 }
 
-//Matrix4 LookAt( Vector3 eye, Vector3 target, Vector3 up ) {
-//    Vector3 zaxis = normal(target - eye);    // The "look-at" vector.
-//    Vector3 xaxis = normal(cross(up, zaxis));// The "right" vector.
-//    Vector3 yaxis = cross(zaxis, xaxis);     // The "up" vector.
-//
-//    // Create a 4x4 orientation matrix from the right, up, and at vectors
-//    Matrix4 orientation = {
-//        xaxis.x, yaxis.x, zaxis.x, 0,
-//        xaxis.y, yaxis.y, zaxis.y, 0,
-//        xaxis.z, yaxis.z, zaxis.z, 0,
-//          0,       0,       0,     1
-//    };
-//
-//    // Create a 4x4 translation matrix by negating the eye position.
-//    Matrix4 translation = {
-//          1,      0,      0,     0,
-//          0,      1,      0,     0,
-//          0,      0,      1,     0,
-//        -eye.x, -eye.y, -eye.z,  1
-//    };
-//
-//    // Combine the orientation and translation to compute the view matrix
-//    return ( translation * orientation );
-//}
-
-
 bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
-   bool frustrumChanged = false;
+   bool frustumChanged = false;
    vector<float> proj(16,0);
    vector<float> modl(16,0);
 
@@ -1076,11 +1209,11 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 //   for(unsigned int i = 0; i < proj.size(); ++i) {
 //	   //printf("\ni = %d proj [%f][%f] modl [%f][%f]\n",i,proj[i],quadCacheItem.proj[i],modl[i],quadCacheItem.modl[i]);
 //	   if(proj[i] != quadCacheItem.proj[i]) {
-//		   frustrumChanged = true;
+//		   frustumChanged = true;
 //		   break;
 //	   }
 //	   if(modl[i] != quadCacheItem.modl[i]) {
-//		   frustrumChanged = true;
+//		   frustumChanged = true;
 //		   break;
 //	   }
 //   }
@@ -1092,22 +1225,22 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   lookupKey = make_pair(proj,modl);
 	   map<pair<vector<float>,vector<float> >, vector<vector<float> > >::iterator iterFind = quadCacheItem.frustumDataCache.find(lookupKey);
 	   if(iterFind != quadCacheItem.frustumDataCache.end()) {
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum found in cache\n");
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum found in cache\n");
 
 		   quadCacheItem.frustumData = iterFind->second;
-		   frustrumChanged = (quadCacheItem.proj != proj || quadCacheItem.modl != modl);
-		   if(frustrumChanged == true) {
+		   frustumChanged = (quadCacheItem.proj != proj || quadCacheItem.modl != modl);
+		   if(frustumChanged == true) {
 			   quadCacheItem.proj = proj;
 			   quadCacheItem.modl = modl;
 		   }
 
-		   return frustrumChanged;
+		   return frustumChanged;
 	   }
    }
 
    if(quadCacheItem.proj != proj || quadCacheItem.modl != modl) {
-   //if(frustrumChanged == true) {
-	   frustrumChanged = true;
+   //if(frustumChanged == true) {
+	   frustumChanged = true;
 	   vector<vector<float> > &frustum = quadCacheItem.frustumData;
 	   //assert(frustum.size() == 6);
 	   //assert(frustum[0].size() == 4);
@@ -1145,21 +1278,17 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[0][2] = clip[11] - clip[ 8];
 	   frustum[0][3] = clip[15] - clip[12];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",0,frustum[0][0],frustum[0][1],frustum[0][2],frustum[0][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",0,frustum[0][0],frustum[0][1],frustum[0][2],frustum[0][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[0][0] * frustum[0][0] + frustum[0][1] * frustum[0][1] + frustum[0][2] * frustum[0][2] );
-	#else
-	   t = sqrt( frustum[0][0] * frustum[0][0] + frustum[0][1] * frustum[0][1] + frustum[0][2] * frustum[0][2] );
-	#endif
+	   t = std::sqrt( frustum[0][0] * frustum[0][0] + frustum[0][1] * frustum[0][1] + frustum[0][2] * frustum[0][2] );
 	   if(t != 0.0) {
 		   frustum[0][0] /= t;
 		   frustum[0][1] /= t;
 		   frustum[0][2] /= t;
 		   frustum[0][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",0,frustum[0][0],frustum[0][1],frustum[0][2],frustum[0][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",0,frustum[0][0],frustum[0][1],frustum[0][2],frustum[0][3],t);
 	   }
 
 	   /* Extract the numbers for the LEFT plane */
@@ -1168,21 +1297,17 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[1][2] = clip[11] + clip[ 8];
 	   frustum[1][3] = clip[15] + clip[12];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",1,frustum[1][0],frustum[1][1],frustum[1][2],frustum[1][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",1,frustum[1][0],frustum[1][1],frustum[1][2],frustum[1][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[1][0] * frustum[1][0] + frustum[1][1] * frustum[1][1] + frustum[1][2] * frustum[1][2] );
-	#else
-	   t = sqrt( frustum[1][0] * frustum[1][0] + frustum[1][1] * frustum[1][1] + frustum[1][2] * frustum[1][2] );
-	#endif
+	   t = std::sqrt( frustum[1][0] * frustum[1][0] + frustum[1][1] * frustum[1][1] + frustum[1][2] * frustum[1][2] );
 	   if(t != 0.0) {
 		   frustum[1][0] /= t;
 		   frustum[1][1] /= t;
 		   frustum[1][2] /= t;
 		   frustum[1][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",1,frustum[1][0],frustum[1][1],frustum[1][2],frustum[1][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",1,frustum[1][0],frustum[1][1],frustum[1][2],frustum[1][3],t);
 	   }
 
 	   /* Extract the BOTTOM plane */
@@ -1191,21 +1316,18 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[2][2] = clip[11] + clip[ 9];
 	   frustum[2][3] = clip[15] + clip[13];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",2,frustum[2][0],frustum[2][1],frustum[2][2],frustum[2][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",2,frustum[2][0],frustum[2][1],frustum[2][2],frustum[2][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[2][0] * frustum[2][0] + frustum[2][1] * frustum[2][1] + frustum[2][2] * frustum[2][2] );
-	#else
-	   t = sqrt( frustum[2][0] * frustum[2][0] + frustum[2][1] * frustum[2][1] + frustum[2][2] * frustum[2][2] );
-	#endif
+
+	   t = std::sqrt( frustum[2][0] * frustum[2][0] + frustum[2][1] * frustum[2][1] + frustum[2][2] * frustum[2][2] );
 	   if(t != 0.0) {
 		   frustum[2][0] /= t;
 		   frustum[2][1] /= t;
 		   frustum[2][2] /= t;
 		   frustum[2][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",2,frustum[2][0],frustum[2][1],frustum[2][2],frustum[2][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",2,frustum[2][0],frustum[2][1],frustum[2][2],frustum[2][3],t);
 	   }
 
 	   /* Extract the TOP plane */
@@ -1214,22 +1336,18 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[3][2] = clip[11] - clip[ 9];
 	   frustum[3][3] = clip[15] - clip[13];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",3,frustum[3][0],frustum[3][1],frustum[3][2],frustum[3][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",3,frustum[3][0],frustum[3][1],frustum[3][2],frustum[3][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[3][0] * frustum[3][0] + frustum[3][1] * frustum[3][1] + frustum[3][2] * frustum[3][2] );
-	#else
-	   t = sqrt( frustum[3][0] * frustum[3][0] + frustum[3][1] * frustum[3][1] + frustum[3][2] * frustum[3][2] );
-	#endif
 
+	   t = std::sqrt( frustum[3][0] * frustum[3][0] + frustum[3][1] * frustum[3][1] + frustum[3][2] * frustum[3][2] );
 	   if(t != 0.0) {
 		   frustum[3][0] /= t;
 		   frustum[3][1] /= t;
 		   frustum[3][2] /= t;
 		   frustum[3][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",3,frustum[3][0],frustum[3][1],frustum[3][2],frustum[3][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",3,frustum[3][0],frustum[3][1],frustum[3][2],frustum[3][3],t);
 	   }
 
 	   /* Extract the FAR plane */
@@ -1238,14 +1356,11 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[4][2] = clip[11] - clip[10];
 	   frustum[4][3] = clip[15] - clip[14];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",4,frustum[4][0],frustum[4][1],frustum[4][2],frustum[4][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",4,frustum[4][0],frustum[4][1],frustum[4][2],frustum[4][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[4][0] * frustum[4][0] + frustum[4][1] * frustum[4][1] + frustum[4][2] * frustum[4][2] );
-	#else
-	   t = sqrt( frustum[4][0] * frustum[4][0] + frustum[4][1] * frustum[4][1] + frustum[4][2] * frustum[4][2] );
-	#endif
+
+	   t = std::sqrt( frustum[4][0] * frustum[4][0] + frustum[4][1] * frustum[4][1] + frustum[4][2] * frustum[4][2] );
 
 	   if(t != 0.0) {
 		   frustum[4][0] /= t;
@@ -1253,7 +1368,7 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 		   frustum[4][2] /= t;
 		   frustum[4][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",4,frustum[4][0],frustum[4][1],frustum[4][2],frustum[4][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",4,frustum[4][0],frustum[4][1],frustum[4][2],frustum[4][3],t);
 	   }
 
 	   /* Extract the NEAR plane */
@@ -1262,14 +1377,11 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 	   frustum[5][2] = clip[11] + clip[10];
 	   frustum[5][3] = clip[15] + clip[14];
 
-	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%da: [%f][%f][%f][%f]\n",5,frustum[5][0],frustum[5][1],frustum[5][2],frustum[5][3]);
+	   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%da: [%f][%f][%f][%f]\n",5,frustum[5][0],frustum[5][1],frustum[5][2],frustum[5][3]);
 
 	   /* Normalize the result */
-	#ifdef USE_STREFLOP
-	   t = streflop::sqrt( frustum[5][0] * frustum[5][0] + frustum[5][1] * frustum[5][1] + frustum[5][2] * frustum[5][2] );
-	#else
-	   t = sqrt( frustum[5][0] * frustum[5][0] + frustum[5][1] * frustum[5][1] + frustum[5][2] * frustum[5][2] );
-	#endif
+
+	   t = std::sqrt( frustum[5][0] * frustum[5][0] + frustum[5][1] * frustum[5][1] + frustum[5][2] * frustum[5][2] );
 
 	   if(t != 0.0) {
 		   frustum[5][0] /= t;
@@ -1277,14 +1389,14 @@ bool Renderer::ExtractFrustum(VisibleQuadContainerCache &quadCacheItem) {
 		   frustum[5][2] /= t;
 		   frustum[5][3] /= t;
 
-		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustrum #%db: [%f][%f][%f][%f] t = %f\n",5,frustum[5][0],frustum[5][1],frustum[5][2],frustum[5][3],t);
+		   if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nCalc Frustum #%db: [%f][%f][%f][%f] t = %f\n",5,frustum[5][0],frustum[5][1],frustum[5][2],frustum[5][3],t);
 	   }
 
 	   if(useFrustumCache == true) {
 		   quadCacheItem.frustumDataCache[lookupKey] = frustum;
 	   }
    }
-   return frustrumChanged;
+   return frustumChanged;
 }
 
 bool Renderer::PointInFrustum(vector<vector<float> > &frustum, float x, float y, float z ) {
@@ -1300,7 +1412,7 @@ bool Renderer::PointInFrustum(vector<vector<float> > &frustum, float x, float y,
 
 bool Renderer::SphereInFrustum(vector<vector<float> > &frustum,  float x, float y, float z, float radius) {
 	// Go through all the sides of the frustum
-	for(int i = 0; i < frustum.size(); i++ ) {
+	for(int i = 0; i < (int)frustum.size(); i++ ) {
 		// If the center of the sphere is farther away from the plane than the radius
 		if(frustum[i][0] * x + frustum[i][1] * y + frustum[i][2] * z + frustum[i][3] <= -radius ) {
 			// The distance was greater than the radius so the sphere is outside of the frustum
@@ -1340,25 +1452,12 @@ bool Renderer::CubeInFrustum(vector<vector<float> > &frustum, float x, float y, 
 void Renderer::computeVisibleQuad() {
 	visibleQuad = this->gameCamera->computeVisibleQuad();
 
-	//Matrix4 LookAt( gameCamera->getPos(), gameCamera->getPos(), Vector3 up );
-	//gluLookAt
-
-	//const Metrics &metrics= Metrics::getInstance();
-	//float Hnear = 2.0 * streflop::tanf(gameCamera->getFov() / 2.0) * perspNearPlane;
-	//float Hnear = 2.0 * streflop::tanf(perspFov / 2.0) * perspNearPlane;
-	//float Wnear = Hnear * metrics.getAspectRatio();
-	//The same reasoning can be applied to the far plane:
-	//float Hfar = 2.0 * streflop::tanf(perspFov / 2.0) * perspFarPlane;
-	//float Hfar = 2.0 * streflop::tanf(gameCamera->getFov() / 2.0) * perspFarPlane;
-	//float Wfar = Hfar * metrics.getAspectRatio();
-	//printf("Hnear = %f, Wnear = %f, Hfar = %f, Wfar = %f\n",Hnear,Wnear,Hfar,Wfar);
-
-	bool frustrumChanged = false;
+	bool frustumChanged = false;
 	if(VisibleQuadContainerCache::enableFrustumCalcs == true) {
-		frustrumChanged = ExtractFrustum(quadCache);
+		frustumChanged = ExtractFrustum(quadCache);
 	}
 
-	if(frustrumChanged && SystemFlags::VERBOSE_MODE_ENABLED) {
+	if(frustumChanged && SystemFlags::VERBOSE_MODE_ENABLED) {
 		printf("\nCamera: %d,%d %d,%d %d,%d %d,%d\n",
 			visibleQuad.p[0].x,visibleQuad.p[0].y,
 			visibleQuad.p[1].x,visibleQuad.p[1].y,
@@ -1366,7 +1465,7 @@ void Renderer::computeVisibleQuad() {
 			visibleQuad.p[3].x,visibleQuad.p[3].y);
 
 		for(unsigned int i = 0; i < quadCache.frustumData.size(); ++i) {
-			printf("\nFrustrum #%d [%lu]: ",i,quadCache.frustumData.size());
+			printf("\nFrustum #%u [" MG_SIZE_T_SPECIFIER "]: ",i,quadCache.frustumData.size());
 			vector<float> &frustumDataInner = quadCache.frustumData[i];
 			for(unsigned int j = 0; j < frustumDataInner.size(); ++j) {
 				printf("[%f]",quadCache.frustumData[i][j]);
@@ -1493,7 +1592,7 @@ void Renderer::computeVisibleQuad() {
 					visibleQuad.p[3].x,visibleQuad.p[3].y);
 			}
 		}
-		catch(PROJECTION_TO_INFINITY e) {
+		catch(PROJECTION_TO_INFINITY &e) {
 			if(debug) printf("hmm staring at the horizon %d\n",(int)e);
 			// use historic code solution
 			visibleQuad = this->gameCamera->computeVisibleQuad();
@@ -1512,15 +1611,49 @@ void Renderer::renderMouse2d(int x, int y, int anim, float fade) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
+//	float blue=0.0f;
+//	float green=0.4f;
+	if(game != NULL && game->getGui() != NULL) {
+		const Gui *gui=game->getGui();
+		const Display *display=gui->getDisplay();
+		int downPos= display->getDownSelectedPos();
+		if(downPos != Display::invalidPos){
+			// in state of doing something
+			const Texture2D *texture= display->getDownImage(downPos);
+			renderTextureQuad(x+18,y-50,32,32,texture,0.8f);
+		}
+//		else {
+//			// Display current commandtype
+//			const Unit *unit=NULL;
+//			if(gui->getSelection()->isEmpty()){
+//				blue=0.0f;
+//				green=0.1f;
+//			}
+//			else{
+//				unit=gui->getSelection()->getFrontUnit();
+//				if(unit->getCurrCommand()!=NULL && unit->getCurrCommand()->getCommandType()->getImage()!=NULL){
+//					const Texture2D *texture = unit->getCurrCommand()->getCommandType()->getImage();
+//					renderTextureQuad(x+18,y-50,32,32,texture,0.2f);
+//				}
+//			}
+//		}
 
-	float color1 = 0.0, color2 = 0.0;
+		if(game->isMarkCellMode() == true) {
+			const Texture2D *texture= game->getMarkCellTexture();
+			renderTextureQuad(x-18,y-50,texture->getTextureWidth(),texture->getTextureHeight(),texture,0.8f);
+		}
+		if(game->isUnMarkCellMode() == true) {
+			const Texture2D *texture= game->getUnMarkCellTexture();
+			renderTextureQuad(x-18,y-50,texture->getTextureWidth(),texture->getTextureHeight(),texture,0.8f);
+		}
+	}
 
 	float fadeFactor = fade + 1.f;
 
 	anim= anim * 2 - maxMouse2dAnim;
 
-	color2= (abs(anim*(int)fadeFactor)/static_cast<float>(maxMouse2dAnim))/2.f+0.4f;
-	color1= (abs(anim*(int)fadeFactor)/static_cast<float>(maxMouse2dAnim))/2.f+0.8f;
+	float color2= (abs(anim*(int)fadeFactor)/static_cast<float>(maxMouse2dAnim))/2.f+0.4f;
+	float color1= (abs(anim*(int)fadeFactor)/static_cast<float>(maxMouse2dAnim))/2.f+0.8f;
 
 	glPushAttrib(GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT);
 		glEnable(GL_BLEND);
@@ -1544,6 +1677,7 @@ void Renderer::renderMouse2d(int x, int y, int anim, float fade) {
 			glVertex2i(x+10, y-20);
 		glEnd();
 	glPopAttrib();
+
 
 /*
 	if(no2DMouseRendering == true) {
@@ -1601,39 +1735,43 @@ void Renderer::renderMouse3d() {
 		return;
 	}
 
+	Config &config= Config::getInstance();
+	if(config.getBool("RecordMode","false") == true) {
+		return;
+	}
+
 	if(game == NULL) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s] Line: %d game == NULL",__FILE__,__FUNCTION__,__LINE__);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d game == NULL",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
 	}
 	else if(game->getGui() == NULL) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s] Line: %d game->getGui() == NULL",__FILE__,__FUNCTION__,__LINE__);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d game->getGui() == NULL",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
 	}
 	else if(game->getGui()->getMouse3d() == NULL) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s] Line: %d game->getGui()->getMouse3d() == NULL",__FILE__,__FUNCTION__,__LINE__);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d game->getGui()->getMouse3d() == NULL",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	const Gui *gui= game->getGui();
 	const Mouse3d *mouse3d= gui->getMouse3d();
 	const Map *map= game->getWorld()->getMap();
 	if(map == NULL) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s] Line: %d map == NULL",__FILE__,__FUNCTION__,__LINE__);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d map == NULL",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
 	}
-
-	GLUquadricObj *cilQuadric;
-	Vec4f color;
 
 	assertGl();
 
 	if((mouse3d->isEnabled() || gui->isPlacingBuilding()) && gui->isValidPosObjWorld()) {
+		const Vec2i &pos= gui->getPosObjWorld();
+
 		glMatrixMode(GL_MODELVIEW);
-		glPushMatrix();
+
 		glPushAttrib(GL_CURRENT_BIT | GL_LIGHTING_BIT | GL_ENABLE_BIT | GL_DEPTH_BUFFER_BIT);
 		glEnable(GL_BLEND);
 		glDisable(GL_STENCIL_TEST);
@@ -1641,44 +1779,24 @@ void Renderer::renderMouse3d() {
 		glEnable(GL_COLOR_MATERIAL);
 		glDepthMask(GL_FALSE);
 
-		const Vec2i &pos= gui->getPosObjWorld();
-
-		Vec3f pos3f= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
-
 		if(gui->isPlacingBuilding()) {
+
+			modelRenderer->begin(true, true, false, false);
+
 			const UnitType *building= gui->getBuilding();
+			const Gui *gui= game->getGui();
+			renderGhostModel(building, pos, gui->getSelectedFacing());
 
-			//selection building emplacement
-			float offset= building->getSize()/2.f-0.5f;
-			glTranslatef(pos3f.x+offset, pos3f.y, pos3f.z+offset);
-
-			//choose color
-			if(map->isFreeCells(pos, building->getSize(), fLand)){
-				color= Vec4f(1.f, 1.f, 1.f, 0.5f);
-			}
-			else {
-				color= Vec4f(1.f, 0.f, 0.f, 0.5f);
-			}
-
-			modelRenderer->begin(true, true, false);
-			glColor4fv(color.ptr());
-			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, color.ptr());
-			Model *buildingModel= building->getFirstStOfClass(scStop)->getAnimation();
-
-			if(gui->getSelectedFacing() != CardinalDir::NORTH) {
-				float rotateAmount = gui->getSelectedFacing() * 90.f;
-				if(rotateAmount > 0) {
-					glRotatef(rotateAmount, 0.f, 1.f, 0.f);
-				}
-			}
-
-			buildingModel->updateInterpolationData(0.f, false);
-			modelRenderer->render(buildingModel);
-			glDisable(GL_COLOR_MATERIAL);
 			modelRenderer->end();
 
+			glDisable(GL_COLOR_MATERIAL);
+			glPopAttrib();
 		}
 		else {
+			glPushMatrix();
+			Vec3f pos3f= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
+			Vec4f color;
+			GLUquadricObj *cilQuadric;
 			//standard mouse
 			glDisable(GL_TEXTURE_2D);
 			glDisable(GL_CULL_FACE);
@@ -1698,10 +1816,10 @@ void Renderer::renderMouse3d() {
 			gluCylinder(cilQuadric, 0.7f, 0.f, 1.f, 4, 1);
 			gluCylinder(cilQuadric, 0.7f, 0.f, 0.f, 4, 1);
 			gluDeleteQuadric(cilQuadric);
-		}
 
-		glPopAttrib();
-		glPopMatrix();
+			glPopAttrib();
+			glPopMatrix();
+		}
 	}
 
 }
@@ -1791,18 +1909,21 @@ void Renderer::renderConsoleLine3D(int lineIndex, int xPosition, int yPosition, 
 			if(playerName != lineInfo->originalPlayerName && lineInfo->originalPlayerName != "") {
 				playerName = lineInfo->originalPlayerName;
 			}
+			if(playerName == GameConstants::NETWORK_SLOT_UNCONNECTED_SLOTNAME) {
+				playerName = lang.getString("SystemUser");
+			}
 			//printf("playerName [%s], line [%s]\n",playerName.c_str(),line.c_str());
 
 			//string headerLine = "*" + playerName + ":";
 			//string headerLine = playerName + ": ";
 			string headerLine = playerName;
 			if(lineInfo->teamMode == true) {
-				headerLine += " (" + lang.get("Team") + ")";
+				headerLine += " (" + lang.getString("Team") + ")";
 			}
 			headerLine += ": ";
 
 			if(fontMetrics == NULL) {
-				throw runtime_error("fontMetrics == NULL");
+				throw megaglest_runtime_error("fontMetrics == NULL");
 			}
 
 			renderTextShadow3D(
@@ -1824,12 +1945,12 @@ void Renderer::renderConsoleLine3D(int lineIndex, int xPosition, int yPosition, 
         //string headerLine = playerName + ": ";
 		string headerLine = playerName;
 		if(lineInfo->teamMode == true) {
-			headerLine += " (" + lang.get("Team") + ")";
+			headerLine += " (" + lang.getString("Team") + ")";
 		}
 		headerLine += ": ";
 
         if(fontMetrics == NULL) {
-            throw runtime_error("fontMetrics == NULL");
+            throw megaglest_runtime_error("fontMetrics == NULL");
         }
 
         renderTextShadow3D(
@@ -1901,12 +2022,12 @@ void Renderer::renderConsoleLine(int lineIndex, int xPosition, int yPosition, in
 			//string headerLine = playerName + ": ";
 			string headerLine = playerName;
 			if(lineInfo->teamMode == true) {
-				headerLine += " (" + lang.get("Team") + ")";
+				headerLine += " (" + lang.getString("Team") + ")";
 			}
 			headerLine += ": ";
 
 			if(fontMetrics == NULL) {
-				throw runtime_error("fontMetrics == NULL");
+				throw megaglest_runtime_error("fontMetrics == NULL");
 			}
 
 			renderTextShadow(
@@ -1926,12 +2047,12 @@ void Renderer::renderConsoleLine(int lineIndex, int xPosition, int yPosition, in
         //string headerLine = playerName + ": ";
         string headerLine = playerName;
 		if(lineInfo->teamMode == true) {
-			headerLine += " (" + lang.get("Team") + ")";
+			headerLine += " (" + lang.getString("Team") + ")";
 		}
 		headerLine += ": ";
 
         if(fontMetrics == NULL) {
-            throw runtime_error("fontMetrics == NULL");
+            throw megaglest_runtime_error("fontMetrics == NULL");
         }
 
         renderTextShadow(
@@ -1966,13 +2087,33 @@ void Renderer::renderConsole(const Console *console,const bool showFullConsole,
 	}
 
 	if(console == NULL) {
-		throw runtime_error("console == NULL");
+		throw megaglest_runtime_error("console == NULL");
 	}
 
 	glPushAttrib(GL_ENABLE_BIT);
 	glEnable(GL_BLEND);
 
 	if(showFullConsole) {
+	    int x= console->getXPos()-5;
+	    int y= console->getYPos()-5;
+	    int h= console->getLineHeight()*console->getStoredLineCount();
+
+	    if(h > 0) {
+	    	int w= 1000;
+	    	//background
+	    	glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+	    	glEnable(GL_BLEND);
+
+	    	glColor4f(0.0f, 0.0f, 0.0f, 0.8f) ;
+
+	    	glBegin(GL_TRIANGLE_STRIP);
+	    		glVertex2i(x, y);
+	    		glVertex2i(x, y+h);
+	    		glVertex2i(x+w, y);
+	    		glVertex2i(x+w, y+h);
+	    	glEnd();
+	    	glPopAttrib();
+	    }
 		for(int i = 0; i < console->getStoredLineCount(); ++i) {
 			const ConsoleLineInfo &lineInfo = console->getStoredLineItem(i);
 			if(renderText3DEnabled == true) {
@@ -2028,14 +2169,17 @@ void Renderer::renderChatManager(const ChatManager *chatManager) {
 	if(chatManager->getEditEnabled()) {
 		string text="";
 
-		if(chatManager->getInMenu()) {
-			text += lang.get("Chat");
+		if(chatManager->isInCustomInputMode() == true) {
+			text += lang.getString("CellHint");
+		}
+		else if(chatManager->getInMenu()) {
+			text += lang.getString("Chat");
 		}
 		else if(chatManager->getTeamMode()) {
-			text += lang.get("Team");
+			text += lang.getString("Team");
 		}
 		else {
-			text += lang.get("All");
+			text += lang.getString("All");
 		}
 		text += ": " + chatManager->getText() + "_";
 
@@ -2065,7 +2209,7 @@ void Renderer::renderChatManager(const ChatManager *chatManager) {
 	else
 	{
 		if (chatManager->getInMenu()) {
-			string text = ">> "+lang.get("PressEnterToChat")+" <<";
+			string text = ">> "+lang.getString("PressEnterToChat")+" <<";
 			fontColor = Vec4f(0.5f, 0.5f, 0.5f, 0.5f);
 
 			if(renderText3DEnabled == true) {
@@ -2080,6 +2224,116 @@ void Renderer::renderChatManager(const ChatManager *chatManager) {
 	}
 }
 
+
+void Renderer::renderPerformanceStats() {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	const Metrics &metrics = Metrics::getInstance();
+	const Vec4f fontColor = game->getGui()->getDisplay()->getColor();
+
+	char szBuf[200]="";
+	snprintf(szBuf,200,"Frame: %d",game->getWorld()->getFrameCount() / 20);
+	string str = string(szBuf) + string("\n");
+
+	static time_t lastGamePerfCheck = time(NULL);
+	static string gamePerfStats = "";
+	if(difftime((long int)time(NULL),lastGamePerfCheck) > 3) {
+		lastGamePerfCheck = time(NULL);
+		gamePerfStats = game->getGamePerformanceCounts(true);
+	}
+
+	if(gamePerfStats != "") {
+		str += gamePerfStats + "\n";
+	}
+
+	if(renderText3DEnabled == true) {
+		renderTextShadow3D(
+			str, CoreData::getInstance().getDisplayFontSmall3D(),
+			fontColor,
+			10, metrics.getVirtualH()-180, false);
+	}
+	else {
+		renderTextShadow(
+			str, CoreData::getInstance().getDisplayFontSmall(),
+			fontColor,
+			10, metrics.getVirtualH()-180, false);
+	}
+}
+
+void Renderer::renderClock() {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	Config &config= Config::getInstance();
+	if(config.getBool("InGameClock","true") == false &&
+		config.getBool("InGameLocalClock","true") == false &&
+		config.getBool("InGameFrameCounter","false") == false) {
+		return;
+	}
+
+	string str = "";
+	const Metrics &metrics = Metrics::getInstance();
+	const World *world = game->getWorld();
+	const Vec4f fontColor = game->getGui()->getDisplay()->getColor();
+
+	if(config.getBool("InGameClock","true") == true) {
+		Lang &lang= Lang::getInstance();
+		char szBuf[501]="";
+
+		//int hours = world->getTimeFlow()->getTime();
+		//int minutes = (world->getTimeFlow()->getTime() - hours) * 100 * 0.6; // scale 100 to 60
+		//snprintf(szBuf,200,"%s %.2d:%.2d",lang.getString("GameTime","",true).c_str(),hours,minutes);
+		// string header2 = lang.getString("GameDurationTime","",true) + ": " + getTimeString(stats.getFramesToCalculatePlaytime());
+		snprintf(szBuf,500,"%s %s",lang.getString("GameDurationTime","",true).c_str(),getTimeDuationString(world->getFrameCount(),GameConstants::updateFps).c_str());
+		if(str != "") {
+			str += " ";
+		}
+		str += szBuf;
+	}
+
+	if(config.getBool("InGameLocalClock","true") == true) {
+		time_t nowTime = time(NULL);
+		struct tm *loctime = localtime(&nowTime);
+		char szBuf2[100]="";
+		strftime(szBuf2,100,"%H:%M",loctime);
+
+		Lang &lang= Lang::getInstance();
+		char szBuf[200]="";
+		snprintf(szBuf,200,"%s %s",lang.getString("LocalTime","",true).c_str(),szBuf2);
+		if(str != "") {
+			str += " ";
+		}
+		str += szBuf;
+	}
+
+	if(config.getBool("InGameFrameCounter","false") == true) {
+		char szBuf[200]="";
+		snprintf(szBuf,200,"Frame: %d",game->getWorld()->getFrameCount() / 20);
+		if(str != "") {
+			str += " ";
+		}
+		str += szBuf;
+	}
+
+	//string str = szBuf;
+
+	if(renderText3DEnabled == true) {
+		renderTextShadow3D(
+			str, CoreData::getInstance().getDisplayFontSmall3D(),
+			fontColor,
+			10, metrics.getVirtualH()-160, false);
+	}
+	else {
+		renderTextShadow(
+			str, CoreData::getInstance().getDisplayFontSmall(),
+			fontColor,
+			10, metrics.getVirtualH()-160, false);
+	}
+}
+
 void Renderer::renderResourceStatus() {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
@@ -2087,17 +2341,25 @@ void Renderer::renderResourceStatus() {
 
 	const Metrics &metrics= Metrics::getInstance();
 	const World *world= game->getWorld();
+
+	if(world->getThisFactionIndex() < 0 || world->getThisFactionIndex() >= world->getFactionCount()) {
+		return;
+	}
+
 	const Faction *thisFaction= world->getFaction(world->getThisFactionIndex());
 	const Vec4f fontColor = game->getGui()->getDisplay()->getColor();
 	assertGl();
 
 	glPushAttrib(GL_ENABLE_BIT);
 
-	int j= 0;
+	int resourceCountRendered = 0;
 	for(int i= 0; i < world->getTechTree()->getResourceTypeCount(); ++i) {
 		const ResourceType *rt = world->getTechTree()->getResourceType(i);
 		const Resource *r = thisFaction->getResource(rt);
 
+		if ( rt->getDisplayInHud() == false ){
+			continue;
+		}
 		//if any unit produces the resource
 		bool showResource= false;
 		for(int k=0; k < thisFaction->getType()->getUnitTypeCount(); ++k) {
@@ -2141,7 +2403,11 @@ void Renderer::renderResourceStatus() {
 			if(isNegativeConsumableDisplayCycle == false) {
 				glColor3f(1.f, 1.f, 1.f);
 			}
-			renderQuad(j*100+200, metrics.getVirtualH()-30, 16, 16, rt->getImage());
+			const int MAX_RESOURCES_PER_ROW = 6;
+			int resourceRow = (resourceCountRendered > 0 ? resourceCountRendered / MAX_RESOURCES_PER_ROW : 0);
+			int resourceCol = resourceCountRendered % MAX_RESOURCES_PER_ROW;
+			//renderQuad(resourceCountRendered*100+200, metrics.getVirtualH()-30 - (30 * resourceRows), 16, 16, rt->getImage());
+			renderQuad(resourceCol * 100 + 200, metrics.getVirtualH()-30 - (30 * resourceRow), 16, 16, rt->getImage());
 
 			if(rt->getClass() != rcStatic) {
 				str+= "/" + intToStr(thisFaction->getStoreAmount(rt));
@@ -2160,15 +2426,15 @@ void Renderer::renderResourceStatus() {
 				renderTextShadow3D(
 					str, CoreData::getInstance().getDisplayFontSmall3D(),
 					resourceFontColor,
-					j*100+220, metrics.getVirtualH()-30, false);
+					resourceCol * 100 + 220, metrics.getVirtualH()-30 - (30 * resourceRow), false);
 			}
 			else {
 				renderTextShadow(
 					str, CoreData::getInstance().getDisplayFontSmall(),
 					resourceFontColor,
-					j*100+220, metrics.getVirtualH()-30, false);
+					resourceCol * 100 + 220, metrics.getVirtualH()-30 - (30 * resourceRow), false);
 			}
-			++j;
+			++resourceCountRendered;
 		}
 	}
 
@@ -2179,6 +2445,11 @@ void Renderer::renderResourceStatus() {
 
 void Renderer::renderSelectionQuad() {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	Config &config= Config::getInstance();
+	if(config.getBool("RecordMode","false") == true) {
 		return;
 	}
 
@@ -2218,13 +2489,14 @@ void Renderer::renderSelectionQuad() {
 
 Vec2i computeCenteredPos(const string &text, Font2D *font, int x, int y) {
 	if(font == NULL) {
-		throw runtime_error("font == NULL");
+		//abort();
+		throw megaglest_runtime_error("font == NULL (1)");
 	}
 	const Metrics &metrics= Metrics::getInstance();
 	FontMetrics *fontMetrics= font->getMetrics();
 
 	if(fontMetrics == NULL) {
-		throw runtime_error("fontMetrics == NULL");
+		throw megaglest_runtime_error("fontMetrics == NULL (1)");
 	}
 
 	int virtualX = (fontMetrics->getTextWidth(text) > 0 ? static_cast<int>(fontMetrics->getTextWidth(text)/2.f) : 5);
@@ -2241,13 +2513,13 @@ Vec2i computeCenteredPos(const string &text, Font2D *font, int x, int y) {
 
 Vec2i computeCenteredPos(const string &text, Font3D *font, int x, int y) {
 	if(font == NULL) {
-		throw runtime_error("font == NULL");
+		throw megaglest_runtime_error("font == NULL (2)");
 	}
 	const Metrics &metrics= Metrics::getInstance();
 	FontMetrics *fontMetrics= font->getMetrics();
 
 	if(fontMetrics == NULL) {
-		throw runtime_error("fontMetrics == NULL");
+		throw megaglest_runtime_error("fontMetrics == NULL (2)");
 	}
 
 	int virtualX = (fontMetrics->getTextWidth(text) > 0 ? static_cast<int>(fontMetrics->getTextWidth(text) / 2.f) : 5);
@@ -2260,7 +2532,38 @@ Vec2i computeCenteredPos(const string &text, Font3D *font, int x, int y) {
 	return textPos;
 }
 
-void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, float alpha, int x, int y, int w, int h, bool centeredW, bool centeredH) {
+void Renderer::renderTextSurroundingBox(int x, int y, int w, int h,
+		int maxEditWidth, int maxEditRenderWidth) {
+	//glColor4fv(color.ptr());
+	//glBegin(GL_QUADS); // Start drawing a quad primitive
+
+	//printf("A w = %d maxEditWidth = %d maxEditRenderWidth = %d\n",w,maxEditWidth,maxEditRenderWidth);
+	if(maxEditWidth >= 0 || maxEditRenderWidth >= 0) {
+		//printf("B w = %d maxEditWidth = %d maxEditRenderWidth = %d\n",w,maxEditWidth,maxEditRenderWidth);
+		if(maxEditRenderWidth >= 0) {
+			w = maxEditRenderWidth;
+		}
+		else {
+			w = maxEditWidth;
+		}
+	}
+	//printf("HI!!!\n");
+	glPointSize(20.0f);
+
+	int margin = 4;
+	//glBegin(GL_POINTS); // Start drawing a point primitive
+	glBegin(GL_LINE_LOOP); // Start drawing a line primitive
+
+	glVertex3f(x, y+h, 0.0f); // The bottom left corner
+	glVertex3f(x, y-margin, 0.0f); // The top left corner
+	glVertex3f(x+w, y-margin, 0.0f); // The top right corner
+	glVertex3f(x+w, y+h, 0.0f); // The bottom right corner
+	glEnd();
+}
+
+void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font,
+		float alpha, int x, int y, int w, int h, bool centeredW, bool centeredH,
+		bool editModeEnabled,int maxEditWidth, int maxEditRenderWidth) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
@@ -2275,10 +2578,24 @@ void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, float a
 		getCentered3DPos(text, font, pos, w, h, centeredW, centeredH);
 	}
 
+	if(editModeEnabled) {
+		if(maxEditWidth >= 0 || maxEditRenderWidth >= 0) {
+			int useWidth = maxEditWidth;
+			string temp = "";
+			for(int i = 0; i < useWidth; ++i) {
+				temp += DEFAULT_CHAR_FOR_WIDTH_CALC;
+			}
+			float lineWidth = (font->getTextHandler()->Advance(temp.c_str()) * ::Shared::Graphics::Font::scaleFontValue);
+			useWidth = (int)lineWidth;
+
+			maxEditWidth = useWidth;
+		}
+
+		renderTextSurroundingBox(pos.x, pos.y, w, h,maxEditWidth,maxEditRenderWidth);
+	}
+	glColor4fv(Vec4f(1.f, 1.f, 1.f, alpha).ptr());
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
-	//textRenderer3D->begin(font);
 	textRenderer3D->render(text, pos.x, pos.y);
-	//textRenderer3D->end();
 	safeTextRender.end();
 
 	glDisable(GL_BLEND);
@@ -2297,7 +2614,6 @@ void Renderer::renderText3D(const string &text, Font3D *font, float alpha, int x
 	Vec2i pos= Vec2i(x, y);
 	//Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer3D->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	textRenderer3D->render(text, pos.x, pos.y, centered);
 	//textRenderer3D->end();
@@ -2318,10 +2634,8 @@ void Renderer::renderText(const string &text, Font2D *font, float alpha, int x, 
 
 	Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer,font);
 	textRenderer->render(text, pos.x, pos.y);
-	//textRenderer->end();
 	safeTextRender.end();
 
 	glPopAttrib();
@@ -2329,16 +2643,31 @@ void Renderer::renderText(const string &text, Font2D *font, float alpha, int x, 
 
 Vec2f Renderer::getCentered3DPos(const string &text, Font3D *font, Vec2f &pos, int w, int h,bool centeredW, bool centeredH) {
 	if(centeredW == true) {
-		float lineWidth = (font->getTextHandler()->Advance(text.c_str()) * Font::scaleFontValue);
+		if(font == NULL) {
+			//abort();
+			throw megaglest_runtime_error("font == NULL (5)");
+		}
+		else if(font->getTextHandler() == NULL) {
+			throw megaglest_runtime_error("font->getTextHandler() == NULL (5)");
+		}
+
+		float lineWidth = (font->getTextHandler()->Advance(text.c_str()) * ::Shared::Graphics::Font::scaleFontValue);
 		if(lineWidth < w) {
 			pos.x += ((w / 2.f) - (lineWidth / 2.f));
 		}
 	}
 
 	if(centeredH) {
+		if(font == NULL) {
+			throw megaglest_runtime_error("font == NULL (6)");
+		}
+		else if(font->getTextHandler() == NULL) {
+			throw megaglest_runtime_error("font->getTextHandler() == NULL (6)");
+		}
+
 		//const Metrics &metrics= Metrics::getInstance();
 		//float lineHeight = (font->getTextHandler()->LineHeight(text.c_str()) * Font::scaleFontValue);
-		float lineHeight = (font->getTextHandler()->LineHeight(text.c_str()) * Font::scaleFontValue);
+		float lineHeight = (font->getTextHandler()->LineHeight(text.c_str()) * ::Shared::Graphics::Font::scaleFontValue);
 		//lineHeight=metrics.toVirtualY(lineHeight);
 		//lineHeight= lineHeight / (2.f + 0.2f * FontMetrics::DEFAULT_Y_OFFSET_FACTOR);
 		//pos.y += (h / 2.f) - (lineHeight / 2.f);
@@ -2351,7 +2680,7 @@ Vec2f Renderer::getCentered3DPos(const string &text, Font3D *font, Vec2f &pos, i
 			//if(Font::forceFTGLFonts == true) {
 				// First go to top of bounding box
 				pos.y += (h - lineHeight);
-				pos.y -= ((h - lineHeight) / Font::scaleFontValueCenterHFactor);
+				pos.y -= ((h - lineHeight) / ::Shared::Graphics::Font::scaleFontValueCenterHFactor);
 //			}
 //			else {
 //				pos.y += (float)(((float)h) / 2.0);
@@ -2368,17 +2697,15 @@ Vec2f Renderer::getCentered3DPos(const string &text, Font3D *font, Vec2f &pos, i
 		else if(lineHeight > h) {
 			//printf("line %d, lineHeight [%f] h [%d] text [%s]\n",__LINE__,lineHeight,h,text.c_str());
 
-#ifdef USE_STREFLOP
-			pos.y += (streflop::ceil((float)lineHeight - (float)h));
-#else
-			pos.y += (ceil(lineHeight - h));
-#endif
+			pos.y += (std::ceil(lineHeight - h));
 		}
 	}
 	return pos;
 }
 
-void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, const Vec3f &color, int x, int y, int w, int h, bool centeredW, bool centeredH) {
+void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font,
+		const Vec3f &color, int x, int y, int w, int h, bool centeredW,
+		bool centeredH, bool editModeEnabled,int maxEditWidth, int maxEditRenderWidth) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
@@ -2393,10 +2720,24 @@ void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, const V
 		getCentered3DPos(text, font, pos, w, h,centeredW,centeredH);
 	}
 
-	//textRenderer3D->begin(font);
+	if(editModeEnabled) {
+		if(maxEditWidth >= 0 || maxEditRenderWidth >= 0) {
+			int useWidth = maxEditWidth;
+			string temp = "";
+			for(int i = 0; i < useWidth; ++i) {
+				temp += DEFAULT_CHAR_FOR_WIDTH_CALC;
+			}
+			float lineWidth = (font->getTextHandler()->Advance(temp.c_str()) * ::Shared::Graphics::Font::scaleFontValue);
+			useWidth = (int)lineWidth;
+
+			maxEditWidth = useWidth;
+		}
+
+		renderTextSurroundingBox(pos.x, pos.y, w, h,maxEditWidth,maxEditRenderWidth);
+	}
+	glColor3fv(color.ptr());
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	textRenderer3D->render(text, pos.x, pos.y);
-	//textRenderer3D->end();
 	safeTextRender.end();
 
 	glPopAttrib();
@@ -2413,10 +2754,8 @@ void Renderer::renderText3D(const string &text, Font3D *font, const Vec3f &color
 	Vec2i pos= Vec2i(x, y);
 	//Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer3D->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	textRenderer3D->render(text, pos.x, pos.y, centered);
-	//textRenderer3D->end();
 	safeTextRender.end();
 
 	glPopAttrib();
@@ -2432,16 +2771,16 @@ void Renderer::renderText(const string &text, Font2D *font, const Vec3f &color, 
 
 	Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer,font);
 	textRenderer->render(text, pos.x, pos.y);
-	//textRenderer->end();
 	safeTextRender.end();
 
 	glPopAttrib();
 }
 
-void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, const Vec4f &color, int x, int y, int w, int h, bool centeredW, bool centeredH) {
+void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font,
+		const Vec4f &color, int x, int y, int w, int h, bool centeredW,
+		bool centeredH, bool editModeEnabled,int maxEditWidth, int maxEditRenderWidth) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
@@ -2457,10 +2796,24 @@ void Renderer::renderTextBoundingBox3D(const string &text, Font3D *font, const V
 		getCentered3DPos(text, font, pos, w, h,centeredW,centeredH);
 	}
 
-	//textRenderer3D->begin(font);
+	if(editModeEnabled) {
+		if(maxEditWidth >= 0 || maxEditRenderWidth >= 0) {
+			int useWidth = maxEditWidth;
+			string temp = "";
+			for(int i = 0; i < useWidth; ++i) {
+				temp += DEFAULT_CHAR_FOR_WIDTH_CALC;
+			}
+			float lineWidth = (font->getTextHandler()->Advance(temp.c_str()) * ::Shared::Graphics::Font::scaleFontValue);
+			useWidth = (int)lineWidth;
+
+			maxEditWidth = useWidth;
+		}
+
+		renderTextSurroundingBox(pos.x, pos.y, w, h,maxEditWidth,maxEditRenderWidth);
+	}
+	glColor4fv(color.ptr());
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	textRenderer3D->render(text, pos.x, pos.y);
-	//textRenderer3D->end();
 	safeTextRender.end();
 
 	glDisable(GL_BLEND);
@@ -2479,10 +2832,8 @@ void Renderer::renderText3D(const string &text, Font3D *font, const Vec4f &color
 	Vec2i pos= Vec2i(x, y);
 	//Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer3D->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	textRenderer3D->render(text, pos.x, pos.y, centered);
-	//textRenderer3D->end();
 	safeTextRender.end();
 
 	glDisable(GL_BLEND);
@@ -2500,10 +2851,8 @@ void Renderer::renderText(const string &text, Font2D *font, const Vec4f &color, 
 
 	Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer,font);
 	textRenderer->render(text, pos.x, pos.y);
-	//textRenderer->end();
 	safeTextRender.end();
 
 	glPopAttrib();
@@ -2515,14 +2864,13 @@ void Renderer::renderTextShadow3D(const string &text, Font3D *font,const Vec4f &
 	}
 
 	if(font == NULL) {
-		throw runtime_error("font == NULL");
+		throw megaglest_runtime_error("font == NULL (3)");
 	}
 
 	glPushAttrib(GL_CURRENT_BIT);
 
 	Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer3D->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer3D,font);
 	if(color.w < 0.5)	{
 		glColor3f(0.0f, 0.0f, 0.0f);
@@ -2544,14 +2892,13 @@ void Renderer::renderTextShadow(const string &text, Font2D *font,const Vec4f &co
 	}
 
 	if(font == NULL) {
-		throw runtime_error("font == NULL");
+		throw megaglest_runtime_error("font == NULL (4)");
 	}
 
 	glPushAttrib(GL_CURRENT_BIT);
 
 	Vec2i pos= centered? computeCenteredPos(text, font, x, y): Vec2i(x, y);
 
-	//textRenderer->begin(font);
 	TextRendererSafeWrapper safeTextRender(textRenderer,font);
 	if(color.w < 0.5)	{
 		glColor3f(0.0f, 0.0f, 0.0f);
@@ -2574,6 +2921,59 @@ void Renderer::renderLabel(GraphicLabel *label) {
 		return;
 	}
 
+	if(label->getEditable() && label->getMaxEditRenderWidth()>0)
+	{
+	    int x= label->getX();
+	    int y= label->getY();
+	    int h= label->getH();
+	    int w= label->getMaxEditRenderWidth();
+	    if(h>0){
+	    	//background
+	    	glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+	    	glEnable(GL_BLEND);
+
+	    	glColor4f(0.2f, 0.2f, 0.2f, 0.6f*label->getFade()) ;
+
+	    	glBegin(GL_TRIANGLE_STRIP);
+	    		glVertex2i(x, y);
+	    		glVertex2i(x, y+h);
+	    		glVertex2i(x+w, y);
+	    		glVertex2i(x+w, y+h);
+	    	glEnd();
+	    	glPopAttrib();
+	    }
+	}
+
+	if(label->getTexture()!=NULL )
+	{
+	    int x= label->getX();
+	    int y= label->getY();
+	    int h= label->getH();
+	    int w= label->getW();
+	    if(h>0){
+	    	//background
+			glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+			glEnable(GL_BLEND);
+			glEnable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, static_cast<Texture2DGl*>( label->getTexture())->getHandle());
+	    	glColor4f(1.0f, 1.0f, 1.0f, 1.0f*label->getFade()) ;
+	    	glBegin(GL_TRIANGLE_STRIP);
+	    		glTexCoord2f(0.f, 0.f);
+	    		glVertex2f(x, y);
+
+	    		glTexCoord2f(0.f, 1.f);
+	    		glVertex2f(x, y+h);
+
+	    		glTexCoord2f(1.f, 0.f);
+	    		glVertex2f(x+w, y);
+
+	    		glTexCoord2f(1.f, 1.f);
+	    		glVertex2f(x+w, y+h);
+	    	glEnd();
+	    	glDisable(GL_TEXTURE_2D);
+	    	glPopAttrib();
+	    }
+	}
 	Vec3f labelColor=label->getTextColor();
 	Vec4f colorWithAlpha = Vec4f(labelColor.x,labelColor.y,labelColor.z,GraphicComponent::getFade());
 	renderLabel(label,&colorWithAlpha);
@@ -2607,11 +3007,12 @@ void Renderer::renderLabel(GraphicLabel *label,const Vec4f *color) {
 	glEnable(GL_BLEND);
 
 	vector<string> lines;
+	string renderTextString = (label->getTextNativeTranslation() != "" ? label->getTextNativeTranslation() : label->getText());
 	if(label->getWordWrap() == true) {
-		Tokenize(label->getText(),lines,"\n");
+		Tokenize(renderTextString,lines,"\n");
 	}
 	else {
-		lines.push_back(label->getText());
+		lines.push_back(renderTextString);
 	}
 
 	for(unsigned int i = 0; i < lines.size(); ++i) {
@@ -2629,16 +3030,27 @@ void Renderer::renderLabel(GraphicLabel *label,const Vec4f *color) {
 			textPos= Vec2i(x, y+h/4);
 		}
 
+		string renderTextStr = lines[i];
+		if(label->getIsPassword() == true) {
+			if(renderTextStr != "") {
+				renderTextStr = "*****";
+			}
+		}
+
 		if(color != NULL) {
 			if(renderText3DEnabled == true) {
 				//renderText3D(lines[i], label->getFont3D(), (*color), textPos.x, textPos.y, label->getCentered());
 				//printf("Text Render3D [%s] font3d [%p]\n",lines[i].c_str(),label->getFont3D());
 				//printf("Label render C\n");
-				renderTextBoundingBox3D(lines[i], label->getFont3D(), (*color), x, y, w, h, label->getCenteredW(),label->getCenteredH());
+
+				renderTextBoundingBox3D(renderTextStr, label->getFont3D(), (*color),
+						x, y, w, h, label->getCenteredW(),label->getCenteredH(),
+						label->getEditModeEnabled(),label->getMaxEditWidth(),
+						label->getMaxEditRenderWidth());
 			}
 			else {
 				//printf("Label render D\n");
-				renderText(lines[i], label->getFont(), (*color), textPos.x, textPos.y, label->getCentered());
+				renderText(renderTextStr, label->getFont(), (*color), textPos.x, textPos.y, label->getCentered());
 			}
 		}
 		else {
@@ -2646,11 +3058,15 @@ void Renderer::renderLabel(GraphicLabel *label,const Vec4f *color) {
 				//renderText3D(lines[i], label->getFont3D(), GraphicComponent::getFade(), textPos.x, textPos.y, label->getCentered());
 				//printf("Text Render3D [%s] font3d [%p]\n",lines[i].c_str(),label->getFont3D());
 				//printf("Label render E\n");
-				renderTextBoundingBox3D(lines[i], label->getFont3D(), GraphicComponent::getFade(), x, y, w, h, label->getCenteredW(),label->getCenteredH());
+				renderTextBoundingBox3D(renderTextStr, label->getFont3D(),
+						GraphicComponent::getFade(), x, y, w, h,
+						label->getCenteredW(),label->getCenteredH(),
+						label->getEditModeEnabled(),label->getMaxEditWidth(),
+						label->getMaxEditRenderWidth());
 			}
 			else {
 				//printf("Label render F\n");
-				renderText(lines[i], label->getFont(), GraphicComponent::getFade(), textPos.x, textPos.y, label->getCentered());
+				renderText(renderTextStr, label->getFont(), GraphicComponent::getFade(), textPos.x, textPos.y, label->getCentered());
 			}
 		}
 	}
@@ -2697,14 +3113,14 @@ void Renderer::renderButton(GraphicButton *button, const Vec4f *fontColorOverrid
 	}
 
 	//button
-	Vec4f fontColor;
+	Vec4f fontColor(GraphicComponent::getCustomTextColor());
 
 	if(fontColorOverride != NULL) {
 		fontColor= *fontColorOverride;
 	}
 	else {
 		// white shadowed is default ( in the menu for example )
-		fontColor=Vec4f(1.f, 1.f, 1.f, GraphicComponent::getFade());
+		fontColor.w = GraphicComponent::getFade();
 	}
 
 	//Vec4f color= Vec4f(1.f, 1.f, 1.f, GraphicComponent::getFade());
@@ -2772,7 +3188,8 @@ void Renderer::renderButton(GraphicButton *button, const Vec4f *fontColorOverrid
 	if(button->getEditable()) {
 		if(renderText3DEnabled == true) {
 			//renderText3D(button->getText(), button->getFont3D(), color,x + (w / 2), y + (h / 2), true);
-			renderTextBoundingBox3D(button->getText(), button->getFont3D(), color, x, y, w, h, true, true);
+			renderTextBoundingBox3D(button->getText(), button->getFont3D(),
+					color, x, y, w, h, true, true,false,-1,-1);
 		}
 		else {
 			renderText(button->getText(), button->getFont(), color,x + (w / 2), y + (h / 2), true);
@@ -2783,7 +3200,7 @@ void Renderer::renderButton(GraphicButton *button, const Vec4f *fontColorOverrid
 			//renderText3D(button->getText(), button->getFont3D(),disabledTextColor,
 			//       x + (w / 2), y + (h / 2), true);
 			renderTextBoundingBox3D(button->getText(), button->getFont3D(),disabledTextColor,
-						       x, y, w, h, true, true);
+						       x, y, w, h, true, true,false,-1,-1);
 		}
 		else {
 			renderText(button->getText(), button->getFont(),disabledTextColor,
@@ -2808,7 +3225,7 @@ void Renderer::renderCheckBox(const GraphicCheckBox *box) {
     int h= box->getH();
     int w= box->getW();
 
-	const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
+	//const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
 
 	glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT);
 
@@ -2908,7 +3325,7 @@ void Renderer::renderLine(const GraphicLine *line) {
     int h= line->getH();
     int w= line->getW();
 
-	const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
+	//const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
 
 	glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT);
 
@@ -2954,7 +3371,7 @@ void Renderer::renderScrollBar(const GraphicScrollBar *sb) {
     int h= sb->getH();
     int w= sb->getW();
 
-	const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
+	//const Vec3f disabledTextColor= Vec3f(0.25f,0.25f,0.25f);
 
 	glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT);
 	/////////////////////
@@ -3084,7 +3501,28 @@ void Renderer::renderListBox(GraphicListBox *listBox) {
 	if(listBox->getVisible() == false) {
 		return;
 	}
+	//if(listBox->getLeftControlled()==true)
+	{
+	    int x= listBox->getX();
+	    int y= listBox->getY();
+	    int h= listBox->getH();
+	    int w= listBox->getW();
+	    if(h>0){
+	    	//background
+	    	glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+	    	glEnable(GL_BLEND);
 
+	    	glColor4f(0.0f, 0.0f, 0.0f, 0.6f*listBox->getFade()) ;
+
+	    	glBegin(GL_TRIANGLE_STRIP);
+	    		glVertex2i(x, y);
+	    		glVertex2i(x, y+h);
+	    		glVertex2i(x+w, y);
+	    		glVertex2i(x+w, y+h);
+	    	glEnd();
+	    	glPopAttrib();
+	    }
+	}
 	renderButton(listBox->getButton1());
     renderButton(listBox->getButton2());
 
@@ -3092,8 +3530,14 @@ void Renderer::renderListBox(GraphicListBox *listBox) {
 	glEnable(GL_BLEND);
 
 	GraphicLabel label;
-	label.init(listBox->getX(), listBox->getY(), listBox->getW(), listBox->getH(), true,listBox->getTextColor());
+	if(listBox->getLeftControlled()==true){
+		label.init(listBox->getX()+listBox->getButton1()->getW()+listBox->getButton2()->getW()+2, listBox->getY(), listBox->getW(), listBox->getH(), false,listBox->getTextColor());
+	}
+	else {
+		label.init(listBox->getX(), listBox->getY(), listBox->getW(), listBox->getH(), true,listBox->getTextColor());
+	}
 	label.setText(listBox->getText());
+	label.setTextNativeTranslation(listBox->getTextNativeTranslation());
 	label.setFont(listBox->getFont());
 	label.setFont3D(listBox->getFont3D());
 	renderLabel(&label);
@@ -3152,94 +3596,126 @@ void Renderer::renderMessageBox(GraphicMessageBox *messageBox) {
 		return;
 	}
 
-	if(messageBox->getVisible() == false) {
-		return;
+	try {
+		if(messageBox->getVisible() == false) {
+			return;
+		}
+
+		if((renderText3DEnabled == false && messageBox->getFont() == NULL) ||
+		   (renderText3DEnabled == true && messageBox->getFont3D() == NULL)) {
+			messageBox->setFont(CoreData::getInstance().getMenuFontNormal());
+			messageBox->setFont3D(CoreData::getInstance().getMenuFontNormal3D());
+		}
+
+		string wrappedText = messageBox->getText();
+		if(messageBox->getAutoWordWrap() == true) {
+			if(renderText3DEnabled == false) {
+				wrappedText = messageBox->getFont()->getMetrics()->wordWrapText(wrappedText,messageBox->getW() * 0.90);
+			}
+			else {
+				wrappedText = messageBox->getFont3D()->getMetrics()->wordWrapText(wrappedText,messageBox->getW() * 0.90);
+			}
+		}
+
+		//background
+		glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+		glEnable(GL_BLEND);
+
+		glColor4f(0.0f, 0.0f, 0.0f, 0.8f) ;
+		glBegin(GL_TRIANGLE_STRIP);
+			glVertex2i(messageBox->getX(), messageBox->getY()+9*messageBox->getH()/10);
+			glVertex2i(messageBox->getX(), messageBox->getY());
+			glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY() + 9*messageBox->getH()/10);
+			glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY());
+		glEnd();
+
+		glColor4f(0.0f, 0.0f, 0.0f, 0.8f) ;
+		glBegin(GL_TRIANGLE_STRIP);
+			glVertex2i(messageBox->getX(), messageBox->getY()+messageBox->getH());
+			glVertex2i(messageBox->getX(), messageBox->getY()+9*messageBox->getH()/10);
+			glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY() + messageBox->getH());
+			glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY()+9*messageBox->getH()/10);
+		glEnd();
+
+		glBegin(GL_LINE_LOOP);
+			glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
+			glVertex2i(messageBox->getX(), messageBox->getY());
+
+			glColor4f(0.0f, 0.0f, 0.0f, 0.25f) ;
+			glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY());
+
+			glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
+			glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY() + messageBox->getH());
+
+			glColor4f(0.25f, 0.25f, 0.25f, 0.25f) ;
+			glVertex2i(messageBox->getX(), messageBox->getY() + messageBox->getH());
+		glEnd();
+
+		glBegin(GL_LINE_STRIP);
+			glColor4f(1.0f, 1.0f, 1.0f, 0.25f) ;
+			glVertex2i(messageBox->getX(), messageBox->getY() + 90*messageBox->getH()/100);
+
+			glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
+			glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY() + 90*messageBox->getH()/100);
+		glEnd();
+
+		glPopAttrib();
+
+
+		//buttons
+		for(int i=0; i<messageBox->getButtonCount();i++){
+
+			if((renderText3DEnabled == false && messageBox->getButton(i)->getFont() == NULL) ||
+			   (renderText3DEnabled == true && messageBox->getButton(i)->getFont3D() == NULL)) {
+				messageBox->getButton(i)->setFont(CoreData::getInstance().getMenuFontNormal());
+				messageBox->getButton(i)->setFont3D(CoreData::getInstance().getMenuFontNormal3D());
+			}
+
+			renderButton(messageBox->getButton(i));
+		}
+
+		Vec4f fontColor;
+		//if(game!=NULL){
+		//	fontColor=game->getGui()->getDisplay()->getColor();
+		//}
+		//else {
+			// white shadowed is default ( in the menu for example )
+			fontColor=Vec4f(1.f, 1.f, 1.f, 1.0f);
+		//}
+
+		if(renderText3DEnabled == true) {
+			//text
+			renderTextShadow3D(
+					wrappedText, messageBox->getFont3D(), fontColor,
+				messageBox->getX()+15, messageBox->getY()+7*messageBox->getH()/10,
+				false );
+
+			renderTextShadow3D(
+				messageBox->getHeader(), messageBox->getFont3D(),fontColor,
+				messageBox->getX()+15, messageBox->getY()+93*messageBox->getH()/100,
+				false );
+
+		}
+		else {
+			//text
+			renderTextShadow(
+					wrappedText, messageBox->getFont(), fontColor,
+				messageBox->getX()+15, messageBox->getY()+7*messageBox->getH()/10,
+				false );
+
+			renderTextShadow(
+				messageBox->getHeader(), messageBox->getFont(),fontColor,
+				messageBox->getX()+15, messageBox->getY()+93*messageBox->getH()/100,
+				false );
+		}
 	}
+	catch(const exception &e) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,szBuf);
 
-	//background
-	glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
-	glEnable(GL_BLEND);
-
-	glColor4f(0.0f, 0.0f, 0.0f, 0.8f) ;
-	glBegin(GL_TRIANGLE_STRIP);
-		glVertex2i(messageBox->getX(), messageBox->getY()+9*messageBox->getH()/10);
-		glVertex2i(messageBox->getX(), messageBox->getY());
-		glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY() + 9*messageBox->getH()/10);
-		glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY());
-	glEnd();
-
-	glColor4f(0.0f, 0.0f, 0.0f, 0.8f) ;
-	glBegin(GL_TRIANGLE_STRIP);
-		glVertex2i(messageBox->getX(), messageBox->getY()+messageBox->getH());
-		glVertex2i(messageBox->getX(), messageBox->getY()+9*messageBox->getH()/10);
-		glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY() + messageBox->getH());
-		glVertex2i(messageBox->getX() + messageBox->getW(), messageBox->getY()+9*messageBox->getH()/10);
-	glEnd();
-
-	glBegin(GL_LINE_LOOP);
-		glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
-		glVertex2i(messageBox->getX(), messageBox->getY());
-
-		glColor4f(0.0f, 0.0f, 0.0f, 0.25f) ;
-		glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY());
-
-		glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
-		glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY() + messageBox->getH());
-
-		glColor4f(0.25f, 0.25f, 0.25f, 0.25f) ;
-		glVertex2i(messageBox->getX(), messageBox->getY() + messageBox->getH());
-	glEnd();
-
-	glBegin(GL_LINE_STRIP);
-		glColor4f(1.0f, 1.0f, 1.0f, 0.25f) ;
-		glVertex2i(messageBox->getX(), messageBox->getY() + 90*messageBox->getH()/100);
-
-		glColor4f(0.5f, 0.5f, 0.5f, 0.25f) ;
-		glVertex2i(messageBox->getX()+ messageBox->getW(), messageBox->getY() + 90*messageBox->getH()/100);
-	glEnd();
-
-	glPopAttrib();
-
-
-	//buttons
-	renderButton(messageBox->getButton1());
-	if(messageBox->getButtonCount()==2){
-		renderButton(messageBox->getButton2());
-	}
-
-	Vec4f fontColor;
-	//if(game!=NULL){
-	//	fontColor=game->getGui()->getDisplay()->getColor();
-	//}
-	//else {
-		// white shadowed is default ( in the menu for example )
-		fontColor=Vec4f(1.f, 1.f, 1.f, 1.0f);
-	//}
-
-	if(renderText3DEnabled == true) {
-		//text
-		renderTextShadow3D(
-			messageBox->getText(), messageBox->getFont3D(), fontColor,
-			messageBox->getX()+15, messageBox->getY()+7*messageBox->getH()/10,
-			false );
-
-		renderTextShadow3D(
-			messageBox->getHeader(), messageBox->getFont3D(),fontColor,
-			messageBox->getX()+15, messageBox->getY()+93*messageBox->getH()/100,
-			false );
-
-	}
-	else {
-		//text
-		renderTextShadow(
-			messageBox->getText(), messageBox->getFont(), fontColor,
-			messageBox->getX()+15, messageBox->getY()+7*messageBox->getH()/10,
-			false );
-
-		renderTextShadow(
-			messageBox->getHeader(), messageBox->getFont(),fontColor,
-			messageBox->getX()+15, messageBox->getY()+93*messageBox->getH()/100,
-			false );
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 
@@ -3340,7 +3816,7 @@ template<typename T> void _loadVBO(GLuint &vbo,std::vector<T> buf,int target=GL_
 }
 
 void Renderer::MapRenderer::Layer::load_vbos(bool vboEnabled) {
-	indexCount = indices.size();
+	indexCount = (int)indices.size();
 	if(vboEnabled) {
 		_loadVBO(vbo_vertices,vertices);
 		_loadVBO(vbo_normals,normals);
@@ -3358,22 +3834,11 @@ void Renderer::MapRenderer::Layer::load_vbos(bool vboEnabled) {
 	}
 }
 
-//int32 CalculatePixelsCRC(const Texture2DGl *texture) {
-//	const uint8 *pixels = static_cast<const Pixmap2D *>(texture->getPixmapConst())->getPixels();
-//	uint64 pixelByteCount = static_cast<const Pixmap2D *>(texture->getPixmapConst())->getPixelByteCount();
-//	Checksum crc;
-//	for(uint64 i = 0; i < pixelByteCount; ++i) {
-//		crc.addByte(pixels[i]);
-//	}
-//
-//	return crc.getSum();
-//}
-
 void Renderer::MapRenderer::loadVisibleLayers(float coordStep,VisibleQuadContainerCache &qCache) {
 	int totalCellCount = 0;
 	// we create a layer for each visible texture in the map
 	for(int visibleIndex = 0;
-			visibleIndex < qCache.visibleScaledCellList.size(); ++visibleIndex) {
+			visibleIndex < (int)qCache.visibleScaledCellList.size(); ++visibleIndex) {
 		Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
 
 		totalCellCount++;
@@ -3415,7 +3880,7 @@ void Renderer::MapRenderer::loadVisibleLayers(float coordStep,VisibleQuadContain
 		int index[4];
 		int loopIndexes[4] = { 2,0,3,1 };
 		for(int i=0; i < 4; i++) {
-			index[i] = layer->vertices.size();
+			index[i] = (int)layer->vertices.size();
 			SurfaceCell *corner = tc[loopIndexes[i]];
 
 			layer->vertices.push_back(corner->getVertex());
@@ -3486,7 +3951,7 @@ void Renderer::MapRenderer::load(float coordStep) {
 			int index[4];
 			int loopIndexes[4] = { 2,0,3,1 };
 			for(int i=0; i < 4; i++) {
-				index[i] = layer->vertices.size();
+				index[i] = (int)layer->vertices.size();
 				SurfaceCell *corner = tc[loopIndexes[i]];
 				layer->vertices.push_back(corner->getVertex());
 				layer->normals.push_back(corner->getNormal());
@@ -3503,7 +3968,7 @@ void Renderer::MapRenderer::load(float coordStep) {
 			layer->surfTexCoords.push_back(tc[0]->getSurfTexCoord()+Vec2f(coordStep,coordStep));
 			layer->surfTexCoords.push_back(tc[0]->getSurfTexCoord()+Vec2f(coordStep,0));
 
-			layer->cellToIndicesMap[Vec2i(x,y)] = layer->indices.size();
+			layer->cellToIndicesMap[Vec2i(x,y)] = (int)layer->indices.size();
 
 			// and make two triangles (no strip, we may be disjoint)
 			layer->indices.push_back(index[0]);
@@ -3522,13 +3987,15 @@ void Renderer::MapRenderer::load(float coordStep) {
 	//printf("Total # of layers for this map = %d totalCellCount = %d overall render reduction ratio = %d times\n",layers.size(),totalCellCount,(totalCellCount / layers.size()));
 }
 
-template<typename T> void* _bindVBO(GLuint vbo,std::vector<T> buf,int target=GL_ARRAY_BUFFER_ARB) {
+template<typename T> void* _bindVBO(GLuint vbo,std::vector<T> &buf,int target=GL_ARRAY_BUFFER_ARB) {
+	void* result = NULL;
 	if(vbo) {
 		glBindBuffer(target,vbo);
-		return NULL;
-	} else {
-		return &buf[0];
 	}
+	else {
+		result = &buf[0];
+	}
+	return result;
 }
 
 void Renderer::MapRenderer::Layer::renderVisibleLayer() {
@@ -3558,25 +4025,6 @@ void Renderer::MapRenderer::Layer::renderVisibleLayer() {
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 	glClientActiveTexture(Renderer::baseTexUnit);
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-
-
-
-
-//	glVertexPointer(3,GL_FLOAT,0,_bindVBO(vbo_vertices,vertices));
-//	glNormalPointer(GL_FLOAT,0,_bindVBO(vbo_normals,normals));
-//
-//	glClientActiveTexture(Renderer::fowTexUnit);
-//	glTexCoordPointer(2,GL_FLOAT,0,_bindVBO(vbo_fowTexCoords,fowTexCoords));
-//
-//	glClientActiveTexture(Renderer::baseTexUnit);
-//	glBindTexture(GL_TEXTURE_2D,textureHandle);
-//	glTexCoordPointer(2,GL_FLOAT,0,_bindVBO(vbo_surfTexCoords,surfTexCoords));
-//
-//	//glDrawElements(GL_TRIANGLES,indexCount,GL_UNSIGNED_INT,_bindVBO(vbo_indices,indices,GL_ELEMENT_ARRAY_BUFFER_ARB));
-//	glDrawArrays(GL_TRIANGLE_STRIP, 0, vertices.size());
-//	//unsigned short faceIndices[4] = {0, 1, 2, 3};
-//	//glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_SHORT, &faceIndices[0]);
-
 }
 
 void Renderer::MapRenderer::Layer::render(VisibleQuadContainerCache &qCache) {
@@ -3597,7 +4045,7 @@ void Renderer::MapRenderer::Layer::render(VisibleQuadContainerCache &qCache) {
 			int lastValidIndex = -1;
 
 			for(int visibleIndex = 0;
-					visibleIndex < qCache.visibleScaledCellList.size(); ++visibleIndex) {
+					visibleIndex < (int)qCache.visibleScaledCellList.size(); ++visibleIndex) {
 				Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
 
 				if(cellToIndicesMap.find(pos) != cellToIndicesMap.end()) {
@@ -3759,6 +4207,9 @@ void Renderer::renderSurface(const int renderFps) {
 	float coordStep= world->getTileset()->getSurfaceAtlas()->getCoordStep();
 
 	const Texture2D *fowTex= world->getMinimap()->getFowTexture();
+	if(fowTex == NULL) {
+		return;
+	}
 
 	glPushAttrib(GL_LIGHTING_BIT | GL_ENABLE_BIT | GL_FOG_BIT | GL_TEXTURE_BIT);
 
@@ -3805,13 +4256,13 @@ void Renderer::renderSurface(const int renderFps) {
 	else if(qCache.visibleScaledCellList.empty() == false) {
 
 		int lastTex=-1;
-		int currTex=-1;
+		//int currTex=-1;
 
-		Quad2i snapshotOfvisibleQuad = visibleQuad;
+		//Quad2i snapshotOfvisibleQuad = visibleQuad;
 
 		//bool useVertexArrayRendering = getVBOSupported();
-		bool useVertexArrayRendering = false;
-		if(useVertexArrayRendering == false) {
+		//bool useVertexArrayRendering = false;
+		//if(useVertexArrayRendering == false) {
 		    //printf("\LEGACY qCache.visibleScaledCellList.size() = %d \n",qCache.visibleScaledCellList.size());
 
 			Vec2f texCoords[4];
@@ -3823,7 +4274,7 @@ void Renderer::renderSurface(const int renderFps) {
 
 		    std::map<int,int> uniqueVisibleTextures;
 			for(int visibleIndex = 0;
-					visibleIndex < qCache.visibleScaledCellList.size(); ++visibleIndex) {
+					visibleIndex < (int)qCache.visibleScaledCellList.size(); ++visibleIndex) {
 				Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
 				SurfaceCell *tc00= map->getSurfaceCell(pos.x, pos.y);
 				int cellTex= static_cast<const Texture2DGl*>(tc00->getSurfaceTexture())->getHandle();
@@ -3834,7 +4285,7 @@ void Renderer::renderSurface(const int renderFps) {
 			//printf("Current renders = %d possible = %d\n",qCache.visibleScaledCellList.size(),uniqueVisibleTextures.size());
 
 			for(int visibleIndex = 0;
-					visibleIndex < qCache.visibleScaledCellList.size(); ++visibleIndex) {
+					visibleIndex < (int)qCache.visibleScaledCellList.size(); ++visibleIndex) {
 				Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
 
 				SurfaceCell *tc00= map->getSurfaceCell(pos.x, pos.y);
@@ -3843,16 +4294,16 @@ void Renderer::renderSurface(const int renderFps) {
 				SurfaceCell *tc11= map->getSurfaceCell(pos.x+1, pos.y+1);
 
 				if(tc00 == NULL) {
-					throw runtime_error("tc00 == NULL");
+					throw megaglest_runtime_error("tc00 == NULL");
 				}
 				if(tc10 == NULL) {
-					throw runtime_error("tc10 == NULL");
+					throw megaglest_runtime_error("tc10 == NULL");
 				}
 				if(tc01 == NULL) {
-					throw runtime_error("tc01 == NULL");
+					throw megaglest_runtime_error("tc01 == NULL");
 				}
 				if(tc11 == NULL) {
-					throw runtime_error("tc11 == NULL");
+					throw megaglest_runtime_error("tc11 == NULL");
 				}
 
 				triangleCount+= 2;
@@ -3860,9 +4311,9 @@ void Renderer::renderSurface(const int renderFps) {
 
 				//set texture
 				if(tc00->getSurfaceTexture() == NULL) {
-					throw runtime_error("tc00->getSurfaceTexture() == NULL");
+					throw megaglest_runtime_error("tc00->getSurfaceTexture() == NULL");
 				}
-				currTex= static_cast<const Texture2DGl*>(tc00->getSurfaceTexture())->getHandle();
+				int currTex= static_cast<const Texture2DGl*>(tc00->getSurfaceTexture())->getHandle();
 				if(currTex != lastTex) {
 					lastTex = currTex;
 					//glBindTexture(GL_TEXTURE_2D, lastTex);
@@ -3943,215 +4394,204 @@ void Renderer::renderSurface(const int renderFps) {
 			glDisableClientState(GL_NORMAL_ARRAY);
 			glDisableClientState(GL_VERTEX_ARRAY);
 
-		}
-		else {
-		    int lastSurfaceDataIndex = -1;
-
-		    const bool useVBOs = false;
-		    const bool useSurfaceCache = false;
-
-		    std::vector<SurfaceData> surfaceData;
-		    bool recalcSurface = false;
-
-		    if(useSurfaceCache == true) {
-				std::map<string,std::pair<Chrono, std::vector<SurfaceData> > >::iterator iterFind = mapSurfaceData.find(snapshotOfvisibleQuad.getString());
-				if(iterFind == mapSurfaceData.end()) {
-					recalcSurface = true;
-					//printf("#1 Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
-				}
-/*
-				else if(iterFind->second.first.getMillis() >= 250) {
-					recalcSurface = true;
-					mapSurfaceData.erase(snapshotOfvisibleQuad.getString());
-					//printf("#2 RE-Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
-				}
-*/
-		    }
-		    else {
-		    	recalcSurface = true;
-		    }
-
-		    if(recalcSurface == true) {
-				//printf("Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
-
-		    	std::vector<SurfaceData> *surface = &surfaceData;
-		    	if(useSurfaceCache == true) {
-					std::pair<Chrono, std::vector<SurfaceData> > &surfaceCacheEntity = mapSurfaceData[snapshotOfvisibleQuad.getString()];
-					surface = &surfaceCacheEntity.second;
-					//surface.reserve(qCache.visibleScaledCellList.size());
-		    	}
-		    	surface->reserve(qCache.visibleScaledCellList.size());
-
-				for(int visibleIndex = 0;
-						visibleIndex < qCache.visibleScaledCellList.size(); ++visibleIndex) {
-					Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
-
-					SurfaceCell *tc00= map->getSurfaceCell(pos.x, pos.y);
-					SurfaceCell *tc10= map->getSurfaceCell(pos.x+1, pos.y);
-					SurfaceCell *tc01= map->getSurfaceCell(pos.x, pos.y+1);
-					SurfaceCell *tc11= map->getSurfaceCell(pos.x+1, pos.y+1);
-
-					if(tc00 == NULL) {
-						throw runtime_error("tc00 == NULL");
-					}
-					if(tc10 == NULL) {
-						throw runtime_error("tc10 == NULL");
-					}
-					if(tc01 == NULL) {
-						throw runtime_error("tc01 == NULL");
-					}
-					if(tc11 == NULL) {
-						throw runtime_error("tc11 == NULL");
-					}
-
-					triangleCount+= 2;
-					pointCount+= 4;
-
-					//set texture
-					if(tc00->getSurfaceTexture() == NULL) {
-						throw runtime_error("tc00->getSurfaceTexture() == NULL");
-					}
-
-					int surfaceDataIndex = -1;
-					currTex= static_cast<const Texture2DGl*>(tc00->getSurfaceTexture())->getHandle();
-					if(currTex != lastTex) {
-						lastTex = currTex;
-					}
-					else {
-						surfaceDataIndex = lastSurfaceDataIndex;
-					}
-
-					if(surfaceDataIndex < 0) {
-						SurfaceData newData;
-						newData.uniqueId = SurfaceData::nextUniqueId;
-						SurfaceData::nextUniqueId++;
-						newData.bufferCount=0;
-						newData.textureHandle = currTex;
-						surface->push_back(newData);
-
-						surfaceDataIndex = surface->size() - 1;
-					}
-
-					lastSurfaceDataIndex = surfaceDataIndex;
-
-					SurfaceData *cellData = &(*surface)[surfaceDataIndex];
-
-					const Vec2f &surfCoord= tc00->getSurfTexCoord();
-
-					cellData->texCoords.push_back(tc01->getFowTexCoord());
-					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x, surfCoord.y + coordStep));
-					cellData->vertices.push_back(tc01->getVertex());
-					cellData->normals.push_back(tc01->getNormal());
-					cellData->bufferCount++;
-
-					cellData->texCoords.push_back(tc00->getFowTexCoord());
-					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x, surfCoord.y));
-					cellData->vertices.push_back(tc00->getVertex());
-					cellData->normals.push_back(tc00->getNormal());
-					cellData->bufferCount++;
-
-					cellData->texCoords.push_back(tc11->getFowTexCoord());
-					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x+coordStep, surfCoord.y+coordStep));
-					cellData->vertices.push_back(tc11->getVertex());
-					cellData->normals.push_back(tc11->getNormal());
-					cellData->bufferCount++;
-
-					cellData->texCoords.push_back(tc10->getFowTexCoord());
-					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x+coordStep, surfCoord.y));
-					cellData->vertices.push_back(tc10->getVertex());
-					cellData->normals.push_back(tc10->getNormal());
-					cellData->bufferCount++;
-				}
-
-/*
-				if(useSurfaceCache == true) {
-					std::pair<Chrono, std::vector<SurfaceData> > &surfaceCacheEntity = mapSurfaceData[snapshotOfvisibleQuad.getString()];
-					surfaceCacheEntity.first.start();
-				}
-*/
-			}
-            //printf("\nsurface.size() = %d vs qCache.visibleScaledCellList.size() = %d snapshotOfvisibleQuad [%s]\n",surface.size(),qCache.visibleScaledCellList.size(),snapshotOfvisibleQuad.getString().c_str());
-
-		    std::vector<SurfaceData> *surface = &surfaceData;
-		    if(useSurfaceCache == true) {
-		    	std::pair<Chrono, std::vector<SurfaceData> > &surfaceCacheEntity = mapSurfaceData[snapshotOfvisibleQuad.getString()];
-		    	surface = &surfaceCacheEntity.second;
-
-		    	//printf("Surface Cache Size for Rendering using VA's = %lu\n",mapSurfaceData.size());
-		    }
-
-		    glEnableClientState(GL_VERTEX_ARRAY);
-		    glEnableClientState(GL_NORMAL_ARRAY);
-
-			for(int i = 0; i < surface->size(); ++i) {
-				SurfaceData &data = (*surface)[i];
-
-				if(useVBOs == true) {
-					VisibleQuadContainerVBOCache *vboCache = GetSurfaceVBOs(&data);
-
-					//glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(fowTex)->getHandle());
-					glClientActiveTexture(fowTexUnit);
-					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOFowTexCoords);
-					glTexCoordPointer(2, GL_FLOAT, 0,(char *) NULL);
-
-					glBindTexture(GL_TEXTURE_2D, data.textureHandle);
-					glClientActiveTexture(baseTexUnit);
-					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOSurfaceTexCoords);
-					glTexCoordPointer(2, GL_FLOAT, 0, (char *) NULL);
-
-					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOVertices);
-					glVertexPointer(3, GL_FLOAT, 0, (char *) NULL);
-
-					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBONormals);
-					glNormalPointer(GL_FLOAT, 0, (char *) NULL);
-
-					glDrawArrays(GL_TRIANGLE_STRIP, 0, data.bufferCount);
-
-					glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
-
-					glClientActiveTexture(fowTexUnit);
-					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-					glClientActiveTexture(baseTexUnit);
-					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-
-				}
-				else {
-					Vec2f *texCoords		= &data.texCoords[0];
-					Vec2f *texCoordsSurface	= &data.texCoordsSurface[0];
-					Vec3f *vertices			= &data.vertices[0];
-					Vec3f *normals			= &data.normals[0];
-
-					//glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(fowTex)->getHandle());
-					glClientActiveTexture(fowTexUnit);
-					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-					glTexCoordPointer(2, GL_FLOAT, 0,texCoords);
-
-					glBindTexture(GL_TEXTURE_2D, data.textureHandle);
-					glClientActiveTexture(baseTexUnit);
-					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-					glTexCoordPointer(2, GL_FLOAT, 0, texCoordsSurface);
-
-					glVertexPointer(3, GL_FLOAT, 0, vertices);
-					glNormalPointer(GL_FLOAT, 0, normals);
-
-					glDrawArrays(GL_TRIANGLE_STRIP, 0, data.bufferCount);
-
-					glClientActiveTexture(fowTexUnit);
-					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-					glClientActiveTexture(baseTexUnit);
-					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-				}
-			}
-
-			glDisableClientState(GL_NORMAL_ARRAY);
-			glDisableClientState(GL_VERTEX_ARRAY);
-
-			//printf("Surface Render before [%d] after [%d]\n",qCache.visibleScaledCellList.size(),surface.size());
-		}
+//		}
+//		else {
+//		    const bool useVBOs = false;
+//		    const bool useSurfaceCache = false;
+//
+//		    std::vector<SurfaceData> surfaceData;
+//		    bool recalcSurface = false;
+//
+//		    if(useSurfaceCache == true) {
+//				std::map<string,std::pair<Chrono, std::vector<SurfaceData> > >::iterator iterFind = mapSurfaceData.find(snapshotOfvisibleQuad.getString());
+//				if(iterFind == mapSurfaceData.end()) {
+//					recalcSurface = true;
+//					//printf("#1 Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
+//				}
+///*
+//				else if(iterFind->second.first.getMillis() >= 250) {
+//					recalcSurface = true;
+//					mapSurfaceData.erase(snapshotOfvisibleQuad.getString());
+//					//printf("#2 RE-Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
+//				}
+//*/
+//		    }
+//		    else {
+//		    	recalcSurface = true;
+//		    }
+//
+//		    if(recalcSurface == true) {
+//				//printf("Calculating surface for Rendering using VA's [%s]\n",snapshotOfvisibleQuad.getString().c_str());
+//
+//		    	std::vector<SurfaceData> *surface = &surfaceData;
+//		    	if(useSurfaceCache == true) {
+//					std::pair<Chrono, std::vector<SurfaceData> > &surfaceCacheEntity = mapSurfaceData[snapshotOfvisibleQuad.getString()];
+//					surface = &surfaceCacheEntity.second;
+//					//surface.reserve(qCache.visibleScaledCellList.size());
+//		    	}
+//		    	surface->reserve(qCache.visibleScaledCellList.size());
+//
+//		    	int lastSurfaceDataIndex = -1;
+//				for(int visibleIndex = 0;
+//						visibleIndex < (int)qCache.visibleScaledCellList.size(); ++visibleIndex) {
+//					Vec2i &pos = qCache.visibleScaledCellList[visibleIndex];
+//
+//					SurfaceCell *tc00= map->getSurfaceCell(pos.x, pos.y);
+//					SurfaceCell *tc10= map->getSurfaceCell(pos.x+1, pos.y);
+//					SurfaceCell *tc01= map->getSurfaceCell(pos.x, pos.y+1);
+//					SurfaceCell *tc11= map->getSurfaceCell(pos.x+1, pos.y+1);
+//
+//					if(tc00 == NULL) {
+//						throw megaglest_runtime_error("tc00 == NULL");
+//					}
+//					if(tc10 == NULL) {
+//						throw megaglest_runtime_error("tc10 == NULL");
+//					}
+//					if(tc01 == NULL) {
+//						throw megaglest_runtime_error("tc01 == NULL");
+//					}
+//					if(tc11 == NULL) {
+//						throw megaglest_runtime_error("tc11 == NULL");
+//					}
+//
+//					triangleCount+= 2;
+//					pointCount+= 4;
+//
+//					//set texture
+//					if(tc00->getSurfaceTexture() == NULL) {
+//						throw megaglest_runtime_error("tc00->getSurfaceTexture() == NULL");
+//					}
+//
+//					int surfaceDataIndex = -1;
+//					currTex= static_cast<const Texture2DGl*>(tc00->getSurfaceTexture())->getHandle();
+//					if(currTex != lastTex) {
+//						lastTex = currTex;
+//					}
+//					else {
+//						surfaceDataIndex = lastSurfaceDataIndex;
+//					}
+//
+//					if(surfaceDataIndex < 0) {
+//						SurfaceData newData;
+//						newData.uniqueId = SurfaceData::nextUniqueId;
+//						SurfaceData::nextUniqueId++;
+//						newData.bufferCount=0;
+//						newData.textureHandle = currTex;
+//						surface->push_back(newData);
+//
+//						surfaceDataIndex = (int)surface->size() - 1;
+//					}
+//
+//					lastSurfaceDataIndex = surfaceDataIndex;
+//
+//					SurfaceData *cellData = &(*surface)[surfaceDataIndex];
+//
+//					const Vec2f &surfCoord= tc00->getSurfTexCoord();
+//
+//					cellData->texCoords.push_back(tc01->getFowTexCoord());
+//					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x, surfCoord.y + coordStep));
+//					cellData->vertices.push_back(tc01->getVertex());
+//					cellData->normals.push_back(tc01->getNormal());
+//					cellData->bufferCount++;
+//
+//					cellData->texCoords.push_back(tc00->getFowTexCoord());
+//					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x, surfCoord.y));
+//					cellData->vertices.push_back(tc00->getVertex());
+//					cellData->normals.push_back(tc00->getNormal());
+//					cellData->bufferCount++;
+//
+//					cellData->texCoords.push_back(tc11->getFowTexCoord());
+//					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x+coordStep, surfCoord.y+coordStep));
+//					cellData->vertices.push_back(tc11->getVertex());
+//					cellData->normals.push_back(tc11->getNormal());
+//					cellData->bufferCount++;
+//
+//					cellData->texCoords.push_back(tc10->getFowTexCoord());
+//					cellData->texCoordsSurface.push_back(Vec2f(surfCoord.x+coordStep, surfCoord.y));
+//					cellData->vertices.push_back(tc10->getVertex());
+//					cellData->normals.push_back(tc10->getNormal());
+//					cellData->bufferCount++;
+//				}
+//			}
+//
+//		    std::vector<SurfaceData> *surface = &surfaceData;
+//		    if(useSurfaceCache == true) {
+//		    	std::pair<Chrono, std::vector<SurfaceData> > &surfaceCacheEntity = mapSurfaceData[snapshotOfvisibleQuad.getString()];
+//		    	surface = &surfaceCacheEntity.second;
+//		    }
+//
+//		    glEnableClientState(GL_VERTEX_ARRAY);
+//		    glEnableClientState(GL_NORMAL_ARRAY);
+//
+//			for(int i = 0; i < (int)surface->size(); ++i) {
+//				SurfaceData &data = (*surface)[i];
+//
+//				if(useVBOs == true) {
+//					VisibleQuadContainerVBOCache *vboCache = GetSurfaceVBOs(&data);
+//
+//					//glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(fowTex)->getHandle());
+//					glClientActiveTexture(fowTexUnit);
+//					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+//
+//					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOFowTexCoords);
+//					glTexCoordPointer(2, GL_FLOAT, 0,(char *) NULL);
+//
+//					glBindTexture(GL_TEXTURE_2D, data.textureHandle);
+//					glClientActiveTexture(baseTexUnit);
+//					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+//
+//					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOSurfaceTexCoords);
+//					glTexCoordPointer(2, GL_FLOAT, 0, (char *) NULL);
+//
+//					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBOVertices);
+//					glVertexPointer(3, GL_FLOAT, 0, (char *) NULL);
+//
+//					glBindBufferARB( GL_ARRAY_BUFFER_ARB, vboCache->m_nVBONormals);
+//					glNormalPointer(GL_FLOAT, 0, (char *) NULL);
+//
+//					glDrawArrays(GL_TRIANGLE_STRIP, 0, data.bufferCount);
+//
+//					glBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+//
+//					glClientActiveTexture(fowTexUnit);
+//					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+//					glClientActiveTexture(baseTexUnit);
+//					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+//
+//				}
+//				else {
+//					Vec2f *texCoords		= &data.texCoords[0];
+//					Vec2f *texCoordsSurface	= &data.texCoordsSurface[0];
+//					Vec3f *vertices			= &data.vertices[0];
+//					Vec3f *normals			= &data.normals[0];
+//
+//					//glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(fowTex)->getHandle());
+//					glClientActiveTexture(fowTexUnit);
+//					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+//					glTexCoordPointer(2, GL_FLOAT, 0,texCoords);
+//
+//					glBindTexture(GL_TEXTURE_2D, data.textureHandle);
+//					glClientActiveTexture(baseTexUnit);
+//					glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+//					glTexCoordPointer(2, GL_FLOAT, 0, texCoordsSurface);
+//
+//					glVertexPointer(3, GL_FLOAT, 0, vertices);
+//					glNormalPointer(GL_FLOAT, 0, normals);
+//
+//					glDrawArrays(GL_TRIANGLE_STRIP, 0, data.bufferCount);
+//
+//					glClientActiveTexture(fowTexUnit);
+//					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+//					glClientActiveTexture(baseTexUnit);
+//					glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+//				}
+//			}
+//
+//			glDisableClientState(GL_NORMAL_ARRAY);
+//			glDisableClientState(GL_VERTEX_ARRAY);
+//
+//			//printf("Surface Render before [%d] after [%d]\n",qCache.visibleScaledCellList.size(),surface.size());
+//		}
 	}
 
 	//Restore
@@ -4162,7 +4602,10 @@ void Renderer::renderSurface(const int renderFps) {
 	glPopAttrib();
 
 	//assert
-	glGetError();	//remove when first mtex problem solved
+	GLenum glresult = glGetError();	//remove when first mtex problem solved
+	if(glresult) {
+		assertGl();
+	}
 	assertGl();
 
 	IF_DEBUG_EDITION(
@@ -4177,7 +4620,10 @@ void Renderer::renderObjects(const int renderFps) {
 	}
 
 	const World *world= game->getWorld();
-	const Map *map= world->getMap();
+	//const Map *map= world->getMap();
+
+	Config &config= Config::getInstance();
+	int tilesetObjectsToAnimate=config.getInt("AnimatedTilesetObjects","-1");
 
     assertGl();
 
@@ -4188,12 +4634,18 @@ void Renderer::renderObjects(const int renderFps) {
     bool modelRenderStarted = false;
 
 	VisibleQuadContainerCache &qCache = getQuadCache();
-	for(int visibleIndex = 0;
-			visibleIndex < qCache.visibleObjectList.size(); ++visibleIndex) {
+
+	//	for(int visibleIndex = 0;
+	//			visibleIndex < qCache.visibleObjectList.size(); ++visibleIndex) {
+	// render from last to first object so animated objects which are on bottom of screen are
+	// rendered first which looks better for limited number of animated tileset objects
+	for(int visibleIndex = (int)qCache.visibleObjectList.size()-1;
+			visibleIndex >= 0 ; --visibleIndex) {
 		Object *o = qCache.visibleObjectList[visibleIndex];
 
 		Model *objModel= o->getModelPtr();
-		const Vec3f &v= o->getConstPos();
+		//objModel->updateInterpolationData(o->getAnimProgress(), true);
+		const Vec3f v= o->getConstPos();
 
 		if(modelRenderStarted == false) {
 			modelRenderStarted = true;
@@ -4215,7 +4667,7 @@ void Renderer::renderObjects(const int renderFps) {
 			glEnable(GL_COLOR_MATERIAL);
 			glAlphaFunc(GL_GREATER, 0.5f);
 
-			modelRenderer->begin(true, true, false);
+			modelRenderer->begin(true, true, false, false);
 		}
 		//ambient and diffuse color is taken from cell color
 
@@ -4230,7 +4682,26 @@ void Renderer::renderObjects(const int renderFps) {
 		glTranslatef(v.x, v.y, v.z);
 		glRotatef(o->getRotation(), 0.f, 1.f, 0.f);
 
-		objModel->updateInterpolationData(0.f, true);
+		//We use OpenGL Lights so no manual action is needed here. In fact this call did bad things on lighting big rocks for example
+		//		if(o->getRotation() != 0.0) {
+		//			setupLightingForRotatedModel();
+		//		}
+
+		//objModel->updateInterpolationData(0.f, true);
+		//if(this->gameCamera->getPos().dist(o->getPos()) <= SKIP_INTERPOLATION_DISTANCE) {
+
+
+		if (tilesetObjectsToAnimate == -1) {
+			objModel->updateInterpolationData(o->getAnimProgress(), true);
+		} else if (tilesetObjectsToAnimate > 0 && o->isAnimated()) {
+			tilesetObjectsToAnimate--;
+			objModel->updateInterpolationData(o->getAnimProgress(), true);
+		} else {
+			objModel->updateInterpolationData(0, true);
+		}
+
+//		objModel->updateInterpolationData(o->getAnimProgress(), true);
+		//}
 		modelRenderer->render(objModel);
 
 		triangleCount+= objModel->getTriangleCount();
@@ -4255,9 +4726,13 @@ void Renderer::renderWater() {
 		return;
 	}
 
-	bool closed= false;
 	const World *world= game->getWorld();
 	const Map *map= world->getMap();
+
+	const Texture2D *fowTex= world->getMinimap()->getFowTexture();
+	if(fowTex == NULL) {
+		return;
+	}
 
 	float waterAnim= world->getWaterEffects()->getAmin();
 
@@ -4270,10 +4745,12 @@ void Renderer::renderWater() {
     glDisable(GL_TEXTURE_2D);
 
 	glEnable(GL_BLEND);
-	if(textures3D){
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	if(textures3D) {
 		Texture3D *waterTex= world->getTileset()->getWaterTex();
 		if(waterTex == NULL) {
-			throw runtime_error("waterTex == NULL");
+			throw megaglest_runtime_error("waterTex == NULL");
 		}
 		glEnable(GL_TEXTURE_3D);
 		glBindTexture(GL_TEXTURE_3D, static_cast<Texture3DGl*>(waterTex)->getHandle());
@@ -4287,13 +4764,17 @@ void Renderer::renderWater() {
 	assertGl();
 
 	//fog of War texture Unit
-	const Texture2D *fowTex= world->getMinimap()->getFowTexture();
+	//const Texture2D *fowTex= world->getMinimap()->getFowTexture();
 	glActiveTexture(fowTexUnit);
 	glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(fowTex)->getHandle());
     glActiveTexture(baseTexUnit);
 
 	assertGl();
+
+	int thisTeamIndex= world->getThisTeamIndex();
+	bool cellExplored = world->showWorldForPlayer(world->getThisFactionIndex());
+	bool closed= false;
 
 	Rect2i boundingRect= visibleQuad.computeBoundingRect();
 	Rect2i scaledRect= boundingRect/Map::cellScale;
@@ -4304,24 +4785,20 @@ void Renderer::renderWater() {
         glBegin(GL_TRIANGLE_STRIP);
 
 		for(int i=scaledRect.p[0].x; i<=scaledRect.p[1].x; ++i){
-
 			SurfaceCell *tc0= map->getSurfaceCell(i, j);
             SurfaceCell *tc1= map->getSurfaceCell(i, j+1);
 			if(tc0 == NULL) {
-				throw runtime_error("tc0 == NULL");
+				throw megaglest_runtime_error("tc0 == NULL");
 			}
 			if(tc1 == NULL) {
-				throw runtime_error("tc1 == NULL");
+				throw megaglest_runtime_error("tc1 == NULL");
 			}
 
-			int thisTeamIndex= world->getThisTeamIndex();
-
-			bool cellExplored = world->showWorldForPlayer(world->getThisFactionIndex());
             if(cellExplored == false) {
                 cellExplored = (tc0->isExplored(thisTeamIndex) || tc1->isExplored(thisTeamIndex));
             }
 
-			if(tc0->getNearSubmerged() && cellExplored == true) {
+			if(cellExplored == true && tc0->getNearSubmerged()) {
 				glNormal3f(0.f, 1.f, 0.f);
                 closed= false;
 
@@ -4352,8 +4829,7 @@ void Renderer::renderWater() {
 
             }
             else{
-				if(!closed){
-
+				if(closed == false) {
 					pointCount+= 2;
 
 					//vertex 1
@@ -4411,13 +4887,67 @@ void Renderer::renderTeamColorCircle(){
 		glLineWidth(2.f);
 
 		for(int visibleUnitIndex = 0;
-							visibleUnitIndex < qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+							visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
 				Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
 				Vec3f currVec= unit->getCurrVectorFlat();
 				Vec3f color=unit->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0);
 				glColor4f(color.x, color.y, color.z, 0.7f);
 				renderSelectionCircle(currVec, unit->getType()->getSize(), 0.8f, 0.05f);
 			}
+		glPopAttrib();
+	}
+}
+
+void Renderer::renderSpecialHighlightUnits(std::map<int,HighlightSpecialUnitInfo> unitHighlightList) {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true || unitHighlightList.empty() == true) {
+		return;
+	}
+
+	VisibleQuadContainerCache &qCache = getQuadCache();
+	if(qCache.visibleQuadUnitList.empty() == false) {
+
+		glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_DEPTH_BUFFER_BIT);
+		glDisable(GL_LIGHTING);
+		glDisable(GL_TEXTURE_2D);
+		glDepthFunc(GL_ALWAYS);
+		glDisable(GL_STENCIL_TEST);
+		glDisable(GL_CULL_FACE);
+		glEnable(GL_BLEND);
+		glLineWidth(2.f);
+
+		for(int visibleUnitIndex = 0;
+							visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+				Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
+
+				std::map<int,HighlightSpecialUnitInfo>::iterator iterFindSpecialUnit = unitHighlightList.find(unit->getId());
+				if(iterFindSpecialUnit != unitHighlightList.end()) {
+					Vec3f color=unit->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0);
+					float radius = 1.0f;
+					float thickness = 0.1f;
+					float alpha = 0.65f;
+
+					HighlightSpecialUnitInfo &specialInfo = iterFindSpecialUnit->second;
+					if(specialInfo.color.x >= 0) {
+						color.x = specialInfo.color.x;
+						color.y = specialInfo.color.y;
+						color.z = specialInfo.color.z;
+					}
+					if(specialInfo.color.w >= 0) {
+						alpha = specialInfo.color.w;
+					}
+					if(specialInfo.radius > 0) {
+						radius = specialInfo.radius;
+					}
+					if(specialInfo.thickness > 0) {
+						thickness = specialInfo.thickness;
+					}
+
+					glColor4f(color.x, color.y, color.z, alpha);
+
+					Vec3f currVec= unit->getCurrVectorFlat();
+					renderSelectionCircle(currVec, unit->getType()->getSize(), radius, thickness);
+				}
+		}
 		glPopAttrib();
 	}
 }
@@ -4436,7 +4966,7 @@ void Renderer::renderTeamColorPlane(){
 		glEnable(GL_COLOR_MATERIAL);
 		const Texture2D *texture=CoreData::getInstance().getTeamColorTexture();
 		for(int visibleUnitIndex = 0;
-				visibleUnitIndex < qCache.visibleQuadUnitList.size(); ++visibleUnitIndex){
+				visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex){
 			Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
 			Vec3f currVec= unit->getCurrVectorFlat();
 			renderTeamColorEffect(currVec,visibleUnitIndex,unit->getType()->getSize(),
@@ -4447,9 +4977,60 @@ void Renderer::renderTeamColorPlane(){
 	}
 }
 
+void Renderer::renderGhostModel(const UnitType *building, const Vec2i pos,CardinalDir facing, Vec4f *forceColor) {
+	//const UnitType *building= gui->getBuilding();
+	//const Vec2i &pos= gui->getPosObjWorld();
 
+	//const Gui *gui= game->getGui();
+	//const Mouse3d *mouse3d= gui->getMouse3d();
+	const Map *map= game->getWorld()->getMap();
+	if(map == NULL) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d map == NULL",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
 
-void Renderer::renderUnits(const int renderFps) {
+	glPushMatrix();
+	Vec3f pos3f= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
+
+	//selection building placement
+	float offset= building->getSize()/2.f-0.5f;
+	glTranslatef(pos3f.x+offset, pos3f.y, pos3f.z+offset);
+
+	//choose color
+	Vec4f color;
+	if(forceColor != NULL) {
+		color = *forceColor;
+	}
+	else {
+		if(map->isFreeCells(pos, building->getSize(), fLand)) {
+			color= Vec4f(1.f, 1.f, 1.f, 0.5f);
+		}
+		else {
+//			Uint64 tc=game->getTickCount();
+//			float red=0.49f+((tc%4*1.0f)/2);
+			color= Vec4f(1.0f, 0.f, 0.f, 0.5f);
+		}
+	}
+
+	glColor4fv(color.ptr());
+	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, color.ptr());
+	Model *buildingModel= building->getFirstStOfClass(scStop)->getAnimation();
+
+	if(facing != CardinalDir::NORTH) {
+		float rotateAmount = facing * 90.f;
+		if(rotateAmount > 0) {
+			glRotatef(rotateAmount, 0.f, 1.f, 0.f);
+		}
+	}
+
+	buildingModel->updateInterpolationData(0.f, false);
+	modelRenderer->render(buildingModel);
+
+	glPopMatrix();
+}
+
+void Renderer::renderUnits(bool airUnits, const int renderFps) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
@@ -4469,14 +5050,16 @@ void Renderer::renderUnits(const int renderFps) {
 		//}
 	}
 
-	bool modelRenderStarted = false;
-
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	if(qCache.visibleQuadUnitList.empty() == false) {
+		bool modelRenderStarted = false;
 		for(int visibleUnitIndex = 0;
-				visibleUnitIndex < qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+				visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
 			Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
 
+			if(( airUnits==false && unit->getType()->getField()==fAir) || ( airUnits==true && unit->getType()->getField()!=fAir)){
+				continue;
+			}
 			meshCallbackTeamColor.setTeamTexture(unit->getFaction()->getTexture());
 
 			if(modelRenderStarted == false) {
@@ -4498,7 +5081,7 @@ void Renderer::renderUnits(const int renderFps) {
 				}
 				glActiveTexture(baseTexUnit);
 
-				modelRenderer->begin(true, true, true, &meshCallbackTeamColor);
+				modelRenderer->begin(true, true, true, false, &meshCallbackTeamColor);
 			}
 
 			glMatrixMode(GL_MODELVIEW);
@@ -4522,18 +5105,23 @@ void Renderer::renderUnits(const int renderFps) {
 			//dead alpha
 			const SkillType *st= unit->getCurrSkill();
 			if(st->getClass() == scDie && static_cast<const DieSkillType*>(st)->getFade()) {
-				float alpha= 1.0f-unit->getAnimProgress();
+				float alpha= 1.0f - unit->getAnimProgressAsFloat();
 				glDisable(GL_COLOR_MATERIAL);
 				glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, Vec4f(1.0f, 1.0f, 1.0f, alpha).ptr());
 			}
 			else {
 				glEnable(GL_COLOR_MATERIAL);
-				glAlphaFunc(GL_GREATER, 0.4f);
+				// we cut off a tiny bit here to avoid problems with fully transparent texture parts cutting units in background rendered later.
+				glAlphaFunc(GL_GREATER, 0.02f);
 			}
 
 			//render
 			Model *model= unit->getCurrentModelPtr();
-			model->updateInterpolationData(unit->getAnimProgress(), unit->isAlive() && !unit->isAnimProgressBound());
+			//printf("Rendering model [%d - %s]\n[%s]\nCamera [%s]\nDistance: %f\n",unit->getId(),unit->getType()->getName().c_str(),unit->getCurrVector().getString().c_str(),this->gameCamera->getPos().getString().c_str(),this->gameCamera->getPos().dist(unit->getCurrVector()));
+
+			//if(this->gameCamera->getPos().dist(unit->getCurrVector()) <= SKIP_INTERPOLATION_DISTANCE) {
+				model->updateInterpolationData(unit->getAnimProgressAsFloat(), unit->isAlive() && !unit->isAnimProgressBound());
+			//}
 
 			modelRenderer->render(model);
 			triangleCount+= model->getTriangleCount();
@@ -4567,6 +5155,49 @@ void Renderer::renderUnits(const int renderFps) {
 
 }
 
+void Renderer::renderUnitsToBuild(const int renderFps) {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	//assert
+	assertGl();
+
+	VisibleQuadContainerCache &qCache = getQuadCache();
+	if(qCache.visibleQuadUnitBuildList.empty() == false) {
+
+		glMatrixMode(GL_MODELVIEW);
+		glPushAttrib(GL_CURRENT_BIT | GL_LIGHTING_BIT | GL_ENABLE_BIT | GL_DEPTH_BUFFER_BIT);
+		glEnable(GL_BLEND);
+		glDisable(GL_STENCIL_TEST);
+		glDepthFunc(GL_LESS);
+		glEnable(GL_COLOR_MATERIAL);
+		glDepthMask(GL_FALSE);
+
+		modelRenderer->begin(true, true, false, false);
+
+		for(int visibleUnitIndex = 0;
+				visibleUnitIndex < (int)qCache.visibleQuadUnitBuildList.size(); ++visibleUnitIndex) {
+			const UnitBuildInfo &buildUnit = qCache.visibleQuadUnitBuildList[visibleUnitIndex];
+			//Vec4f modelColor= Vec4f(0.f, 1.f, 0.f, 0.5f);
+			const Vec3f teamColor = buildUnit.unit->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0);
+			Vec4f modelColor= Vec4f(teamColor.x,teamColor.y,teamColor.z,0.4f);
+			renderGhostModel(buildUnit.buildUnit, buildUnit.pos, buildUnit.facing, &modelColor);
+
+			//printf("Rendering to build unit index = %d\n",visibleUnitIndex);
+		}
+
+		modelRenderer->end();
+
+		glDisable(GL_COLOR_MATERIAL);
+		glPopAttrib();
+	}
+
+	//assert
+	assertGl();
+
+}
+
 void Renderer::renderTeamColorEffect(Vec3f &v, int heigth, int size, Vec3f color, const Texture2D *texture) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
@@ -4594,10 +5225,72 @@ void Renderer::renderTeamColorEffect(Vec3f &v, int heigth, int size, Vec3f color
 
 }
 
+void Renderer::renderMorphEffects(){
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	VisibleQuadContainerCache &qCache = getQuadCache();
+	if(qCache.visibleQuadUnitList.empty() == false) {
+		bool initialized=false;
+		int frameCycle=0;
+		for(int visibleUnitIndex = 0;
+							visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+			Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
+			if(unit->getCurrSkill() != NULL && unit->getCurrSkill()->getClass() == scMorph) {
+				Command *command= unit->getCurrCommand();
+				if(command != NULL && command->getCommandType()->commandTypeClass == ccMorph){
+					const MorphCommandType *mct= static_cast<const MorphCommandType*>(command->getCommandType());
+					const UnitType* mType=mct->getMorphUnit();
+
+					if(mType->getSize()>unit->getType()->getSize() ||
+							mType->getField()!=unit->getType()->getField()){
+						if(!initialized){
+							const World *world= game->getWorld();
+							frameCycle=world->getFrameCount() % 40;
+
+							glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_DEPTH_BUFFER_BIT);
+							glDisable(GL_LIGHTING);
+							glDisable(GL_TEXTURE_2D);
+							glDepthFunc(GL_ALWAYS);
+							glDisable(GL_STENCIL_TEST);
+							glDisable(GL_CULL_FACE);
+							glEnable(GL_BLEND);
+							glLineWidth(2.f);
+							initialized=true;
+						}
+
+						Vec3f currVec= unit->getCurrVectorFlat();
+						currVec=Vec3f(currVec.x,currVec.y+0.3f,currVec.z);
+						if(mType->getField() == fAir && unit->getType()->getField()== fLand) {
+							currVec=Vec3f(currVec.x,currVec.y+game->getWorld()->getTileset()->getAirHeight(),currVec.z);
+						}
+						if(mType->getField() == fLand && unit->getType()->getField()== fAir) {
+							currVec=Vec3f(currVec.x,currVec.y-game->getWorld()->getTileset()->getAirHeight(),currVec.z);
+						}
+
+						float color=frameCycle*0.4f/40;
+						glColor4f(color,color, 0.4f, 0.4f);
+						renderSelectionCircle(currVec, mType->getSize(), frameCycle*0.85f/40, 0.2f);
+					}
+				}
+			}
+		}
+		if(initialized) {
+			glPopAttrib();
+		}
+	}
+}
+
 
 
 void Renderer::renderSelectionEffects() {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	Config &config= Config::getInstance();
+	if(config.getBool("RecordMode","false") == true) {
 		return;
 	}
 
@@ -4619,88 +5312,84 @@ void Renderer::renderSelectionEffects() {
 	for(int i=0; i<selection->getCount(); ++i){
 
 		const Unit *unit= selection->getUnit(i);
+		if(unit != NULL) {
+			//translate
+			Vec3f currVec= unit->getCurrVectorFlat();
+			currVec.y+= 0.3f;
 
-		//translate
-		Vec3f currVec= unit->getCurrVectorFlat();
-		currVec.y+= 0.3f;
+			//selection circle
+			if(world->getThisFactionIndex() == unit->getFactionIndex()) {
+				if(	showDebugUI == true &&
+					((showDebugUILevel & debugui_unit_titles) == debugui_unit_titles) &&
+					unit->getCommandSize() > 0 &&
+					dynamic_cast<const BuildCommandType *>(unit->getCurrCommand()->getCommandType()) != NULL) {
+					glColor4f(unit->getHpRatio(), unit->getHpRatio(), unit->getHpRatio(), 0.3f);
+				}
+				else {
+					glColor4f(0, unit->getHpRatio(), 0, 0.3f);
+				}
+			}
+			else if ( world->getThisTeamIndex() == unit->getTeam()) {
+				glColor4f(unit->getHpRatio(), unit->getHpRatio(), 0, 0.3f);
+			}
+			else{
+				glColor4f(unit->getHpRatio(), 0, 0, 0.3f);
+			}
+			renderSelectionCircle(currVec, unit->getType()->getSize(), selectionCircleRadius);
 
-		//selection circle
-		if(world->getThisFactionIndex() == unit->getFactionIndex()) {
 			if(	showDebugUI == true &&
-				((showDebugUILevel & debugui_unit_titles) == debugui_unit_titles) &&
-				unit->getCommandSize() > 0 &&
-				dynamic_cast<const BuildCommandType *>(unit->getCurrCommand()->getCommandType()) != NULL) {
-				glColor4f(unit->getHpRatio(), unit->getHpRatio(), unit->getHpRatio(), 0.3f);
-			}
-			else {
-				glColor4f(0, unit->getHpRatio(), 0, 0.3f);
-			}
-		}
-		else if ( world->getThisTeamIndex() == unit->getTeam()) {
-			glColor4f(unit->getHpRatio(), unit->getHpRatio(), 0, 0.3f);
-		}
-		else{
-			glColor4f(unit->getHpRatio(), 0, 0, 0.3f);
-		}
-		renderSelectionCircle(currVec, unit->getType()->getSize(), selectionCircleRadius);
+				(showDebugUILevel & debugui_unit_titles) == debugui_unit_titles) {
 
-		if(	showDebugUI == true &&
-			(showDebugUILevel & debugui_unit_titles) == debugui_unit_titles) {
+				const UnitPathInterface *path= unit->getPath();
+				const UnitPathBasic *pathfinder = (path == NULL ? NULL : dynamic_cast<const UnitPathBasic *>(path));
+				if(pathfinder != NULL) {
+					vector<Vec2i> pathList = pathfinder->getQueue();
 
-			const UnitPathInterface *path= unit->getPath();
-			if(path != NULL && dynamic_cast<const UnitPathBasic *>(path)) {
-				vector<Vec2i> pathList = dynamic_cast<const UnitPathBasic *>(path)->getLastPathCacheQueue();
-
-				Vec2i lastPosValue;
-				for(int i = 0; i < pathList.size(); ++i) {
-					Vec2i curPosValue = pathList[i];
-					if(i == 0) {
-						lastPosValue = curPosValue;
+					Vec2i lastPosValue;
+					for(int i = 0; i < (int)pathList.size(); ++i) {
+						Vec2i curPosValue = pathList[i];
+						if(i == 0) {
+							lastPosValue = curPosValue;
+						}
+						Vec3f currVec2 = unit->getVectorFlat(lastPosValue,curPosValue);
+						currVec2.y+= 0.3f;
+						renderSelectionCircle(currVec2, 1, selectionCircleRadius);
 					}
-					Vec3f currVec2 = unit->getVectorFlat(lastPosValue,curPosValue);
-					currVec2.y+= 0.3f;
-					renderSelectionCircle(currVec2, 1, selectionCircleRadius);
-					//renderSelectionCircle(currVec2, unit->getType()->getSize(), selectionCircleRadius);
-
-					//SurfaceCell *cell= map->getSurfaceCell(currVec2.x, currVec2.y);
-					//currVec2.z = cell->getHeight() + 2.0;
-					//renderSelectionCircle(currVec2, unit->getType()->getSize(), selectionCircleRadius);
 				}
 			}
-		}
 
-		//magic circle
-		if(world->getThisFactionIndex() == unit->getFactionIndex() && unit->getType()->getMaxEp() > 0) {
-			glColor4f(unit->getEpRatio()/2.f, unit->getEpRatio(), unit->getEpRatio(), 0.5f);
-			renderSelectionCircle(currVec, unit->getType()->getSize(), magicCircleRadius);
-		}
+			//magic circle
+			if(world->getThisFactionIndex() == unit->getFactionIndex() && unit->getType()->getMaxEp() > 0) {
+				glColor4f(unit->getEpRatio()/2.f, unit->getEpRatio(), unit->getEpRatio(), 0.5f);
+				renderSelectionCircle(currVec, unit->getType()->getSize(), magicCircleRadius);
+			}
 
-		// Render Attack-boost circles
-		if(showDebugUI == true) {
-			//const std::pair<const SkillType *,std::vector<Unit *> > &currentAttackBoostUnits = unit->getCurrentAttackBoostUnits();
-			const UnitAttackBoostEffectOriginator &effect = unit->getAttackBoostOriginatorEffect();
+			// Render Attack-boost circles
+			if(showDebugUI == true) {
+				//const std::pair<const SkillType *,std::vector<Unit *> > &currentAttackBoostUnits = unit->getCurrentAttackBoostUnits();
+				const UnitAttackBoostEffectOriginator &effect = unit->getAttackBoostOriginatorEffect();
 
-			if(effect.skillType->isAttackBoostEnabled() == true) {
-				glColor4f(MAGENTA.x,MAGENTA.y,MAGENTA.z,MAGENTA.w);
-				renderSelectionCircle(currVec, unit->getType()->getSize(), effect.skillType->getAttackBoost()->radius);
+				if(effect.skillType->isAttackBoostEnabled() == true) {
+					glColor4f(MAGENTA.x,MAGENTA.y,MAGENTA.z,MAGENTA.w);
+					renderSelectionCircle(currVec, unit->getType()->getSize(), effect.skillType->getAttackBoost()->radius);
 
-				for(unsigned int i = 0; i < effect.currentAttackBoostUnits.size(); ++i) {
-					// Remove attack boost upgrades from unit
-					int findUnitId = effect.currentAttackBoostUnits[i];
-					Unit *affectedUnit = game->getWorld()->findUnitById(findUnitId);
-					if(affectedUnit != NULL) {
-						Vec3f currVecBoost = affectedUnit->getCurrVectorFlat();
-						currVecBoost.y += 0.3f;
+					for(unsigned int i = 0; i < effect.currentAttackBoostUnits.size(); ++i) {
+						// Remove attack boost upgrades from unit
+						int findUnitId = effect.currentAttackBoostUnits[i];
+						Unit *affectedUnit = game->getWorld()->findUnitById(findUnitId);
+						if(affectedUnit != NULL) {
+							Vec3f currVecBoost = affectedUnit->getCurrVectorFlat();
+							currVecBoost.y += 0.3f;
 
-						renderSelectionCircle(currVecBoost, affectedUnit->getType()->getSize(), 1.f);
+							renderSelectionCircle(currVecBoost, affectedUnit->getType()->getSize(), 1.f);
+						}
 					}
 				}
 			}
 		}
-
 	}
-	if(selectedResourceObject!=NULL)
-	{
+
+	if(selectedResourceObject != NULL && selectedResourceObject->getResource() != NULL && selection->getCount() < 1) {
 		Resource *r= selectedResourceObject->getResource();
 		int defaultValue= r->getType()->getDefResPerPatch();
 		float colorValue=static_cast<float>(r->getAmount())/static_cast<float>(defaultValue);
@@ -4710,72 +5399,102 @@ void Renderer::renderSelectionEffects() {
 	//target arrow
 	if(selection->getCount() == 1) {
 		const Unit *unit= selection->getUnit(0);
+		if(unit != NULL) {
+			//comand arrow
+			if(focusArrows && unit->anyCommand()) {
+				const CommandType *ct= unit->getCurrCommand()->getCommandType();
+				if(ct->getClicks() != cOne){
 
-		//comand arrow
-		if(focusArrows && unit->anyCommand()) {
-			const CommandType *ct= unit->getCurrCommand()->getCommandType();
-			if(ct->getClicks() != cOne){
+					//arrow color
+					Vec3f arrowColor;
+					switch(ct->getClass()) {
+					case ccMove:
+						arrowColor= Vec3f(0.f, 1.f, 0.f);
+						break;
+					case ccAttack:
+					case ccAttackStopped:
+						arrowColor= Vec3f(1.f, 0.f, 0.f);
+						break;
+					default:
+						arrowColor= Vec3f(1.f, 1.f, 0.f);
+						break;
+					}
 
-				//arrow color
-				Vec3f arrowColor;
-				switch(ct->getClass()) {
-				case ccMove:
-					arrowColor= Vec3f(0.f, 1.f, 0.f);
-					break;
-				case ccAttack:
-				case ccAttackStopped:
-					arrowColor= Vec3f(1.f, 0.f, 0.f);
-					break;
-				default:
-					arrowColor= Vec3f(1.f, 1.f, 0.f);
+					//arrow target
+					Vec3f arrowTarget;
+					Command *c= unit->getCurrCommand();
+					if(c->getUnit() != NULL) {
+						arrowTarget= c->getUnit()->getCurrVectorFlat();
+					}
+					else {
+						Vec2i pos= c->getPos();
+						map->clampPos(pos);
+
+						arrowTarget= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
+					}
+
+					renderArrow(unit->getCurrVectorFlat(), arrowTarget, arrowColor, 0.3f);
 				}
+			}
 
-				//arrow target
-				Vec3f arrowTarget;
-				Command *c= unit->getCurrCommand();
-				if(c->getUnit() != NULL) {
-					arrowTarget= c->getUnit()->getCurrVectorFlat();
-				}
-				else {
-					Vec2i pos= c->getPos();
-					map->clampPos(pos);
+			//meeting point arrow
+			if(unit->getType()->getMeetingPoint()) {
+				Vec2i pos= unit->getMeetingPos();
+				map->clampPos(pos);
 
-					arrowTarget= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
-				}
-
-				renderArrow(unit->getCurrVectorFlat(), arrowTarget, arrowColor, 0.3f);
+				Vec3f arrowTarget= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
+				renderArrow(unit->getCurrVectorFlat(), arrowTarget, Vec3f(0.f, 0.f, 1.f), 0.3f);
 			}
 		}
-
-		//meeting point arrow
-		if(unit->getType()->getMeetingPoint()) {
-			Vec2i pos= unit->getMeetingPos();
-			map->clampPos(pos);
-
-			Vec3f arrowTarget= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
-			renderArrow(unit->getCurrVectorFlat(), arrowTarget, Vec3f(0.f, 0.f, 1.f), 0.3f);
-		}
-
 	}
 
 	//render selection hightlights
-	for(int i=0; i < world->getFactionCount(); ++i) {
-		for(int j=0; j < world->getFaction(i)->getUnitCount(); ++j) {
-			const Unit *unit= world->getFaction(i)->getUnit(j);
+	if(game->getGui()->getHighlightedUnit() != NULL)	{
+		const Unit *unit=game->getGui()->getHighlightedUnit() ;
 
-			if(unit->isHighlighted()) {
-				float highlight= unit->getHightlight();
-				if(game->getWorld()->getThisFactionIndex() == unit->getFactionIndex()) {
-					glColor4f(0.f, 1.f, 0.f, highlight);
-				}
-				else{
-					glColor4f(1.f, 0.f, 0.f, highlight);
-				}
-
-				Vec3f v= unit->getCurrVectorFlat();
-				v.y+= 0.3f;
-				renderSelectionCircle(v, unit->getType()->getSize(), selectionCircleRadius);
+		if(unit->isHighlighted()) {
+			float highlight= unit->getHightlight();
+			if(game->getWorld()->getThisFactionIndex() == unit->getFactionIndex()) {
+				glColor4f(0.f, 1.f, 0.f, highlight);
 			}
+			else{
+				glColor4f(1.f, 0.f, 0.f, highlight);
+			}
+
+			Vec3f v= unit->getCurrVectorFlat();
+			v.y+= 0.3f;
+			renderSelectionCircle(v, unit->getType()->getSize(), 0.5f+0.4f*highlight );
+		}
+	}
+// old inefficient way to render highlights
+//	for(int i=0; i < world->getFactionCount(); ++i) {
+//		for(int j=0; j < world->getFaction(i)->getUnitCount(); ++j) {
+//			const Unit *unit= world->getFaction(i)->getUnit(j);
+//
+//			if(unit->isHighlighted()) {
+//				float highlight= unit->getHightlight();
+//				if(game->getWorld()->getThisFactionIndex() == unit->getFactionIndex()) {
+//					glColor4f(0.f, 1.f, 0.f, highlight);
+//				}
+//				else{
+//					glColor4f(1.f, 0.f, 0.f, highlight);
+//				}
+//
+//				Vec3f v= unit->getCurrVectorFlat();
+//				v.y+= 0.3f;
+//				renderSelectionCircle(v, unit->getType()->getSize(), 0.5f+0.4f*highlight );
+//			}
+//		}
+//	}
+	//render resource selection highlight
+	if(game->getGui()->getHighlightedResourceObject() != NULL) {
+		const Object* object=game->getGui()->getHighlightedResourceObject();
+		if(object->isHighlighted()) {
+			float highlight= object->getHightlight();
+			glColor4f(0.1f, 0.1f , 1.0f, highlight);
+			Vec3f v= object->getPos();
+			v.y+= 0.3f;
+			renderSelectionCircle(v, 2, 0.4f+0.4f*highlight );
 		}
 	}
 
@@ -4790,7 +5509,7 @@ void Renderer::renderWaterEffects(){
 	const World *world= game->getWorld();
 	const WaterEffects *we= world->getWaterEffects();
 	const Map *map= world->getMap();
-	const CoreData &coreData= CoreData::getInstance();
+	CoreData &coreData= CoreData::getInstance();
 	float height= map->getWaterLevel()+0.001f;
 
 	assertGl();
@@ -4900,6 +5619,11 @@ void Renderer::renderMinimap(){
 
     const World *world= game->getWorld();
 	const Minimap *minimap= world->getMinimap();
+
+	if(minimap == NULL || minimap->getTexture() == NULL) {
+		return;
+	}
+
 	const GameCamera *gameCamera= game->getGameCamera();
 	const Pixmap2D *pixmap= minimap->getTexture()->getPixmapConst();
 	const Metrics &metrics= Metrics::getInstance();
@@ -4915,29 +5639,6 @@ void Renderer::renderMinimap(){
 		static_cast<float>(mh)/ pixmap->getH());
 
 	assertGl();
-
-//	CoreData &coreData= CoreData::getInstance();
-//	Texture2D *backTexture =coreData.getButtonBigTexture();
-//	glEnable(GL_TEXTURE_2D);
-//	glEnable(GL_BLEND);
-//	glBindTexture(GL_TEXTURE_2D, static_cast<Texture2DGl*>(backTexture)->getHandle());
-//
-//	glBegin(GL_TRIANGLE_STRIP);
-//			glTexCoord2f(0.f, 0.f);
-//			glVertex2f(mx-8, my-8);
-//
-//			glTexCoord2f(0.f, 1.f);
-//			glVertex2f(mx-8, my+mh+8);
-//
-//			glTexCoord2f(1.f, 0.f);
-//			glVertex2f(mx+mw+8, my-8);
-//
-//			glTexCoord2f(1.f, 1.f);
-//			glVertex2f(mx+mw+8, my+mh+8);
-//	glEnd();
-//
-//	glDisable(GL_TEXTURE_2D);
-
 
 	// render minimap border
 	Vec4f col= game->getGui()->getDisplay()->getColor();
@@ -4972,18 +5673,6 @@ void Renderer::renderMinimap(){
 	glVertex2i(mx+mw+borderWidth, my);
 	glEnd();
 
-
-//	Vec4f col= game->getGui()->getDisplay()->getColor();
-//	glBegin(GL_QUADS);
-//	glColor4f(col.x*0.5f,col.y*0.5f,col.z*0.5f,1.0 );
-//	glVertex2i(mx-4, my-4);
-//	glVertex2i(mx-4, my+mh+4);
-//	glVertex2i(mx+mw+4, my+mh+4);
-//	glVertex2i(mx+mw+4, my-4);
-//
-//	glEnd();
-
-
 	assertGl();
 
 	glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_LINE_BIT | GL_TEXTURE_BIT);
@@ -5009,50 +5698,6 @@ void Renderer::renderMinimap(){
 	glActiveTexture(baseTexUnit);
 	glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(minimap->getTexture())->getHandle());
 
-/*
-	Vec2f texCoords[4];
-	Vec2f texCoords2[4];
-	Vec2i vertices[4];
-
-    texCoords[0] = Vec2f(0.0f, 1.0f);
-    texCoords2[0] = Vec2f(0.0f, 1.0f);
-    vertices[0] = Vec2i(mx, my);
-
-    texCoords[1] = Vec2f(0.0f, 0.0f);
-    texCoords2[1] = Vec2f(0.0f, 0.0f);
-    vertices[1] = Vec2i(mx, my+mh);
-
-    texCoords[2] = Vec2f(1.0f, 1.0f);
-    texCoords2[2] = Vec2f(1.0f, 1.0f);
-    vertices[2] = Vec2i(mx+mw, my);
-
-    texCoords[3] = Vec2f(1.0f, 0.0f);
-    texCoords2[3] = Vec2f(1.0f, 0.0f);
-    vertices[3] = Vec2i(mx+mw, my+mh);
-
-    glClientActiveTexture(baseTexUnit);
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    glTexCoordPointer(2, GL_FLOAT, 0,&texCoords[0]);
-
-	glClientActiveTexture(fowTexUnit);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(2, GL_FLOAT, 0,&texCoords2[0]);
-
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glVertexPointer(2, GL_INT, 0, &vertices[0]);
-
-	glColor4f(0.5f, 0.5f, 0.5f, 0.1f);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-
-    glClientActiveTexture(baseTexUnit);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    glClientActiveTexture(fowTexUnit);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-*/
-
-	//glColor4f(0.3f, 0.3f, 0.3f, 0.90f);
 	glColor4f(0.5f, 0.5f, 0.5f, 0.2f);
 
 	glBegin(GL_TRIANGLE_STRIP);
@@ -5196,16 +5841,32 @@ void Renderer::renderMinimap(){
 
 	//draw units
 	VisibleQuadContainerCache &qCache = getQuadCache();
-	if(qCache.visibleUnitList.empty() == false) {
+	std::vector<Unit *> visibleUnitList = qCache.visibleUnitList;
+
+	const bool showAllUnitsInMinimap = Config::getInstance().getBool("DebugGameSynchUI","false");
+	if(showAllUnitsInMinimap == true) {
+		visibleUnitList.clear();
+
+		const World *world= game->getWorld();
+		for(unsigned int i = 0; i < (unsigned int)world->getFactionCount(); ++i) {
+			const Faction *faction = world->getFaction(i);
+			for(unsigned int j = 0; j < (unsigned int)faction->getUnitCount(); ++j) {
+				Unit *unit = faction->getUnit(j);
+				visibleUnitList.push_back(unit);
+			}
+		}
+	}
+
+	if(visibleUnitList.empty() == false) {
 		uint32 unitIdx=0;
 		vector<Vec2f> unit_vertices;
-		unit_vertices.resize(qCache.visibleUnitList.size()*4);
+		unit_vertices.resize(visibleUnitList.size()*4);
 		vector<Vec3f> unit_colors;
-		unit_colors.resize(qCache.visibleUnitList.size()*4);
+		unit_colors.resize(visibleUnitList.size()*4);
 
 		for(int visibleIndex = 0;
-				visibleIndex < qCache.visibleUnitList.size(); ++visibleIndex) {
-			Unit *unit = qCache.visibleUnitList[visibleIndex];
+				visibleIndex < (int)visibleUnitList.size(); ++visibleIndex) {
+			Unit *unit = visibleUnitList[visibleIndex];
 			if (unit->isAlive() == false) {
 				continue;
 			}
@@ -5229,19 +5890,6 @@ void Renderer::renderMinimap(){
 			unit_colors[unitIdx] = color;
 			unit_vertices[unitIdx] = Vec2f(mx + pos.x*zoom.x, my + mh - ((pos.y+size)*zoom.y));
 			unitIdx++;
-
-/*
-			glColor3fv(color.ptr());
-
-			glBegin(GL_QUADS);
-
-			glVertex2f(mx + pos.x*zoom.x, my + mh - (pos.y*zoom.y));
-			glVertex2f(mx + (pos.x+1)*zoom.x+size, my + mh - (pos.y*zoom.y));
-			glVertex2f(mx + (pos.x+1)*zoom.x+size, my + mh - ((pos.y+size)*zoom.y));
-			glVertex2f(mx + pos.x*zoom.x, my + mh - ((pos.y+size)*zoom.y));
-
-			glEnd();
-*/
 		}
 
 		if(unitIdx > 0) {
@@ -5256,6 +5904,8 @@ void Renderer::renderMinimap(){
 
 	}
 
+	renderMarkedCellsOnMinimap();
+
     //draw camera
 	float wRatio= static_cast<float>(metrics.getMinimapW()) / world->getMap()->getW();
 	float hRatio= static_cast<float>(metrics.getMinimapH()) / world->getMap()->getH();
@@ -5267,25 +5917,15 @@ void Renderer::renderMinimap(){
 
     glEnable(GL_BLEND);
 
-    int x1 = 0;
-    int y1 = 0;
-#ifdef USE_STREFLOP
-    x1 = mx + x + static_cast<int>(20*streflop::sin(ang-pi/5));
-	y1 = my + mh - (y-static_cast<int>(20*streflop::cos(ang-pi/5)));
-#else
-	x1 = mx + x + static_cast<int>(20*sin(ang-pi/5));
-	y1 = my + mh - (y-static_cast<int>(20*cos(ang-pi/5)));
-#endif
+    int x1;
+    int y1;
+    x1 = mx + x + static_cast<int>(20*std::sin(ang-pi/5));
+    y1 = my + mh - (y-static_cast<int>(20*std::cos(ang-pi/5)));
 
-    int x2 = 0;
-    int y2 = 0;
-#ifdef USE_STREFLOP
-    x2 = mx + x + static_cast<int>(20*streflop::sin(ang+pi/5));
-	y2 = my + mh - (y-static_cast<int>(20*streflop::cos(ang+pi/5)));
-#else
-	x2 = mx + x + static_cast<int>(20*sin(ang+pi/5));
-	y2 = my + mh - (y-static_cast<int>(20*cos(ang+pi/5)));
-#endif
+    int x2;
+    int y2;
+    x2 = mx + x + static_cast<int>(20*std::sin(ang+pi/5));
+    y2 = my + mh - (y-static_cast<int>(20*std::cos(ang+pi/5)));
 
     glColor4f(1.f, 1.f, 1.f, 1.f);
     glBegin(GL_TRIANGLES);
@@ -5301,6 +5941,257 @@ void Renderer::renderMinimap(){
     glPopAttrib();
 
 	assertGl();
+}
+
+void Renderer::renderHighlightedCellsOnMinimap() {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+	// Draw marked cells
+	const std::vector<MarkedCell> *highlightedCells = game->getHighlightedCells();
+	if(highlightedCells->empty() == false) {
+		//const Map *map= game->getWorld()->getMap();
+	    const World *world= game->getWorld();
+		const Minimap *minimap= world->getMinimap();
+		int pointersize=10;
+		if(minimap == NULL || minimap->getTexture() == NULL) {
+			return;
+		}
+
+		//const GameCamera *gameCamera= game->getGameCamera();
+		const Pixmap2D *pixmap= minimap->getTexture()->getPixmapConst();
+		const Metrics &metrics= Metrics::getInstance();
+
+
+		//int mx= metrics.getMinimapX();
+		int my= metrics.getMinimapY();
+		int mw= metrics.getMinimapW();
+		int mh= metrics.getMinimapH();
+
+		Vec2f zoom= Vec2f(
+			static_cast<float>(mw)/ pixmap->getW()/2,
+			static_cast<float>(mh)/ pixmap->getH()/2);
+
+		for(int i = 0;i < (int)highlightedCells->size(); i++) {
+			const MarkedCell *mc=&highlightedCells->at(i);
+			if(mc->getFaction() == NULL || (mc->getFaction()->getTeam() == game->getWorld()->getThisFaction()->getTeam())) {
+				const Texture2D *texture= game->getHighlightCellTexture();
+				Vec3f color(MarkedCell::static_system_marker_color);
+				if(mc->getFaction() != NULL) {
+					color=  mc->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0, 0);
+				}
+				int lighting=(mc->getAliveCount()%15);
+				Vec3f myColor=Vec3f(color.x/2+.5f/lighting,color.y/2+.5f/lighting,color.z/2+.5f/lighting);
+
+				Vec2i pos=mc->getTargetPos();
+				if(texture != NULL) {
+					//float alpha = 0.49f+0.5f/(mc->getAliveCount()%15);
+					float alpha=1.0f;
+					renderTextureQuad((int)(pos.x*zoom.x)+pointersize, my + mh-(int)(pos.y*zoom.y), pointersize, pointersize, texture, alpha,&myColor);
+				}
+			}
+		}
+	}
+}
+
+void Renderer::renderMarkedCellsOnMinimap() {
+	// Draw marked cells
+	std::map<Vec2i, MarkedCell> markedCells = game->getMapMarkedCellList();
+	if(markedCells.empty() == false) {
+		//const Map *map= game->getWorld()->getMap();
+	    const World *world= game->getWorld();
+		const Minimap *minimap= world->getMinimap();
+
+		if(minimap == NULL || minimap->getTexture() == NULL) {
+			return;
+		}
+
+		//const GameCamera *gameCamera= game->getGameCamera();
+		const Pixmap2D *pixmap= minimap->getTexture()->getPixmapConst();
+		const Metrics &metrics= Metrics::getInstance();
+		//const WaterEffects *attackEffects= world->getAttackEffects();
+
+		int mx= metrics.getMinimapX();
+		int my= metrics.getMinimapY();
+		int mw= metrics.getMinimapW();
+		int mh= metrics.getMinimapH();
+
+		Vec2f zoom= Vec2f(
+			static_cast<float>(mw)/ pixmap->getW(),
+			static_cast<float>(mh)/ pixmap->getH());
+
+		uint32 unitIdx=0;
+		vector<Vec2f> unit_vertices;
+		unit_vertices.resize(markedCells.size()*4);
+		vector<Vec4f> unit_colors;
+		unit_colors.resize(markedCells.size()*4);
+
+		for(std::map<Vec2i, MarkedCell>::iterator iterMap =markedCells.begin();
+				iterMap != markedCells.end(); ++iterMap) {
+			MarkedCell &bm = iterMap->second;
+			if(bm.getPlayerIndex() < 0 ||
+				(bm.getFaction() != NULL &&
+				bm.getFaction()->getTeam() == game->getWorld()->getThisFaction()->getTeam())) {
+				Vec2i pos= bm.getTargetPos() / Map::cellScale;
+				float size= 0.5f;
+
+				Vec3f color(MarkedCell::static_system_marker_color);
+				if(bm.getFaction() != NULL) {
+					color=  bm.getFaction()->getTexture()->getPixmapConst()->getPixel3f(0, 0);
+				}
+				float alpha = 0.65f;
+
+				unit_colors[unitIdx] = Vec4f(color.x,color.y,color.z,alpha);
+				unit_vertices[unitIdx] = Vec2f(mx + pos.x*zoom.x, my + mh - (pos.y*zoom.y));
+				unitIdx++;
+
+				unit_colors[unitIdx] = Vec4f(color.x,color.y,color.z,alpha);
+				unit_vertices[unitIdx] = Vec2f(mx + (pos.x+1)*zoom.x+size, my + mh - (pos.y*zoom.y));
+				unitIdx++;
+
+				unit_colors[unitIdx] = Vec4f(color.x,color.y,color.z,alpha);
+				unit_vertices[unitIdx] = Vec2f(mx + (pos.x+1)*zoom.x+size, my + mh - ((pos.y+size)*zoom.y));
+				unitIdx++;
+
+				unit_colors[unitIdx] = Vec4f(color.x,color.y,color.z,alpha);
+				unit_vertices[unitIdx] = Vec2f(mx + pos.x*zoom.x, my + mh - ((pos.y+size)*zoom.y));
+				unitIdx++;
+			}
+		}
+
+		if(unitIdx > 0) {
+			glEnable(GL_BLEND);
+
+			glEnableClientState(GL_COLOR_ARRAY);
+			glEnableClientState(GL_VERTEX_ARRAY);
+			glColorPointer(4,GL_FLOAT, 0, &unit_colors[0]);
+			glVertexPointer(2, GL_FLOAT, 0, &unit_vertices[0]);
+			glDrawArrays(GL_QUADS, 0, unitIdx);
+			//glDrawArrays(GL_TRIANGLE_STRIP, 0, unitIdx);
+			glDisableClientState(GL_COLOR_ARRAY);
+			glDisableClientState(GL_VERTEX_ARRAY);
+
+			glDisable(GL_BLEND);
+		}
+	}
+}
+void Renderer::renderVisibleMarkedCells(bool renderTextHint,int x, int y) {
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		return;
+	}
+
+	// Draw marked cells
+	std::map<Vec2i, MarkedCell> markedCells = game->getMapMarkedCellList();
+	if(markedCells.empty() == false) {
+		const Texture2D *texture= game->getMarkCellTexture();
+		const int yOffset = 10;
+
+		for(std::map<Vec2i, MarkedCell>::iterator iterMap =markedCells.begin();
+				iterMap != markedCells.end(); ++iterMap) {
+			MarkedCell &bm = iterMap->second;
+			if(bm.getPlayerIndex() < 0 ||
+				(bm.getFaction() != NULL &&
+				 bm.getFaction()->getTeam() == game->getWorld()->getThisFaction()->getTeam())) {
+				const Map *map= game->getWorld()->getMap();
+				std::pair<bool,Vec3f> bmVisible = posInCellQuadCache(
+						map->toSurfCoords(bm.getTargetPos()));
+				if(bmVisible.first == true) {
+					if(renderTextHint == true) {
+						if(bm.getNote() != "") {
+							bool validPosObjWorld= x > bmVisible.second.x &&
+													y > bmVisible.second.y + yOffset &&
+													x < bmVisible.second.x + texture->getTextureWidth() &&
+													y < bmVisible.second.y + yOffset + texture->getTextureHeight();
+
+							if(validPosObjWorld) {
+								//printf("Checking for hint text render mouse [%d,%d] marker pos [%d,%d] validPosObjWorld = %d, hint [%s]\n",x,y,bm.getTargetPos().x,bm.getTargetPos().y,validPosObjWorld,bm.getNote().c_str());
+
+								//Lang &lang= Lang::getInstance();
+								Vec4f fontColor = Vec4f(1.0f, 1.0f, 1.0f, 0.25f);
+
+								if(renderText3DEnabled == true) {
+									renderTextShadow3D(bm.getNote(), CoreData::getInstance().getConsoleFont3D(), fontColor,
+											bmVisible.second.x, bmVisible.second.y);
+								}
+								else {
+									renderTextShadow(bm.getNote(), CoreData::getInstance().getConsoleFont(), fontColor,
+											bmVisible.second.x, bmVisible.second.y);
+								}
+							}
+						}
+					}
+					else {
+
+
+/*
+						//texture 0
+						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+
+						//set color to interpolation
+						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_INTERPOLATE);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_TEXTURE);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_TEXTURE1);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE2_RGB, GL_TEXTURE);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND2_RGB, GL_SRC_ALPHA);
+
+						//set alpha to 1
+						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+
+						//texture 1
+						glActiveTexture(GL_TEXTURE1);
+						glMultiTexCoord2f(GL_TEXTURE1, 0.f, 0.f);
+						glEnable(GL_TEXTURE_2D);
+
+						glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(bm.getFaction()->getTexture())->getHandle());
+						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PRIMARY_COLOR);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PREVIOUS);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+
+						//set alpha to 1
+						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PRIMARY_COLOR);
+						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+
+						glActiveTexture(GL_TEXTURE0);
+*/
+
+						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+						glEnable(GL_BLEND);
+						glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+						Vec3f color(MarkedCell::static_system_marker_color);
+						if(bm.getFaction() != NULL) {
+							color = bm.getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0);
+						}
+
+						renderTextureQuad(
+								bmVisible.second.x,bmVisible.second.y + yOffset,
+								texture->getTextureWidth(),texture->getTextureHeight(),texture,0.8f,&color);
+
+/*
+						glActiveTexture(GL_TEXTURE1);
+						glDisable(GL_TEXTURE_2D);
+						glActiveTexture(GL_TEXTURE0);
+						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+*/
+					}
+				}
+			}
+		}
+	}
 }
 
 void Renderer::renderDisplay() {
@@ -5471,7 +6362,7 @@ void Renderer::renderMenuBackground(const MenuBackground *menuBackground) {
 	//main model
 	glEnable(GL_ALPHA_TEST);
 	glAlphaFunc(GL_GREATER, 0.5f);
-	modelRenderer->begin(true, true, true);
+	modelRenderer->begin(true, true, true, false);
 	menuBackground->getMainModelPtr()->updateInterpolationData(menuBackground->getAnim(), true);
 	modelRenderer->render(menuBackground->getMainModelPtr());
 	modelRenderer->end();
@@ -5490,7 +6381,7 @@ void Renderer::renderMenuBackground(const MenuBackground *menuBackground) {
 				CacheManager::getCachedItem< std::vector<Vec3f> >(GameConstants::characterMenuScreenPositionListCacheLookupKey);
 		characterMenuScreenPositionListCache.clear();
 
-		modelRenderer->begin(true, true, false);
+		modelRenderer->begin(true, true, false, false);
 
 		for(int i=0; i < MenuBackground::characterCount; ++i) {
 			glMatrixMode(GL_MODELVIEW);
@@ -5644,7 +6535,7 @@ void Renderer::renderMenuBackground(Camera *camera, float fade, Model *mainModel
 	if(mainModel) {
 		glEnable(GL_ALPHA_TEST);
 		glAlphaFunc(GL_GREATER, 0.5f);
-		modelRenderer->begin(true, true, true);
+		modelRenderer->begin(true, true, true, false);
 		mainModel->updateInterpolationData(anim, true);
 		modelRenderer->render(mainModel);
 		modelRenderer->end();
@@ -5659,7 +6550,7 @@ void Renderer::renderMenuBackground(Camera *camera, float fade, Model *mainModel
 			glAlphaFunc(GL_GREATER, 0.0f);
 			float alpha= clamp((minDist-dist) / minDist, 0.f, 1.f);
 			glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, Vec4f(1.0f, 1.0f, 1.0f, alpha).ptr());
-			modelRenderer->begin(true, true, false);
+			modelRenderer->begin(true, true, false, false);
 
 			for(unsigned int i = 0; i < characterModels.size(); ++i) {
 				if(characterModels[i]) {
@@ -5684,7 +6575,7 @@ void Renderer::renderMenuBackground(Camera *camera, float fade, Model *mainModel
 
 // ==================== computing ====================
 
-bool Renderer::computePosition(const Vec2i &screenPos, Vec2i &worldPos){
+bool Renderer::computePosition(const Vec2i &screenPos, Vec2i &worldPos, bool exactCoords) {
 	assertGl();
 	const Map* map= game->getWorld()->getMap();
 	const Metrics &metrics= Metrics::getInstance();
@@ -5716,7 +6607,12 @@ bool Renderer::computePosition(const Vec2i &screenPos, Vec2i &worldPos){
 		&worldX, &worldY, &worldZ);
 
 	//conver coords to int
-	worldPos= Vec2i(static_cast<int>(worldX+0.5f), static_cast<int>(worldZ+0.5f));
+	if(exactCoords == true) {
+		worldPos= Vec2i(static_cast<int>(worldX), static_cast<int>(worldZ));
+	}
+	else {
+		worldPos= Vec2i(static_cast<int>(worldX+0.5f), static_cast<int>(worldZ+0.5f));
+	}
 
 	//clamp coords to map size
 	return map->isInside(worldPos);
@@ -5724,9 +6620,9 @@ bool Renderer::computePosition(const Vec2i &screenPos, Vec2i &worldPos){
 
 // This method takes world co-ordinates and translates them to screen co-ords
 Vec3f Renderer::computeScreenPosition(const Vec3f &worldPos) {
-	//if(worldToScreenPosCache.find(worldPos) != worldToScreenPosCache.end()) {
-	//	return worldToScreenPosCache[worldPos];
-	//}
+	if(worldToScreenPosCache.find(worldPos) != worldToScreenPosCache.end()) {
+		return worldToScreenPosCache[worldPos];
+	}
 	assertGl();
 
 	const Metrics &metrics= Metrics::getInstance();
@@ -5754,7 +6650,7 @@ Vec3f Renderer::computeScreenPosition(const Vec3f &worldPos) {
 		&screenX, &screenY, &screenZ);
 
 	Vec3f screenPos(screenX,screenY,screenZ);
-	//worldToScreenPosCache[worldPos]=screenPos;
+	worldToScreenPosCache[worldPos]=screenPos;
 
 	return screenPos;
 }
@@ -5762,14 +6658,13 @@ Vec3f Renderer::computeScreenPosition(const Vec3f &worldPos) {
 void Renderer::computeSelected(	Selection::UnitContainer &units, const Object *&obj,
 								const bool withObjectSelection,
 								const Vec2i &posDown, const Vec2i &posUp) {
-	const bool colorPickingSelection 	= Config::getInstance().getBool("EnableColorPicking","false");
-	const bool frustumPickingSelection 	= Config::getInstance().getBool("EnableFrustumPicking","false");
+	const string selectionType=toLower(Config::getInstance().getString("SelectionType",Config::colorPicking));
 
-	if(colorPickingSelection == true) {
+	if(selectionType==Config::colorPicking) {
 		selectUsingColorPicking(units,obj, withObjectSelection,posDown, posUp);
 	}
-	/// Frustrum approach --> Currently not accurate enough
-	else if(frustumPickingSelection == true) {
+	/// Frustum approach --> Currently not accurate enough
+	else if(selectionType==Config::frustumPicking) {
 		selectUsingFrustumSelection(units,obj, withObjectSelection,posDown, posUp);
 	}
 	else {
@@ -5792,11 +6687,11 @@ void Renderer::selectUsingFrustumSelection(Selection::UnitContainer &units,
 	int y = (posDown.y+posUp.y) / 2;
 	int w = abs(posDown.x-posUp.x);
 	int h = abs(posDown.y-posUp.y);
-	if(w < 1) {
-		w = 1;
+	if(w < 2) {
+		w = 2;
 	}
-	if(h < 1) {
-		h = 1;
+	if(h < 2) {
+		h = 2;
 	}
 
 	gluPickMatrix(x, y, w, h, view);
@@ -5813,12 +6708,12 @@ void Renderer::selectUsingFrustumSelection(Selection::UnitContainer &units,
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	if(qCache.visibleQuadUnitList.empty() == false) {
 		for(int visibleUnitIndex = 0;
-				visibleUnitIndex < qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+				visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
 			Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
 			if(unit != NULL && unit->isAlive()) {
 				Vec3f unitPos = unit->getCurrVector();
 				bool insideQuad = CubeInFrustum(quadSelectionCacheItem.frustumData,
-						unitPos.x, unitPos.y, unitPos.z, unit->getType()->getSize());
+						unitPos.x, unitPos.y, unitPos.z, unit->getType()->getRenderSize());
 				if(insideQuad == true) {
 					units.push_back(unit);
 				}
@@ -5829,7 +6724,7 @@ void Renderer::selectUsingFrustumSelection(Selection::UnitContainer &units,
 	if(withObjectSelection == true) {
 		if(qCache.visibleObjectList.empty() == false) {
 			for(int visibleIndex = 0;
-					visibleIndex < qCache.visibleObjectList.size(); ++visibleIndex) {
+					visibleIndex < (int)qCache.visibleObjectList.size(); ++visibleIndex) {
 				Object *object = qCache.visibleObjectList[visibleIndex];
 				if(object != NULL) {
 					bool insideQuad = CubeInFrustum(quadSelectionCacheItem.frustumData,
@@ -5854,11 +6749,11 @@ void Renderer::selectUsingSelectionBuffer(Selection::UnitContainer &units,
 	int y = (posDown.y+posUp.y) / 2;
 	int w = abs(posDown.x-posUp.x);
 	int h = abs(posDown.y-posUp.y);
-	if(w < 1) {
-		w = 1;
+	if(w < 2) {
+		w = 2;
 	}
-	if(h < 1) {
-		h = 1;
+	if(h < 2) {
+		h = 2;
 	}
 
 	//declarations
@@ -5866,23 +6761,33 @@ void Renderer::selectUsingSelectionBuffer(Selection::UnitContainer &units,
 
 	//setup matrices
 	glSelectBuffer(Gui::maxSelBuff, selectBuffer);
-	glMatrixMode(GL_PROJECTION);
-	glPushMatrix();
+	//glMatrixMode(GL_PROJECTION);
+	//glPushMatrix();
 
 	GLint renderModeResult = glRenderMode(GL_SELECT);
 	if(renderModeResult < 0) {
 		const char *errorString= reinterpret_cast<const char*>(gluErrorString(renderModeResult));
-		char szBuf[4096]="";
-		sprintf(szBuf,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",renderModeResult,renderModeResult,errorString,__FILE__,__LINE__);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",renderModeResult,renderModeResult,errorString,extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 
 		printf("%s\n",szBuf);
 	}
+
+
+	glPushMatrix();
+	glMatrixMode(GL_PROJECTION);
+
 	glLoadIdentity();
 
 	const Metrics &metrics= Metrics::getInstance();
 	GLint view[]= {0, 0, metrics.getVirtualW(), metrics.getVirtualH()};
+	//GLint view[4];
+	//glGetIntegerv(GL_VIEWPORT, view);
+
 	gluPickMatrix(x, y, w, h, view);
 	gluPerspective(perspFov, metrics.getAspectRatio(), perspNearPlane, perspFarPlane);
+	//gluPerspective(perspFov, metrics.getAspectRatio(), 0.0001, 1000.0);
+	//gluPerspective(perspFov, (float)view[2]/(float)view[3], perspNearPlane, perspFarPlane);
 	loadGameCameraMatrix();
 
 	//render units to find which ones should be selected
@@ -5892,12 +6797,11 @@ void Renderer::selectUsingSelectionBuffer(Selection::UnitContainer &units,
 	}
 
 	//pop matrices
-	glMatrixMode(GL_PROJECTION);
 	glPopMatrix();
 
 	// Added this to ensure all the selection calls are done now
 	// (see http://www.unknownroad.com/rtfm/graphics/glselection.html section: [0x4])
-	glFlush();
+	//glFlush();
 
 	//select units by checking the selected buffer
 	int selCount= glRenderMode(GL_RENDER);
@@ -5924,8 +6828,8 @@ void Renderer::selectUsingSelectionBuffer(Selection::UnitContainer &units,
 	}
 	else if(selCount < 0) {
 		const char *errorString= reinterpret_cast<const char*>(gluErrorString(selCount));
-		char szBuf[4096]="";
-		sprintf(szBuf,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",selCount,selCount,errorString,__FILE__,__LINE__);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"OpenGL error #%d [0x%X] : [%s] at file: [%s], line: %d",selCount,selCount,errorString,extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__);
 
 		printf("%s\n",szBuf);
 	}
@@ -5943,11 +6847,11 @@ void Renderer::selectUsingColorPicking(Selection::UnitContainer &units,
 	int y = min(y1,y2);
 	int w = max(x1,x2) - min(x1,x2);
 	int h = max(y1,y2) - min(y1,y2);
-	if(w < 1) {
-		w = 1;
+	if(w < 2) {
+		w = 2;
 	}
-	if(h < 1) {
-		h = 1;
+	if(h < 2) {
+		h = 2;
 	}
 
 	const Metrics &metrics= Metrics::getInstance();
@@ -5959,8 +6863,9 @@ void Renderer::selectUsingColorPicking(Selection::UnitContainer &units,
 
 	PixelBufferWrapper::begin();
 
-	glMatrixMode(GL_PROJECTION);
+
 	glPushMatrix();
+	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 	//GLint view[]= {0, 0, metrics.getVirtualW(), metrics.getVirtualH()};
 	//gluPickMatrix(x, y, w, h, view);
@@ -5968,18 +6873,11 @@ void Renderer::selectUsingColorPicking(Selection::UnitContainer &units,
 	loadGameCameraMatrix();
 
 	//render units to find which ones should be selected
-	//printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+	//printf("In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	vector<Unit *> rendererUnits = renderUnitsFast(false, true);
-	//printf("In [%s::%s] Line: %d rendererUnits = %d\n",__FILE__,__FUNCTION__,__LINE__,rendererUnits.size());
+	//printf("In [%s::%s] Line: %d rendererUnits = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,rendererUnits.size());
 
-	vector<Object *> rendererObjects;
-	if(withObjectSelection == true) {
-		rendererObjects = renderObjectsFast(false,true,true);
-	}
-	//pop matrices
-	glMatrixMode(GL_PROJECTION);
-	glPopMatrix();
 
 	// Added this to ensure all the selection calls are done now
 	// (see http://www.unknownroad.com/rtfm/graphics/glselection.html section: [0x4])
@@ -5989,52 +6887,66 @@ void Renderer::selectUsingColorPicking(Selection::UnitContainer &units,
 
 	PixelBufferWrapper::end();
 
-	vector<BaseColorPickEntity *> rendererModels;
-	for(unsigned int i = 0; i < rendererObjects.size(); ++i) {
-		Object *object = rendererObjects[i];
-		rendererModels.push_back(object);
-		//printf("In [%s::%s] Line: %d rendered object i = %d [%s] [%s]\n",__FILE__,__FUNCTION__,__LINE__,i,object->getUniquePickName().c_str(),object->getColorDescription().c_str());
-		//printf("In [%s::%s] Line: %d\ni = %d [%d - %s] ptr[%p] color[%s]\n",__FILE__,__FUNCTION__,__LINE__,i,unit->getId(),unit->getType()->getName().c_str(),unit->getCurrentModelPtr(),unit->getColorDescription().c_str());
+	vector<BaseColorPickEntity *> unitsVector;
+	bool unitFound=false;
+
+	if(rendererUnits.empty() == false) {
+		copy(rendererUnits.begin(), rendererUnits.end(), std::inserter(unitsVector, unitsVector.begin()));
 	}
 
-	//printf("In [%s::%s] Line: %d\nLooking for picks inside [%d,%d,%d,%d] posdown [%s] posUp [%s]",__FILE__,__FUNCTION__,__LINE__,x,y,w,h,posDown.getString().c_str(),posUp.getString().c_str());
-	for(unsigned int i = 0; i < rendererUnits.size(); ++i) {
-		Unit *unit = rendererUnits[i];
-		rendererModels.push_back(unit);
-		//printf("In [%s::%s] Line: %d rendered unit i = %d [%s] [%s]\n",__FILE__,__FUNCTION__,__LINE__,i,unit->getUniquePickName().c_str(),unit->getColorDescription().c_str());
-		//printf("In [%s::%s] Line: %d\ni = %d [%d - %s] ptr[%p] color[%s]\n",__FILE__,__FUNCTION__,__LINE__,i,unit->getId(),unit->getType()->getName().c_str(),unit->getCurrentModelPtr(),unit->getColorDescription().c_str());
-	}
+	if(unitsVector.empty() == false) {
+		vector<int> pickedList = BaseColorPickEntity::getPickedList(x,y,w,h, unitsVector);
+		//printf("In [%s::%s] Line: %d pickedList = %d models rendered = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,pickedList.size(),rendererModels.size());
 
-	vector<int> pickedList = BaseColorPickEntity::getPickedList(x,y,w,h, rendererModels);
-	//printf("In [%s::%s] Line: %d pickedList = %d models rendered = %d\n",__FILE__,__FUNCTION__,__LINE__,pickedList.size(),rendererModels.size());
+		if(pickedList.empty() == false) {
+			units.reserve(pickedList.size());
+			for(unsigned int i = 0; i < pickedList.size(); ++i) {
+				int index = pickedList[i];
+				//printf("In [%s::%s] Line: %d searching for selected object i = %d index = %d units = %d objects = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,i,index,rendererUnits.size(),rendererObjects.size());
 
-	if(pickedList.empty() == false) {
-		for(int i = 0; i < pickedList.size(); ++i) {
-			int index = pickedList[i];
-			//printf("In [%s::%s] Line: %d searching for selected object i = %d index = %d units = %d objects = %d\n",__FILE__,__FUNCTION__,__LINE__,i,index,rendererUnits.size(),rendererObjects.size());
-
-			if(rendererObjects.size() > 0 && index < rendererObjects.size()) {
-				Object *object = rendererObjects[index];
-				//printf("In [%s::%s] Line: %d searching for selected object i = %d index = %d [%p]\n",__FILE__,__FUNCTION__,__LINE__,i,index,object);
-
-				if(object != NULL) {
-					obj = object;
-					if(withObjectSelection == true) {
-						//printf("In [%s::%s] Line: %d found selected object [%p]\n",__FILE__,__FUNCTION__,__LINE__,obj);
-						return;
+				if(rendererUnits.empty() == false && index < (int)rendererUnits.size()) {
+					Unit *unit = rendererUnits[index];
+					if(unit != NULL && unit->isAlive()) {
+						unitFound=true;
+						units.push_back(unit);
 					}
 				}
 			}
-			else {
-				index -= rendererObjects.size();
-				Unit *unit = rendererUnits[index];
-				if(unit != NULL && unit->isAlive()) {
-					units.push_back(unit);
-				}
+		}
+	}
 
+	if(withObjectSelection == true && unitFound==false) {
+		vector<Object *> rendererObjects;
+		vector<BaseColorPickEntity *> objectsVector;
+		rendererObjects = renderObjectsFast(false,true,true);
+		if(rendererObjects.empty() == false) {
+			copy(rendererObjects.begin(), rendererObjects.end(), std::inserter(objectsVector, objectsVector.begin()));
+		}
+
+		if(objectsVector.empty() == false) {
+			vector<int> pickedList = BaseColorPickEntity::getPickedList(x,y,w,h, objectsVector);
+			//printf("In [%s::%s] Line: %d pickedList = %d models rendered = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,pickedList.size(),rendererModels.size());
+
+			if(pickedList.empty() == false) {
+				for(unsigned int i = 0; i < pickedList.size(); ++i) {
+					int index = pickedList[i];
+					//printf("In [%s::%s] Line: %d searching for selected object i = %d index = %d units = %d objects = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,i,index,rendererUnits.size(),rendererObjects.size());
+
+					if(rendererObjects.empty() == false && index < (int)rendererObjects.size()) {
+						Object *object = rendererObjects[index];
+						//printf("In [%s::%s] Line: %d searching for selected object i = %d index = %d [%p]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,i,index,object);
+
+						if(object != NULL) {
+							obj = object;
+							break;
+						}
+					}
+				}
 			}
 		}
 	}
+	//pop matrices
+	glPopMatrix();
 }
 
 // ==================== shadows ====================
@@ -6058,7 +6970,7 @@ void Renderer::renderShadowsToTexture(const int renderFps){
 				glClear(GL_DEPTH_BUFFER_BIT);
 			}
 			else {
-				float color= 1.0f-shadowAlpha;
+				float color= 1.0f-shadowIntensity;
 				glColor3f(color, color, color);
 				glClearColor(1.f, 1.f, 1.f, 1.f);
 				glDisable(GL_DEPTH_TEST);
@@ -6230,22 +7142,22 @@ string Renderer::getGlInfo(){
 	Lang &lang= Lang::getInstance();
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
-		infoStr+= lang.get("OpenGlInfo")+":\n";
-		infoStr+= "   "+lang.get("OpenGlVersion")+": ";
+		infoStr+= lang.getString("OpenGlInfo")+":\n";
+		infoStr+= "   "+lang.getString("OpenGlVersion")+": ";
 		infoStr+= string((getGlVersion() != NULL ? getGlVersion() : "?"))+"\n";
-		infoStr+= "   "+lang.get("OpenGlRenderer")+": ";
+		infoStr+= "   "+lang.getString("OpenGlRenderer")+": ";
 		infoStr+= string((getGlVersion() != NULL ? getGlVersion() : "?"))+"\n";
-		infoStr+= "   "+lang.get("OpenGlVendor")+": ";
+		infoStr+= "   "+lang.getString("OpenGlVendor")+": ";
 		infoStr+= string((getGlVendor() != NULL ? getGlVendor() : "?"))+"\n";
-		infoStr+= "   "+lang.get("OpenGlMaxLights")+": ";
+		infoStr+= "   "+lang.getString("OpenGlMaxLights")+": ";
 		infoStr+= intToStr(getGlMaxLights())+"\n";
-		infoStr+= "   "+lang.get("OpenGlMaxTextureSize")+": ";
+		infoStr+= "   "+lang.getString("OpenGlMaxTextureSize")+": ";
 		infoStr+= intToStr(getGlMaxTextureSize())+"\n";
-		infoStr+= "   "+lang.get("OpenGlMaxTextureUnits")+": ";
+		infoStr+= "   "+lang.getString("OpenGlMaxTextureUnits")+": ";
 		infoStr+= intToStr(getGlMaxTextureUnits())+"\n";
-		infoStr+= "   "+lang.get("OpenGlModelviewStack")+": ";
+		infoStr+= "   "+lang.getString("OpenGlModelviewStack")+": ";
 		infoStr+= intToStr(getGlModelviewMatrixStackDepth())+"\n";
-		infoStr+= "   "+lang.get("OpenGlProjectionStack")+": ";
+		infoStr+= "   "+lang.getString("OpenGlProjectionStack")+": ";
 		infoStr+= intToStr(getGlProjectionMatrixStackDepth())+"\n";
 	}
 	return infoStr;
@@ -6257,11 +7169,11 @@ string Renderer::getGlMoreInfo(){
 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
 		//gl extensions
-		infoStr+= lang.get("OpenGlExtensions")+":\n   ";
+		infoStr+= lang.getString("OpenGlExtensions")+":\n   ";
 
 		string extensions= getGlExtensions();
 		int charCount= 0;
-		for(int i=0; i<extensions.size(); ++i){
+		for(int i = 0; i < (int)extensions.size(); ++i) {
 			infoStr+= extensions[i];
 			if(charCount>120 && extensions[i]==' '){
 				infoStr+= "\n   ";
@@ -6272,11 +7184,11 @@ string Renderer::getGlMoreInfo(){
 
 		//platform extensions
 		infoStr+= "\n\n";
-		infoStr+= lang.get("OpenGlPlatformExtensions")+":\n   ";
+		infoStr+= lang.getString("OpenGlPlatformExtensions")+":\n   ";
 
 		charCount= 0;
 		string platformExtensions= getGlPlatformExtensions();
-		for(int i=0; i<platformExtensions.size(); ++i){
+		for(int i = 0; i < (int)platformExtensions.size(); ++i) {
 			infoStr+= platformExtensions[i];
 			if(charCount>120 && platformExtensions[i]==' '){
 				infoStr+= "\n   ";
@@ -6340,13 +7252,24 @@ void Renderer::loadConfig() {
 	photoMode= config.getBool("PhotoMode");
 	focusArrows= config.getBool("FocusArrows");
 	textures3D= config.getBool("Textures3D");
-
+	float gammaValue=config.getFloat("GammaValue","0.0");
+	if(this->program == NULL) {
+		throw megaglest_runtime_error("this->program == NULL");
+	}
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false) {
+		//if(this->program != NULL) {
+		if(gammaValue != 0.0) {
+			this->program->getWindow()->setGamma(gammaValue);
+			SDL_SetGamma(gammaValue, gammaValue, gammaValue);
+		}
+		//}
+	}
 	//load shadows
 	shadows= strToShadows(config.getString("Shadows"));
 	if(shadows==sProjected || shadows==sShadowMapping){
 		shadowTextureSize= config.getInt("ShadowTextureSize");
 		shadowFrameSkip= config.getInt("ShadowFrameSkip");
-		shadowAlpha= config.getFloat("ShadowAlpha");
+		shadowIntensity= config.getFloat("ShadowIntensity","1.0");
 	}
 
 	//load filter settings
@@ -6362,7 +7285,7 @@ void Renderer::loadConfig() {
 }
 
 Texture2D *Renderer::saveScreenToTexture(int x, int y, int width, int height) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	Config &config= Config::getInstance();
 	Texture2D::Filter textureFilter = strToTextureFilter(config.getString("Filter"));
@@ -6375,49 +7298,56 @@ Texture2D *Renderer::saveScreenToTexture(int x, int y, int width, int height) {
 	pixmapScreenShot->init(width, height, 3);
 	texture->init(textureFilter,maxAnisotropy);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//glFinish();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	glReadPixels(x, y, pixmapScreenShot->getW(), pixmapScreenShot->getH(),
 				 GL_RGB, GL_UNSIGNED_BYTE, pixmapScreenShot->getPixels());
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	return texture;
 }
 
-void Renderer::saveScreen(const string &path) {
+void Renderer::saveScreen(const string &path,int w, int h) {
 	const Metrics &sm= Metrics::getInstance();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	Pixmap2D *pixmapScreenShot = new Pixmap2D(sm.getScreenW(), sm.getScreenH(), 3);
+	Pixmap2D *pixmapScreenShot = new Pixmap2D(sm.getScreenW(),sm.getScreenH(), 3);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//glFinish();
 
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	glReadPixels(0, 0, pixmapScreenShot->getW(), pixmapScreenShot->getH(),
 				 GL_RGB, GL_UNSIGNED_BYTE, pixmapScreenShot->getPixels());
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(w==0 || h==0){
+		h=sm.getScreenH();
+		w=sm.getScreenW();
+	}
+	else{
+		pixmapScreenShot->Scale(GL_RGB,w,h);
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
 	// Signal the threads queue to add a screenshot save request
-	MutexSafeWrapper safeMutex(&saveScreenShotThreadAccessor,string(__FILE__) + "_" + intToStr(__LINE__));
+	MutexSafeWrapper safeMutex(saveScreenShotThreadAccessor,string(extractFileFromDirectoryPath(__FILE__).c_str()) + "_" + intToStr(__LINE__));
 	saveScreenQueue.push_back(make_pair(path,pixmapScreenShot));
 	safeMutex.ReleaseLock();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 unsigned int Renderer::getSaveScreenQueueSize() {
-	MutexSafeWrapper safeMutex(&saveScreenShotThreadAccessor,string(__FILE__) + "_" + intToStr(__LINE__));
-	int queueSize = saveScreenQueue.size();
+	MutexSafeWrapper safeMutex(saveScreenShotThreadAccessor,string(extractFileFromDirectoryPath(__FILE__).c_str()) + "_" + intToStr(__LINE__));
+	int queueSize = (int)saveScreenQueue.size();
 	safeMutex.ReleaseLock();
 
 	return queueSize;
@@ -6445,25 +7375,12 @@ float Renderer::computeMoonAngle(float time) {
 
 Vec4f Renderer::computeSunPos(float time) {
 	float ang= computeSunAngle(time);
-#ifdef USE_STREFLOP
-	return Vec4f(-streflop::cos(ang)*sunDist, streflop::sin(ang)*sunDist, 0.f, 0.f);
-#else
-	return Vec4f(-cos(ang)*sunDist, sin(ang)*sunDist, 0.f, 0.f);
-#endif
+	return Vec4f(-std::cos(ang)*sunDist, std::sin(ang)*sunDist, 0.f, 0.f);
 }
 
 Vec4f Renderer::computeMoonPos(float time) {
 	float ang= computeMoonAngle(time);
-#ifdef USE_STREFLOP
-	return Vec4f(-streflop::cos(ang)*moonDist, streflop::sin(ang)*moonDist, 0.f, 0.f);
-#else
-	return Vec4f(-cos(ang)*moonDist, sin(ang)*moonDist, 0.f, 0.f);
-#endif
-}
-
-Vec4f Renderer::computeWaterColor(float waterLevel, float cellHeight) {
-	const float waterFactor= 1.5f;
-	return Vec4f(1.f, 1.f, 1.f, clamp((waterLevel-cellHeight)*waterFactor, 0.f, 1.f));
+	return Vec4f(-std::cos(ang)*moonDist, std::sin(ang)*moonDist, 0.f, 0.f);
 }
 
 // ==================== fast render ====================
@@ -6476,147 +7393,145 @@ vector<Unit *> Renderer::renderUnitsFast(bool renderingShadows, bool colorPickin
 	}
 
 	assert(game != NULL);
-	const World *world= game->getWorld();
-	assert(world != NULL);
+	//const World *world= game->getWorld();
+	//assert(world != NULL);
 
-	//assertGl();
-
-	bool modelRenderStarted = false;
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	if(qCache.visibleQuadUnitList.empty() == false) {
-		for(int visibleUnitIndex = 0;
-				visibleUnitIndex < qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
-			Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
+		if(colorPickingSelection == true) {
+			unitsList.reserve(qCache.visibleQuadUnitList.size());
+		}
 
-			if(modelRenderStarted == false) {
-				modelRenderStarted = true;
+		bool modelRenderStarted = false;
+		bool renderOnlyBuildings=true;
+		for(int k=0; k<2 ;k++) {
+			if(k==0){
+				//glDisable(GL_DEPTH_TEST);
+				renderOnlyBuildings=true;
+			}
+			else {
+				//glClear(GL_DEPTH_BUFFER_BIT);
+				//glEnable(GL_DEPTH_TEST);
+				renderOnlyBuildings=false;
+			}
+			for(int visibleUnitIndex = 0;
+					visibleUnitIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleUnitIndex) {
+				Unit *unit = qCache.visibleQuadUnitList[visibleUnitIndex];
+
+				if(renderOnlyBuildings==true && unit->getType()->hasSkillClass(scMove)){
+					continue;
+				}
+
+				if(renderOnlyBuildings==false && !unit->getType()->hasSkillClass(scMove)){
+					continue;
+				}
+
+				if(modelRenderStarted == false) {
+					modelRenderStarted = true;
+
+					if(colorPickingSelection == false) {
+						//glPushAttrib(GL_ENABLE_BIT| GL_TEXTURE_BIT);
+						glDisable(GL_LIGHTING);
+						if (renderingShadows == false) {
+							glPushAttrib(GL_ENABLE_BIT);
+							glDisable(GL_TEXTURE_2D);
+						}
+						else {
+							glPushAttrib(GL_ENABLE_BIT| GL_TEXTURE_BIT);
+							glEnable(GL_TEXTURE_2D);
+							glAlphaFunc(GL_GREATER, 0.4f);
+
+							glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+
+							//set color to the texture alpha
+							glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
+							glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PRIMARY_COLOR);
+							glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+
+							//set alpha to the texture alpha
+							glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+							glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
+							glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+						}
+					}
+
+					modelRenderer->begin(false, renderingShadows, false, colorPickingSelection);
+
+					if(colorPickingSelection == false) {
+						glInitNames();
+					}
+				}
 
 				if(colorPickingSelection == false) {
-					//glPushAttrib(GL_ENABLE_BIT| GL_TEXTURE_BIT);
-					glDisable(GL_LIGHTING);
-					if (renderingShadows == false) {
-						glPushAttrib(GL_ENABLE_BIT);
-						glDisable(GL_TEXTURE_2D);
-					}
-					else {
-						glPushAttrib(GL_ENABLE_BIT| GL_TEXTURE_BIT);
-						glEnable(GL_TEXTURE_2D);
-						glAlphaFunc(GL_GREATER, 0.4f);
-
-						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
-
-						//set color to the texture alpha
-						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
-						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PRIMARY_COLOR);
-						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
-
-						//set alpha to the texture alpha
-						glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
-						glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
-						glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
-					}
+					glPushName(visibleUnitIndex);
 				}
 
 				//assertGl();
 
-				modelRenderer->begin(false, renderingShadows, false);
+				glMatrixMode(GL_MODELVIEW);
+				//debuxar modelo
+				glPushMatrix();
 
-				//assertGl();
+				//translate
+				Vec3f currVec= unit->getCurrVectorFlat();
+				glTranslatef(currVec.x, currVec.y, currVec.z);
+
+				//rotate
+				glRotatef(unit->getRotation(), 0.f, 1.f, 0.f);
+
+				//render
+				Model *model= unit->getCurrentModelPtr();
+				//if(this->gameCamera->getPos().dist(unit->getCurrVector()) <= SKIP_INTERPOLATION_DISTANCE) {
+
+					// ***MV don't think this is needed below 2013/01/11
+					model->updateInterpolationVertices(unit->getAnimProgressAsFloat(), unit->isAlive() && !unit->isAnimProgressBound());
+
+				//}
 
 				if(colorPickingSelection == true) {
-					BaseColorPickEntity::beginPicking();
-				}
-				else {
-					glInitNames();
+					unit->setUniquePickingColor();
+					unitsList.push_back(unit);
 				}
 
-				//assertGl();
+				modelRenderer->render(model,rmSelection);
+
+				glPopMatrix();
+
+				if(colorPickingSelection == false) {
+					glPopName();
+				}
 			}
-
-			if(colorPickingSelection == false) {
-				glPushName(visibleUnitIndex);
-			}
-
-			//assertGl();
-
-			glMatrixMode(GL_MODELVIEW);
-			//debuxar modelo
-			glPushMatrix();
-
-			//translate
-			Vec3f currVec= unit->getCurrVectorFlat();
-			glTranslatef(currVec.x, currVec.y, currVec.z);
-
-			//rotate
-			glRotatef(unit->getRotation(), 0.f, 1.f, 0.f);
-
-			//render
-			Model *model= unit->getCurrentModelPtr();
-			model->updateInterpolationVertices(unit->getAnimProgress(), unit->isAlive() && !unit->isAnimProgressBound());
-
-			if(colorPickingSelection == true) {
-				unit->setUniquePickingColor();
-				unitsList.push_back(unit);
-
-				//assertGl();
-			}
-
-			//assertGl();
-
-			modelRenderer->render(model);
-
-			glPopMatrix();
-
-			if(colorPickingSelection == false) {
-				glPopName();
-			}
-
-			//assertGl();
 		}
 
 		if(modelRenderStarted == true) {
-			//assertGl();
-
 			modelRenderer->end();
-
-			//assertGl();
-
-			if(colorPickingSelection == true) {
-				BaseColorPickEntity::endPicking();
-			}
-			else {
+			if(colorPickingSelection == false) {
 				glPopAttrib();
 			}
-
-//			assertGl();
 		}
 	}
-
-//	assertGl();
-
+	//glDisable(GL_DEPTH_TEST);
 	return unitsList;
 }
 
 //render objects for selection purposes
-vector<Object *>  Renderer::renderObjectsFast(bool renderingShadows, bool resourceOnly, bool colorPickingSelection) {
+vector<Object *>  Renderer::renderObjectsFast(bool renderingShadows, bool resourceOnly,
+		bool colorPickingSelection) {
 	vector<Object *> objectList;
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return objectList;
 	}
 
-	//const World *world= game->getWorld();
-	//const Map *map= world->getMap();
-
-    assertGl();
-
-	bool modelRenderStarted = false;
-
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	if(qCache.visibleObjectList.empty() == false) {
-		for(int visibleIndex = 0;
-				visibleIndex < qCache.visibleObjectList.size(); ++visibleIndex) {
-			Object *o = qCache.visibleObjectList[visibleIndex];
+		if(colorPickingSelection == true) {
+			objectList.reserve(qCache.visibleObjectList.size());
+		}
 
+		bool modelRenderStarted = false;
+		for(int visibleIndex = 0;
+				visibleIndex < (int)qCache.visibleObjectList.size(); ++visibleIndex) {
+			Object *o = qCache.visibleObjectList[visibleIndex];
 
 			if(modelRenderStarted == false) {
 				modelRenderStarted = true;
@@ -6646,19 +7561,22 @@ vector<Object *>  Renderer::renderObjectsFast(bool renderingShadows, bool resour
 					}
 				}
 
-				modelRenderer->begin(false, renderingShadows, false);
+				modelRenderer->begin(false, renderingShadows, false, colorPickingSelection);
 
-				if(colorPickingSelection == true) {
-					BaseColorPickEntity::beginPicking();
-				}
-				else {
+				if(colorPickingSelection == false) {
 					glInitNames();
 				}
 			}
 
 			if(resourceOnly == false || o->getResource()!= NULL) {
 				Model *objModel= o->getModelPtr();
-				const Vec3f &v= o->getConstPos();
+				//if(this->gameCamera->getPos().dist(o->getPos()) <= SKIP_INTERPOLATION_DISTANCE) {
+
+					// ***MV don't think this is needed below 2013/01/11
+					//objModel->updateInterpolationData(o->getAnimProgress(), true);
+
+				//}
+				const Vec3f v= o->getConstPos();
 
 				if(colorPickingSelection == false) {
 					glPushName(OBJECT_SELECT_OFFSET+visibleIndex);
@@ -6672,11 +7590,9 @@ vector<Object *>  Renderer::renderObjectsFast(bool renderingShadows, bool resour
 				if(colorPickingSelection == true) {
 					o->setUniquePickingColor();
 					objectList.push_back(o);
-
-					//assertGl();
 				}
 
-				modelRenderer->render(objModel);
+				modelRenderer->render(objModel,resourceOnly?rmSelection:rmNormal);
 
 				glPopMatrix();
 
@@ -6689,16 +7605,11 @@ vector<Object *>  Renderer::renderObjectsFast(bool renderingShadows, bool resour
 		if(modelRenderStarted == true) {
 			modelRenderer->end();
 
-			if(colorPickingSelection == true) {
-				BaseColorPickEntity::endPicking();
-			}
-			else {
+			if(colorPickingSelection == false) {
 				glPopAttrib();
 			}
 		}
 	}
-
-	assertGl();
 
 	return objectList;
 }
@@ -6710,17 +7621,28 @@ void Renderer::checkGlCaps() {
 		return;
 	}
 
+	if(glActiveTexture == NULL) {
+		string message;
+
+		message += "Your system supports OpenGL version [";
+ 		message += getGlVersion() + string("]\n");
+ 		message += "MegaGlest needs a version that supports\n";
+ 		message += "glActiveTexture (OpenGL 1.3) or the ARB_multitexture extension.";
+
+ 		throw megaglest_runtime_error(message.c_str(),true);
+	}
+
 	//opengl 1.3
 	//if(!isGlVersionSupported(1, 3, 0)) {
 	if(glewIsSupported("GL_VERSION_1_3") == false) {
 		string message;
 
-		message += "Your system supports OpenGL version \"";
- 		message += getGlVersion() + string("\"\n");
+		message += "Your system supports OpenGL version [";
+ 		message += getGlVersion() + string("]\n");
  		message += "MegaGlest needs at least version 1.3 to work\n";
  		message += "You may solve this problem by installing your latest video card drivers";
 
- 		throw runtime_error(message.c_str());
+ 		throw megaglest_runtime_error(message.c_str(),true);
 	}
 
 	//opengl 1.4 or extension
@@ -6735,19 +7657,23 @@ void Renderer::checkGlOptionalCaps() {
 		return;
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//shadows
 	if(shadows == sProjected || shadows == sShadowMapping) {
 		if(getGlMaxTextureUnits() < 3) {
-			throw runtime_error("Your system doesn't support 3 texture units, required for shadows");
+			throw megaglest_runtime_error("Your system doesn't support 3 texture units, required for shadows");
 		}
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	//shadow mapping
 	if(shadows == sShadowMapping) {
 		checkExtension("GL_ARB_shadow", "Shadow Mapping");
 		//checkExtension("GL_ARB_shadow_ambient", "Shadow Mapping");
 		//checkExtension("GL_ARB_depth_texture", "Shadow Mapping");
 	}
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Renderer::checkExtension(const string &extension, const string &msg) {
@@ -6755,10 +7681,12 @@ void Renderer::checkExtension(const string &extension, const string &msg) {
 		return;
 	}
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	if(!isGlExtensionSupported(extension.c_str())) {
 		string str= "OpenGL extension not supported: " + extension +  ", required for " + msg;
-		throw runtime_error(str);
+		throw megaglest_runtime_error(str);
 	}
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 // ==================== init 3d lists ====================
@@ -6768,115 +7696,131 @@ void Renderer::init3dList() {
 		return;
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	const Metrics &metrics= Metrics::getInstance();
+	render3dSetup();
 
-    assertGl();
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	//const Metrics &metrics= Metrics::getInstance();
 
-	list3d= glGenLists(1);
-	assertGl();
-	list3dValid=true;
+    //assertGl();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    //if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	glNewList(list3d, GL_COMPILE_AND_EXECUTE);
+	//list3d= glGenLists(1);
+	//assertGl();
+	//list3dValid=true;
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//glNewList(list3d, GL_COMPILE_AND_EXECUTE);
 	//need to execute, because if not gluPerspective takes no effect and gluLoadMatrix is wrong
+	//render3dSetup();
+	//glEndList();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		//misc
-		glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
-		glClearColor(fowColor.x, fowColor.y, fowColor.z, fowColor.w);
-		glFrontFace(GL_CW);
-		glEnable(GL_CULL_FACE);
-		loadProjectionMatrix();
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		//texture state
-		glActiveTexture(shadowTexUnit);
-		glDisable(GL_TEXTURE_2D);
-		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-
-		glActiveTexture(fowTexUnit);
-		glDisable(GL_TEXTURE_2D);
-		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-
-		glActiveTexture(baseTexUnit);
-		glEnable(GL_TEXTURE_2D);
-		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		//material state
-		glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, defSpecularColor.ptr());
-		glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, defAmbientColor.ptr());
-		glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, defDiffuseColor.ptr());
-		glColorMaterial(GL_FRONT_AND_BACK, GL_DIFFUSE);
-		glColor4fv(defColor.ptr());
-
-		//blend state
-		glDisable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		//alpha test state
-		glEnable(GL_ALPHA_TEST);
-		glAlphaFunc(GL_GREATER, 0.f);
-
-		//depth test state
-		glEnable(GL_DEPTH_TEST);
-		glDepthMask(GL_TRUE);
-		glDepthFunc(GL_LESS);
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		//lighting state
-		glEnable(GL_LIGHTING);
-		glEnable(GL_LIGHT0);
-
-		//matrix mode
-		glMatrixMode(GL_MODELVIEW);
-
-		//stencil test
-		glDisable(GL_STENCIL_TEST);
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		//fog
-		const Tileset *tileset= NULL;
-		if(game != NULL && game->getWorld() != NULL) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-			tileset = game->getWorld()->getTileset();
-		}
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-		if(tileset != NULL && tileset->getFog()) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-			glEnable(GL_FOG);
-			if(tileset->getFogMode()==fmExp) {
-				glFogi(GL_FOG_MODE, GL_EXP);
-			}
-			else {
-				glFogi(GL_FOG_MODE, GL_EXP2);
-			}
-
-			glFogf(GL_FOG_DENSITY, tileset->getFogDensity());
-			glFogfv(GL_FOG_COLOR, tileset->getFogColor().ptr());
-		}
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-	glEndList();
-
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//assert
-	assertGl();
+	//assertGl();
+}
+
+void Renderer::render3dSetup() {
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	const Metrics &metrics= Metrics::getInstance();
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//misc
+	glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
+	glClearColor(fowColor.x, fowColor.y, fowColor.z, fowColor.w);
+	glFrontFace(GL_CW);
+	glEnable(GL_CULL_FACE);
+	loadProjectionMatrix();
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//texture state
+	glActiveTexture(shadowTexUnit);
+	glDisable(GL_TEXTURE_2D);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	glActiveTexture(fowTexUnit);
+	glDisable(GL_TEXTURE_2D);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	glActiveTexture(baseTexUnit);
+	glEnable(GL_TEXTURE_2D);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//material state
+	glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, defSpecularColor.ptr());
+	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, defAmbientColor.ptr());
+	glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, defDiffuseColor.ptr());
+	glColorMaterial(GL_FRONT_AND_BACK, GL_DIFFUSE);
+	glColor4fv(defColor.ptr());
+
+	//blend state
+	glDisable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//alpha test state
+	glEnable(GL_ALPHA_TEST);
+	glAlphaFunc(GL_GREATER, 0.f);
+
+	//depth test state
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//lighting state
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+
+	//matrix mode
+	glMatrixMode(GL_MODELVIEW);
+
+	//stencil test
+	glDisable(GL_STENCIL_TEST);
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//fog
+	const Tileset *tileset= NULL;
+	if(game != NULL && game->getWorld() != NULL) {
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		tileset = game->getWorld()->getTileset();
+	}
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	if(tileset != NULL && tileset->getFog()) {
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		glEnable(GL_FOG);
+		if(tileset->getFogMode()==fmExp) {
+			glFogi(GL_FOG_MODE, GL_EXP);
+		}
+		else {
+			glFogi(GL_FOG_MODE, GL_EXP2);
+		}
+
+		glFogf(GL_FOG_DENSITY, tileset->getFogDensity());
+		glFogfv(GL_FOG_COLOR, tileset->getFogColor().ptr());
+	}
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Renderer::init2dList() {
@@ -6884,47 +7828,71 @@ void Renderer::init2dList() {
 		return;
 	}
 
+//	//this list sets the state for the 2d rendering
+//	list2d= glGenLists(1);
+//	assertGl();
+//	list2dValid=true;
+//
+//	glNewList(list2d, GL_COMPILE);
+//	render2dMenuSetup();
+//	glEndList();
+//
+//	assertGl();
+}
+
+void Renderer::render2dMenuSetup() {
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
 	const Metrics &metrics= Metrics::getInstance();
+	//projection
+	glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, metrics.getVirtualW(), 0, metrics.getVirtualH(), 0, 1);
 
-	//this list sets the state for the 2d rendering
-	list2d= glGenLists(1);
-	assertGl();
-	list2dValid=true;
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	glNewList(list2d, GL_COMPILE);
+	//modelview
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
 
-		//projection
-		glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glOrtho(0, metrics.getVirtualW(), 0, metrics.getVirtualH(), 0, 1);
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-		//modelview
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
+	//disable everything
+	glDisable(GL_BLEND);
+	glDisable(GL_LIGHTING);
+	glDisable(GL_ALPHA_TEST);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_STENCIL_TEST);
+	glDisable(GL_FOG);
+	glDisable(GL_CULL_FACE);
+	glFrontFace(GL_CCW);
 
-		//disable everything
-		glDisable(GL_BLEND);
-		glDisable(GL_LIGHTING);
-		glDisable(GL_ALPHA_TEST);
-		glDisable(GL_DEPTH_TEST);
-		glDisable(GL_STENCIL_TEST);
-		glDisable(GL_FOG);
-		glDisable(GL_CULL_FACE);
-		glFrontFace(GL_CCW);
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	if(glActiveTexture != NULL) {
 		glActiveTexture(baseTexUnit);
-		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-		glDisable(GL_TEXTURE_2D);
+	}
+	else {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s] Line: %d\nglActiveTexture == NULL\nglActiveTexture is only supported if the GL version is 1.3 or greater,\nor if the ARB_multitexture extension is supported!",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
 
-		//blend func
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-		//color
-		glColor4f(1.f, 1.f, 1.f, 1.f);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	glDisable(GL_TEXTURE_2D);
 
-	glEndList();
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
-	assertGl();
+	//blend func
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	//color
+	glColor4f(1.f, 1.f, 1.f, 1.f);
+
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 void Renderer::init3dListMenu(const MainMenu *mm) {
@@ -6932,9 +7900,13 @@ void Renderer::init3dListMenu(const MainMenu *mm) {
 		return;
 	}
 
+	//this->mm3d = mm;
+	//printf("In [%s::%s Line: %d] this->custom_mm3d [%p] this->mm3d [%p]\n",__FILE__,__FUNCTION__,__LINE__,this->custom_mm3d,this->mm3d);
+
+/*
 	assertGl();
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	const Metrics &metrics= Metrics::getInstance();
 	//const MenuBackground *mb= mm->getConstMenuBackground();
@@ -6943,7 +7915,7 @@ void Renderer::init3dListMenu(const MainMenu *mm) {
 		mb = mm->getConstMenuBackground();
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(this->customlist3dMenu != NULL) {
 		*this->customlist3dMenu = glGenLists(1);
@@ -6955,7 +7927,7 @@ void Renderer::init3dListMenu(const MainMenu *mm) {
 		list3dMenuValid=true;
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	if(this->customlist3dMenu != NULL) {
 		glNewList(*this->customlist3dMenu, GL_COMPILE);
@@ -6964,7 +7936,7 @@ void Renderer::init3dListMenu(const MainMenu *mm) {
 		glNewList(list3dMenu, GL_COMPILE);
 	}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 		//misc
 		glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
 		glClearColor(0.4f, 0.4f, 0.4f, 1.f);
@@ -7007,28 +7979,96 @@ void Renderer::init3dListMenu(const MainMenu *mm) {
 		//stencil test
 		glDisable(GL_STENCIL_TEST);
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 		//fog
 		if(mb != NULL && mb->getFog()){
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			glEnable(GL_FOG);
 			glFogi(GL_FOG_MODE, GL_EXP2);
 			glFogf(GL_FOG_DENSITY, mb->getFogDensity());
 		}
 
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	glEndList();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	//assert
 	assertGl();
+*/
 }
 
+void Renderer::render3dMenuSetup(const MainMenu *mm) {
+	//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
+	const Metrics &metrics= Metrics::getInstance();
+	const MenuBackground *mb = NULL;
+	if(mm != NULL) {
+		mb = mm->getConstMenuBackground();
+	}
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+	//misc
+	glViewport(0, 0, metrics.getScreenW(), metrics.getScreenH());
+	glClearColor(0.4f, 0.4f, 0.4f, 1.f);
+	glFrontFace(GL_CW);
+	glEnable(GL_CULL_FACE);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(perspFov, metrics.getAspectRatio(), perspNearPlane, 1000000);
+
+	//texture state
+	glEnable(GL_TEXTURE_2D);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	//material state
+	glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, defSpecularColor.ptr());
+	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, defAmbientColor.ptr());
+	glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, defDiffuseColor.ptr());
+	glColor4fv(defColor.ptr());
+	glColorMaterial(GL_FRONT_AND_BACK, GL_DIFFUSE);
+
+	//blend state
+	glDisable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	//alpha test state
+	glEnable(GL_ALPHA_TEST);
+	glAlphaFunc(GL_GREATER, 0.f);
+
+	//depth test state
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+
+	//lighting state
+	glEnable(GL_LIGHTING);
+
+	//matrix mode
+	glMatrixMode(GL_MODELVIEW);
+
+	//stencil test
+	glDisable(GL_STENCIL_TEST);
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//fog
+	if(mb != NULL && mb->getFog()) {
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		glEnable(GL_FOG);
+		glFogi(GL_FOG_MODE, GL_EXP2);
+		glFogf(GL_FOG_DENSITY, mb->getFogDensity());
+	}
+
+	//assert
+	assertGl();
+
+	//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+}
 // ==================== misc ====================
 
 void Renderer::loadProjectionMatrix() {
@@ -7093,6 +8133,11 @@ void Renderer::renderArrow(const Vec3f &pos1, const Vec3f &pos2,
 		return;
 	}
 
+	Config &config= Config::getInstance();
+	if(config.getBool("RecordMode","false") == true) {
+		return;
+	}
+
 	const int tesselation= 3;
 	const float arrowEndSize= 0.4f;
 	const float maxlen= 25;
@@ -7139,12 +8184,13 @@ void Renderer::renderArrow(const Vec3f &pos1, const Vec3f &pos2,
 }
 
 void Renderer::renderProgressBar3D(int size, int x, int y, Font3D *font, int customWidth,
-		string prefixLabel,bool centeredText) {
+		string prefixLabel,bool centeredText,int customHeight) {
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
 
-	int progressbarHeight	= 12;
+	// Makiong this smaller than 14 is a bad idea (since the font size is never smaller than that)
+	int progressbarHeight	= (customHeight > 0 ? customHeight : 14);
     int currentSize     	= size;
     int maxSize         	= maxProgressBar;
     string renderText   	= intToStr(static_cast<int>(size)) + "%";
@@ -7153,9 +8199,9 @@ void Renderer::renderProgressBar3D(int size, int x, int y, Font3D *font, int cus
             currentSize     = (int)((double)customWidth * ((double)size / 100.0));
         }
         maxSize         = customWidth;
-        if(maxSize <= 0) {
-        	maxSize = maxProgressBar;
-        }
+        //if(maxSize <= 0) {
+        //	maxSize = maxProgressBar;
+        //}
     }
     if(prefixLabel != "") {
         renderText = prefixLabel + renderText;
@@ -7187,7 +8233,8 @@ void Renderer::renderProgressBar3D(int size, int x, int y, Font3D *font, int cus
 	//glColor3fv(defColor.ptr());
 	//printf("Render progress bar3d renderText [%s] y = %d, centeredText = %d\n",renderText.c_str(),y, centeredText);
 
-	renderTextBoundingBox3D(renderText, font, defColor, x, y, maxSize, progressbarHeight, true, true);
+	renderTextBoundingBox3D(renderText, font, defColor, x, y, maxSize,
+			progressbarHeight, true, true, false,-1,-1);
 }
 
 void Renderer::renderProgressBar(int size, int x, int y, Font2D *font, int customWidth,
@@ -7204,9 +8251,9 @@ void Renderer::renderProgressBar(int size, int x, int y, Font2D *font, int custo
             currentSize     = (int)((double)customWidth * ((double)size / 100.0));
         }
         maxSize         = customWidth;
-        if(maxSize <= 0) {
-        	maxSize = maxProgressBar;
-        }
+        //if(maxSize <= 0) {
+        //	maxSize = maxProgressBar;
+        //}
     }
     if(prefixLabel != "") {
         renderText = prefixLabel + renderText;
@@ -7309,44 +8356,10 @@ void Renderer::renderQuad(int x, int y, int w, int h, const Texture2D *texture) 
 	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
 		return;
 	}
-
-/* Revert back to 3.4.0 render logic due to issues on some ATI cards
- *
-
-	if(w < 0) {
-		w = texture->getPixmapConst()->getW();
+	if(texture == NULL) {
+		printf("\n**WARNING** detected a null texture to render in renderQuad!\n");
+		return;
 	}
-	if(h < 0) {
-		h = texture->getPixmapConst()->getH();
-	}
-
-	if(texture != NULL) {
-		glBindTexture(GL_TEXTURE_2D, static_cast<const Texture2DGl*>(texture)->getHandle());
-	}
-
-	Vec2i texCoords[4];
-	Vec2i vertices[4];
-    texCoords[0] 	= Vec2i(0, 1);
-    vertices[0] 	= Vec2i(x, y+h);
-    texCoords[1] 	= Vec2i(0, 0);
-    vertices[1] 	= Vec2i(x, y);
-    texCoords[2] 	= Vec2i(1, 1);
-    vertices[2] 	= Vec2i(x+w, y+h);
-    texCoords[3] 	= Vec2i(1, 0);
-    vertices[3] 	= Vec2i(x+w, y);
-
-	//glClientActiveTexture(GL_TEXTURE0);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(2, GL_INT, 0,&texCoords[0]);
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glVertexPointer(2, GL_INT, 0, &vertices[0]);
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-    //glClientActiveTexture(GL_TEXTURE0);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-*/
 
 	if(w < 0) {
 		w = texture->getPixmapConst()->getW();
@@ -7400,7 +8413,7 @@ Texture2D::Filter Renderer::strToTextureFilter(const string &s){
 		return Texture2D::fTrilinear;
 	}
 
-	throw runtime_error("Error converting from string to FilterType, found: "+s);
+	throw megaglest_runtime_error("Error converting from string to FilterType, found: "+s);
 }
 
 void Renderer::setAllowRenderUnitTitles(bool value) {
@@ -7413,34 +8426,25 @@ void Renderer::renderUnitTitles3D(Font3D *font, Vec3f color) {
 		return;
 	}
 
-	std::map<int,bool> unitRenderedList;
+	//std::map<int,bool> unitRenderedList;
 
 	if(visibleFrameUnitList.empty() == false) {
 		//printf("Render Unit titles ON\n");
 
-		for(int idx = 0; idx < visibleFrameUnitList.size(); idx++) {
+		for(int idx = 0; idx < (int)visibleFrameUnitList.size(); idx++) {
 			const Unit *unit = visibleFrameUnitList[idx];
 			if(unit != NULL) {
 				if(unit->getVisible() == true) {
 					if(unit->getCurrentUnitTitle() != "") {
 						//get the screen coordinates
 						Vec3f screenPos = unit->getScreenPos();
-	#ifdef USE_STREFLOP
-						renderText3D(unit->getCurrentUnitTitle(), font, color, streflop::fabs(screenPos.x) + 5, streflop::fabs(screenPos.y) + 5, false);
-	#else
-						renderText3D(unit->getCurrentUnitTitle(), font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-	#endif
-
-						unitRenderedList[unit->getId()] = true;
+						renderText3D(unit->getCurrentUnitTitle(), font, color, std::fabs(screenPos.x) + 5, std::fabs(screenPos.y) + 5, false);
+						//unitRenderedList[unit->getId()] = true;
 					}
 					else {
-						string str = unit->getFullName() + " - " + intToStr(unit->getId()) + " [" + unit->getPos().getString() + "]";
+						string str = unit->getFullName(unit->showTranslatedTechTree()) + " - " + intToStr(unit->getId()) + " [" + unit->getPosNotThreadSafe().getString() + "]";
 						Vec3f screenPos = unit->getScreenPos();
-	#ifdef USE_STREFLOP
-						renderText3D(str, font, color, streflop::fabs(screenPos.x) + 5, streflop::fabs(screenPos.y) + 5, false);
-	#else
-						renderText3D(str, font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-	#endif
+						renderText3D(str, font, color, std::fabs(screenPos.x) + 5, std::fabs(screenPos.y) + 5, false);
 					}
 				}
 			}
@@ -7462,7 +8466,7 @@ void Renderer::renderUnitTitles3D(Font3D *font, Vec3f color) {
 				//get the screen coordinates
 				Vec3f &screenPos = unitInfo.second;
 				renderText(str, font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-				//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] screenPos.x = %f, screenPos.y = %f, screenPos.z = %f\n",__FILE__,__FUNCTION__,__LINE__,screenPos.x,screenPos.y,screenPos.z);
+				//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] screenPos.x = %f, screenPos.y = %f, screenPos.z = %f\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,screenPos.x,screenPos.y,screenPos.z);
 			}
 		}
 		renderUnitTitleList.clear();
@@ -7476,33 +8480,25 @@ void Renderer::renderUnitTitles(Font2D *font, Vec3f color) {
 		return;
 	}
 
-	std::map<int,bool> unitRenderedList;
+	//std::map<int,bool> unitRenderedList;
 
 	if(visibleFrameUnitList.empty() == false) {
 		//printf("Render Unit titles ON\n");
 
-		for(int idx = 0; idx < visibleFrameUnitList.size(); idx++) {
+		for(int idx = 0; idx < (int)visibleFrameUnitList.size(); idx++) {
 			const Unit *unit = visibleFrameUnitList[idx];
 			if(unit != NULL) {
 				if(unit->getCurrentUnitTitle() != "") {
 					//get the screen coordinates
 					Vec3f screenPos = unit->getScreenPos();
-#ifdef USE_STREFLOP
-					renderText(unit->getCurrentUnitTitle(), font, color, streflop::fabs(screenPos.x) + 5, streflop::fabs(screenPos.y) + 5, false);
-#else
-					renderText(unit->getCurrentUnitTitle(), font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-#endif
+					renderText(unit->getCurrentUnitTitle(), font, color, std::fabs(screenPos.x) + 5, std::fabs(screenPos.y) + 5, false);
 
-					unitRenderedList[unit->getId()] = true;
+					//unitRenderedList[unit->getId()] = true;
 				}
 				else {
-					string str = unit->getFullName() + " - " + intToStr(unit->getId()) + " [" + unit->getPos().getString() + "]";
+					string str = unit->getFullName(unit->showTranslatedTechTree()) + " - " + intToStr(unit->getId()) + " [" + unit->getPosNotThreadSafe().getString() + "]";
 					Vec3f screenPos = unit->getScreenPos();
-#ifdef USE_STREFLOP
-					renderText(str, font, color, streflop::fabs(screenPos.x) + 5, streflop::fabs(screenPos.y) + 5, false);
-#else
-					renderText(str, font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-#endif
+					renderText(str, font, color, std::fabs(screenPos.x) + 5, std::fabs(screenPos.y) + 5, false);
 				}
 			}
 		}
@@ -7523,7 +8519,7 @@ void Renderer::renderUnitTitles(Font2D *font, Vec3f color) {
 				//get the screen coordinates
 				Vec3f &screenPos = unitInfo.second;
 				renderText(str, font, color, fabs(screenPos.x) + 5, fabs(screenPos.y) + 5, false);
-				//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] screenPos.x = %f, screenPos.y = %f, screenPos.z = %f\n",__FILE__,__FUNCTION__,__LINE__,screenPos.x,screenPos.y,screenPos.z);
+				//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] screenPos.x = %f, screenPos.y = %f, screenPos.z = %f\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,screenPos.x,screenPos.y,screenPos.z);
 			}
 		}
 		renderUnitTitleList.clear();
@@ -7534,7 +8530,7 @@ void Renderer::renderUnitTitles(Font2D *font, Vec3f color) {
 void Renderer::removeObjectFromQuadCache(const Object *o) {
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	for(int visibleIndex = 0;
-			visibleIndex < qCache.visibleObjectList.size(); ++visibleIndex) {
+			visibleIndex < (int)qCache.visibleObjectList.size(); ++visibleIndex) {
 		Object *currentObj = qCache.visibleObjectList[visibleIndex];
 		if(currentObj == o) {
 			qCache.visibleObjectList.erase(qCache.visibleObjectList.begin() + visibleIndex);
@@ -7546,7 +8542,7 @@ void Renderer::removeObjectFromQuadCache(const Object *o) {
 void Renderer::removeUnitFromQuadCache(const Unit *unit) {
 	VisibleQuadContainerCache &qCache = getQuadCache();
 	for(int visibleIndex = 0;
-			visibleIndex < qCache.visibleQuadUnitList.size(); ++visibleIndex) {
+			visibleIndex < (int)qCache.visibleQuadUnitList.size(); ++visibleIndex) {
 		Unit *currentUnit = qCache.visibleQuadUnitList[visibleIndex];
 		if(currentUnit == unit) {
 			qCache.visibleQuadUnitList.erase(qCache.visibleQuadUnitList.begin() + visibleIndex);
@@ -7554,7 +8550,7 @@ void Renderer::removeUnitFromQuadCache(const Unit *unit) {
 		}
 	}
 	for(int visibleIndex = 0;
-			visibleIndex < qCache.visibleUnitList.size(); ++visibleIndex) {
+			visibleIndex < (int)qCache.visibleUnitList.size(); ++visibleIndex) {
 		Unit *currentUnit = qCache.visibleUnitList[visibleIndex];
 		if(currentUnit == unit) {
 			qCache.visibleUnitList.erase(qCache.visibleUnitList.begin() + visibleIndex);
@@ -7580,6 +8576,7 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 			//}
 			//else {
 			quadCache.clearVolatileCacheData();
+			worldToScreenPosCache.clear();
 			//}
 
 			// Unit calculations
@@ -7588,35 +8585,81 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 				for(int j = 0; j < faction->getUnitCount(); ++j) {
 					Unit *unit= faction->getUnit(j);
 
-
+					bool unitCheckedForRender = false;
 					if(VisibleQuadContainerCache::enableFrustumCalcs == true) {
 						//bool insideQuad 	= PointInFrustum(quadCache.frustumData, unit->getCurrVector().x, unit->getCurrVector().y, unit->getCurrVector().z );
-						bool insideQuad 	= CubeInFrustum(quadCache.frustumData, unit->getCurrVector().x, unit->getCurrVector().y, unit->getCurrVector().z, unit->getType()->getSize());
+						bool insideQuad 	= CubeInFrustum(quadCache.frustumData, unit->getCurrVector().x, unit->getCurrVector().y, unit->getCurrVector().z, unit->getType()->getRenderSize());
 						bool renderInMap 	= world->toRenderUnit(unit);
 						if(insideQuad == false || renderInMap == false) {
 							unit->setVisible(false);
 							if(renderInMap == true) {
 								quadCache.visibleUnitList.push_back(unit);
 							}
-							continue; // no more need to check any further;
+							unitCheckedForRender = true; // no more need to check any further;
 							// Currently don't need this list
 							//quadCache.inVisibleUnitList.push_back(unit);
 						}
 					}
+					if(unitCheckedForRender == false) {
+						bool insideQuad 	= visibleQuad.isInside(unit->getPos());
+						bool renderInMap 	= world->toRenderUnit(unit);
+						if(insideQuad == true && renderInMap == true) {
+							quadCache.visibleQuadUnitList.push_back(unit);
+						}
+						else {
+							unit->setVisible(false);
+							// Currently don't need this list
+							//quadCache.inVisibleUnitList.push_back(unit);
+						}
 
-					bool insideQuad 	= visibleQuad.isInside(unit->getPos());
-					bool renderInMap 	= world->toRenderUnit(unit);
-					if(insideQuad == true && renderInMap == true) {
-						quadCache.visibleQuadUnitList.push_back(unit);
-					}
-					else {
-						unit->setVisible(false);
-						// Currently don't need this list
-						//quadCache.inVisibleUnitList.push_back(unit);
+						if(renderInMap == true) {
+							quadCache.visibleUnitList.push_back(unit);
+						}
 					}
 
-					if(renderInMap == true) {
-						quadCache.visibleUnitList.push_back(unit);
+					bool unitBuildPending = unit->isBuildCommandPending();
+					if(unitBuildPending == true) {
+						const UnitBuildInfo &pendingUnit = unit->getBuildCommandPendingInfo();
+						const Vec2i &pos = pendingUnit.pos;
+						const Map *map= world->getMap();
+
+						bool unitBuildCheckedForRender = false;
+
+						//printf("#1 Unit is about to build another unit\n");
+
+						if(VisibleQuadContainerCache::enableFrustumCalcs == true) {
+							Vec3f pos3f= Vec3f(pos.x, map->getCell(pos)->getHeight(), pos.y);
+							//bool insideQuad 	= PointInFrustum(quadCache.frustumData, unit->getCurrVector().x, unit->getCurrVector().y, unit->getCurrVector().z );
+							bool insideQuad 	= CubeInFrustum(quadCache.frustumData, pos3f.x, pos3f.y, pos3f.z, pendingUnit.buildUnit->getRenderSize());
+							bool renderInMap 	= world->toRenderUnit(pendingUnit);
+							if(insideQuad == false || renderInMap == false) {
+								if(renderInMap == true) {
+									quadCache.visibleQuadUnitBuildList.push_back(pendingUnit);
+								}
+								unitBuildCheckedForRender = true; // no more need to check any further;
+								// Currently don't need this list
+								//quadCache.inVisibleUnitList.push_back(unit);
+							}
+
+							//printf("#2 Unit build added? insideQuad = %d, renderInMap = %d\n",insideQuad,renderInMap);
+						}
+
+						if(unitBuildCheckedForRender == false) {
+							bool insideQuad 	= visibleQuad.isInside(pos);
+							bool renderInMap 	= world->toRenderUnit(pendingUnit);
+							if(insideQuad == true && renderInMap == true) {
+								quadCache.visibleQuadUnitBuildList.push_back(pendingUnit);
+							}
+							else {
+								//unit->setVisible(false);
+								// Currently don't need this list
+								//quadCache.inVisibleUnitList.push_back(unit);
+							}
+
+							//printf("#3 Unit build added? insideQuad = %d, renderInMap = %d\n",insideQuad,renderInMap);
+						}
+
+						//printf("#4 quadCache.visibleQuadUnitBuildList.size() = %d\n",quadCache.visibleQuadUnitBuildList.size());
 					}
 				}
 			}
@@ -7626,7 +8669,7 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 				const Map *map= world->getMap();
 				// clear visibility of old objects
 				for(int visibleIndex = 0;
-					visibleIndex < quadCache.visibleObjectList.size(); ++visibleIndex){
+					visibleIndex < (int)quadCache.visibleObjectList.size(); ++visibleIndex){
 					quadCache.visibleObjectList[visibleIndex]->setVisible(false);
 				}
 				quadCache.clearNonVolatileCacheData();
@@ -7649,6 +8692,7 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 								//bool insideQuad 	= PointInFrustum(quadCache.frustumData, o->getPos().x, o->getPos().y, o->getPos().z );
 								bool insideQuad 	= CubeInFrustum(quadCache.frustumData, o->getPos().x, o->getPos().y, o->getPos().z, 1);
 								if(insideQuad == false) {
+									o->setVisible(false);
 									continue;
 								}
 							}
@@ -7674,6 +8718,8 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 
 				//int loops2=0;
 
+				std::map<Vec2i, MarkedCell> markedCells = game->getMapMarkedCellList();
+
 				const Rect2i mapBounds(0, 0, map->getSurfaceW()-1, map->getSurfaceH()-1);
 				Quad2i scaledQuad = visibleQuad / Map::cellScale;
 				PosQuadIterator pqis(map,scaledQuad);
@@ -7683,6 +8729,19 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 						//loops2++;
 						if(VisibleQuadContainerCache::enableFrustumCalcs == false) {
 							quadCache.visibleScaledCellList.push_back(pos);
+
+							if(markedCells.empty() == false) {
+								if(markedCells.find(pos) != markedCells.end()) {
+									//printf("#1 ******** VISIBLE SCALED CELL FOUND in marked list pos [%s] markedCells.size() = " MG_SIZE_T_SPECIFIER "\n",pos.getString().c_str(),markedCells.size());
+								//if(markedCells.empty() == false) {
+									//SurfaceCell *sc = map->getSurfaceCell(pos);
+									//quadCache.visibleScaledCellToScreenPosList[pos]=computeScreenPosition(sc->getVertex());
+									updateMarkedCellScreenPosQuadCache(pos);
+								}
+								else {
+									//printf("#1 VISIBLE SCALED CELL NOT FOUND in marked list pos [%s] markedCells.size() = " MG_SIZE_T_SPECIFIER "\n",pos.getString().c_str(),markedCells.size());
+								}
+							}
 						}
 						else {
 							SurfaceCell *sc = map->getSurfaceCell(pos);
@@ -7692,6 +8751,18 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 
 							if(insideQuad == true) {
 								quadCache.visibleScaledCellList.push_back(pos);
+
+								if(markedCells.empty() == false) {
+									if(markedCells.find(pos) != markedCells.end()) {
+										//printf("#2 ******** VISIBLE SCALED CELL FOUND in marked list pos [%s] markedCells.size() = " MG_SIZE_T_SPECIFIER "\n",pos.getString().c_str(),markedCells.size());
+									//if(markedCells.empty() == false) {
+										//quadCache.visibleScaledCellToScreenPosList[pos]=computeScreenPosition(sc->getVertex());
+										updateMarkedCellScreenPosQuadCache(pos);
+									}
+									else {
+										//printf("#2 VISIBLE SCALED CELL NOT FOUND in marked list pos [%s] markedCells.size() = " MG_SIZE_T_SPECIFIER "\n",pos.getString().c_str(),markedCells.size());
+									}
+								}
 							}
 						}
 					}
@@ -7704,6 +8775,47 @@ VisibleQuadContainerCache & Renderer::getQuadCache(	bool updateOnDirtyFrame,
 	}
 
 	return quadCache;
+}
+
+void Renderer::updateMarkedCellScreenPosQuadCache(Vec2i pos) {
+	const World *world= game->getWorld();
+	const Map *map= world->getMap();
+
+	SurfaceCell *sc = map->getSurfaceCell(pos);
+	quadCache.visibleScaledCellToScreenPosList[pos]=computeScreenPosition(sc->getVertex());
+}
+
+void Renderer::forceQuadCacheUpdate() {
+	quadCache.cacheFrame = -1;
+
+	Vec2i clearPos(-1,-1);
+	quadCache.lastVisibleQuad.p[0] = clearPos;
+	quadCache.lastVisibleQuad.p[1] = clearPos;
+	quadCache.lastVisibleQuad.p[2] = clearPos;
+	quadCache.lastVisibleQuad.p[3] = clearPos;
+}
+
+std::pair<bool,Vec3f> Renderer::posInCellQuadCache(Vec2i pos) {
+	std::pair<bool,Vec3f> result = make_pair(false,Vec3f());
+	if(std::find(
+			quadCache.visibleScaledCellList.begin(),
+			quadCache.visibleScaledCellList.end(),
+			pos) != quadCache.visibleScaledCellList.end()) {
+		result.first = true;
+		result.second = quadCache.visibleScaledCellToScreenPosList[pos];
+	}
+	return result;
+}
+
+Vec3f Renderer::getMarkedCellScreenPosQuadCache(Vec2i pos) {
+	Vec3f result(-1,-1,-1);
+	if(std::find(
+			quadCache.visibleScaledCellList.begin(),
+			quadCache.visibleScaledCellList.end(),
+			pos) != quadCache.visibleScaledCellList.end()) {
+		result = quadCache.visibleScaledCellToScreenPosList[pos];
+	}
+	return result;
 }
 
 void Renderer::beginRenderToTexture(Texture2D **renderToTexture) {
@@ -8044,40 +9156,56 @@ void Renderer::renderMapPreview( const MapPreview *map, bool renderAll,
 
 	assertGl();
 
+	Vec2f *vertices = new Vec2f[map->getMaxFactions() * 4];
+	Vec3f *colors = new Vec3f[map->getMaxFactions() * 4];
+
 	for (int i = 0; i < map->getMaxFactions(); i++) {
+		Vec3f color;
 		switch (i) {
 			case 0:
-				glColor3f(1.f, 0.f, 0.f);
+				color = Vec3f(1.f, 0.f, 0.f);
 				break;
 			case 1:
-				glColor3f(0.f, 0.f, 1.f);
+				color = Vec3f(0.f, 0.f, 1.f);
 				break;
 			case 2:
-				glColor3f(0.f, 1.f, 0.f);
+				color = Vec3f(0.f, 1.f, 0.f);
 				break;
 			case 3:
-				glColor3f(1.f, 1.f, 0.f);
+				color = Vec3f(1.f, 1.f, 0.f);
 				break;
 			case 4:
-				glColor3f(1.f, 1.f, 1.f);
+				color = Vec3f(1.f, 1.f, 1.f);
 				break;
 			case 5:
-				glColor3f(0.f, 1.f, 0.8f);
+				color = Vec3f(0.f, 1.f, 0.8f);
 				break;
 			case 6:
-				glColor3f(1.f, 0.5f, 0.f);
+				color = Vec3f(1.f, 0.5f, 0.f);
 				break;
 			case 7:
-				glColor3f(1.f, 0.5f, 1.f);
+				color = Vec3f(1.f, 0.5f, 1.f);
 				break;
    		}
-		glBegin(GL_LINES);
-		glVertex2f((map->getStartLocationX(i) - 1) * cellSize, clientH - (map->getStartLocationY(i) - 1) * cellSize);
-		glVertex2f((map->getStartLocationX(i) + 1) * cellSize + playerCrossSize, clientH - (map->getStartLocationY(i) + 1) * cellSize - playerCrossSize);
-		glVertex2f((map->getStartLocationX(i) - 1) * cellSize, clientH - (map->getStartLocationY(i) + 1) * cellSize - playerCrossSize);
-		glVertex2f((map->getStartLocationX(i) + 1) * cellSize + playerCrossSize, clientH - (map->getStartLocationY(i) - 1) * cellSize);
-		glEnd();
+
+		colors[i*4]     = color;
+		colors[(i*4)+1] = color;
+		colors[(i*4)+2] = color;
+		colors[(i*4)+3] = color;
+
+		vertices[i*4] 	= Vec2f((map->getStartLocationX(i) - 1) * cellSize, clientH - (map->getStartLocationY(i) - 1) * cellSize);
+		vertices[(i*4)+1] = Vec2f((map->getStartLocationX(i) + 1) * cellSize + playerCrossSize, clientH - (map->getStartLocationY(i) + 1) * cellSize - playerCrossSize);
+		vertices[(i*4)+2] = Vec2f((map->getStartLocationX(i) - 1) * cellSize, clientH - (map->getStartLocationY(i) + 1) * cellSize - playerCrossSize);
+		vertices[(i*4)+3] = Vec2f((map->getStartLocationX(i) + 1) * cellSize + playerCrossSize, clientH - (map->getStartLocationY(i) - 1) * cellSize);
 	}
+
+	glEnableClientState(GL_COLOR_ARRAY);
+	glColorPointer(3, GL_FLOAT, 0, &colors[0]);
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glVertexPointer(2, GL_FLOAT, 0, &vertices[0]);
+	glDrawArrays(GL_LINES, 0, 4 * map->getMaxFactions());
+	glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
 
 	assertGl();
 
@@ -8099,6 +9227,9 @@ void Renderer::renderMapPreview( const MapPreview *map, bool renderAll,
 		assertGl();
 	}
 
+	delete [] vertices;
+	delete [] colors;
+
 	assertGl();
 }
 
@@ -8115,12 +9246,12 @@ void Renderer::setLastRenderFps(int value) {
 		}
 }
 
-uint64 Renderer::getCurrentPixelByteCount(ResourceScope rs) const {
-	uint64 result = 0;
+std::size_t Renderer::getCurrentPixelByteCount(ResourceScope rs) const {
+	std::size_t result = 0;
 	for(int i = (rs == rsCount ? 0 : rs); i < rsCount; ++i) {
 		if(textureManager[i] != NULL) {
-			const Shared::Graphics::TextureContainer &textures = textureManager[i]->getTextures();
-			for(int j = 0; j < textures.size(); ++j) {
+			const ::Shared::Graphics::TextureContainer &textures = textureManager[i]->getTextures();
+			for(int j = 0; j < (int)textures.size(); ++j) {
 				const Texture *texture = textures[j];
 				result += texture->getPixelByteCount();
 			}
@@ -8134,7 +9265,7 @@ uint64 Renderer::getCurrentPixelByteCount(ResourceScope rs) const {
 }
 
 Texture2D * Renderer::preloadTexture(string logoFilename) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 
 	Texture2D *result = NULL;
 	if(logoFilename != "") {
@@ -8143,14 +9274,14 @@ Texture2D * Renderer::preloadTexture(string logoFilename) {
 		std::map<string,Texture2D *> &crcFactionPreviewTextureCache = CacheManager::getCachedItem< std::map<string,Texture2D *> >(GameConstants::factionPreviewTextureCacheLookupKey);
 
 		if(crcFactionPreviewTextureCache.find(logoFilename) != crcFactionPreviewTextureCache.end()) {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] load texture from cache [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] load texture from cache [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 
 			result = crcFactionPreviewTextureCache[logoFilename];
 		}
 		else {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 			Renderer &renderer= Renderer::getInstance();
 			result = renderer.newTexture2D(rsGlobal);
 			if(result) {
@@ -8159,7 +9290,7 @@ Texture2D * Renderer::preloadTexture(string logoFilename) {
 				//renderer.initTexture(rsGlobal,result);
 			}
 
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] add texture to manager and cache [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] add texture to manager and cache [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 
 			crcFactionPreviewTextureCache[logoFilename] = result;
 		}
@@ -8168,8 +9299,8 @@ Texture2D * Renderer::preloadTexture(string logoFilename) {
 	return result;
 }
 
-Texture2D * Renderer::findFactionLogoTexture(string logoFilename) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",__FILE__,__FUNCTION__,__LINE__,logoFilename.c_str());
+Texture2D * Renderer::findTexture(string logoFilename) {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] logoFilename [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,logoFilename.c_str());
 
 	Texture2D *result = preloadTexture(logoFilename);
 	if(result != NULL && result->getInited() == false) {
@@ -8278,7 +9409,7 @@ void Renderer::renderPopupMenu(PopupMenu *menu) {
 		renderTextBoundingBox3D(
 				menu->getHeader(), menu->getFont3D(),fontColor,
 				menu->getX(), menu->getY()+93*menu->getH()/100,menu->getW(),0,
-			true,false );
+			true,false, false,-1,-1);
 
 	}
 	else {
@@ -8322,6 +9453,70 @@ void Renderer::renderPopupMenu(PopupMenu *menu) {
 		renderButton(button);
 	}
 
+}
+
+void Renderer::setupRenderForVideo() {
+	clearBuffers();
+	//3d
+	reset3dMenu();
+	clearZBuffer();
+	//2d
+	reset2d();
+	glClearColor(0.f, 0.f, 0.f, 1.f);
+}
+
+void Renderer::renderVideoLoading(int progressPercent) {
+	//printf("Rendering progress progressPercent = %d\n",progressPercent);
+	setupRenderForVideo();
+
+	Lang &lang= Lang::getInstance();
+	string textToRender = lang.getString("PleaseWait");
+	const Metrics &metrics= Metrics::getInstance();
+
+	static Chrono cycle(true);
+	static float anim = 0.0f;
+
+	if(CoreData::getInstance().getMenuFontBig3D() != NULL) {
+
+		int w= metrics.getVirtualW();
+		int renderX = (w / 2) - (CoreData::getInstance().getMenuFontBig3D()->getMetrics()->getTextWidth(textToRender) / 2);
+		int h= metrics.getVirtualH();
+		int renderY = (h / 2) + (CoreData::getInstance().getMenuFontBig3D()->getMetrics()->getHeight(textToRender) / 2);
+
+		renderText3D(
+				textToRender,
+				CoreData::getInstance().getMenuFontBig3D(),
+				Vec4f(1.f, 1.f, 0.f,anim),
+				renderX, renderY, false);
+	}
+	else {
+		renderText(
+				textToRender,
+				CoreData::getInstance().getMenuFontBig(),
+				Vec4f(1.f, 1.f, 0.f,anim), (metrics.getScreenW() / 2),
+				(metrics.getScreenH() / 2), true);
+	}
+    swapBuffers();
+
+    if(cycle.getCurMillis() % 50 == 0) {
+    	static bool animCycleUp = true;
+    	if(animCycleUp == true) {
+			anim += 0.1f;
+			if(anim > 1.f) {
+				anim= 1.f;
+				cycle.reset();
+				animCycleUp = false;
+			}
+    	}
+    	else {
+			anim -= 0.1f;
+			if(anim < 0.f) {
+				anim= 0.f;
+				cycle.reset();
+				animCycleUp = true;
+			}
+    	}
+    }
 }
 
 }}//end namespace

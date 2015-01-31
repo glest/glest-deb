@@ -12,9 +12,13 @@
 #ifndef _GLEST_GAME_ELEMENTTYPE_H_ 
 #define _GLEST_GAME_ELEMENTTYPE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <vector>
 #include <string>
-
 #include "texture.h"
 #include "resource.h"
 #include "leak_dumper.h"
@@ -39,7 +43,7 @@ class ResourceType;
 ///	Base class for anything that has a name and a portrait
 // =====================================================
 
-class DisplayableType{
+class DisplayableType {
 protected:
 	string name;		//name
 	Texture2D *image;	//portrait  
@@ -49,8 +53,10 @@ public:
 	virtual ~DisplayableType(){};
 
 	//get
-	string getName() const				{return name;}
-	const Texture2D *getImage() const	{return image;}
+	virtual string getName(bool translatedValue=false) const;
+	virtual const Texture2D *getImage() const	{ return image; }
+
+	//virtual void saveGame(XmlNode *rootNode) const;
 };
 
 
@@ -71,13 +77,15 @@ protected:
 
 public:
 	//get
-	int getUpgradeReqCount() const						{return upgradeReqs.size();}
-	int getUnitReqCount() const							{return unitReqs.size();}
+	int getUpgradeReqCount() const						{return (int)upgradeReqs.size();}
+	int getUnitReqCount() const							{return (int)unitReqs.size();}
 	const UpgradeType *getUpgradeReq(int i) const		{return upgradeReqs[i];}
 	const UnitType *getUnitReq(int i) const				{return unitReqs[i];}
     
     //other
-    virtual string getReqDesc() const;
+    virtual string getReqDesc(bool translatedValue) const;
+
+    //virtual void saveGame(XmlNode *rootNode) const;
 };
 
 
@@ -87,7 +95,7 @@ public:
 ///	Base class for anything that can be produced
 // =====================================================
 
-class ProducibleType: public RequirableType{
+class ProducibleType: public RequirableType {
 private:
 	typedef vector<Resource> Costs;
 
@@ -101,7 +109,7 @@ public:
 	virtual ~ProducibleType();
 
     //get
-	int getCostCount() const						{return costs.size();}
+	int getCostCount() const						{return (int)costs.size();}
 	const Resource *getCost(int i) const			{return &costs[i];}
 	const Resource *getCost(const ResourceType *rt) const;
 	int getProductionTime() const					{return productionTime;}
@@ -110,7 +118,13 @@ public:
     //varios
     void checkCostStrings(TechTree *techTree);
     
-	virtual string getReqDesc() const;
+	virtual string getReqDesc(bool translatedValue) const;
+	string getResourceReqDesc(bool lineBreaks,bool translatedValue) const;
+	string getUnitAndUpgradeReqDesc(bool lineBreaks, bool translatedValue) const;
+	string getReqDesc(bool ignoreResourceRequirements, bool translatedValue) const;
+
+//	virtual void saveGame(XmlNode *rootNode) const;
+//	void loadGame(const XmlNode *rootNode);
 };
 
 }}//end namespace

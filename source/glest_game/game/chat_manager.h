@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_CHATMANAGER_H_
 #define _GLEST_GAME_CHATMANAGER_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include <string>
 #include "font.h"
 #include <SDL.h>
@@ -26,6 +31,15 @@ using Shared::Graphics::Font3D;
 namespace Glest{ namespace Game{
 
 class Console;
+
+//
+// This interface describes the methods a callback object must implement
+//
+class CustomInputCallbackInterface {
+public:
+	virtual void processInputText(string text, bool cancelled) = 0;
+	virtual ~CustomInputCallbackInterface() {}
+};
 
 // =====================================================
 //	class ChatManager
@@ -51,6 +65,9 @@ private:
 
 	string lastAutoCompleteSearchText;
 	vector<string> autoCompleteTextList;
+
+	CustomInputCallbackInterface *customCB;
+	int maxCustomTextLength;
 
 	void appendText(const wchar_t *addText, bool validateChars=true,bool addToAutoCompleteBuffer=true);
 	void deleteText(int deleteCount,bool addToAutoCompleteBuffer=true);
@@ -80,13 +97,14 @@ public:
 	void setFont(Font2D *font)	{this->font= font;}
 	void setFont3D(Font3D *font)	{this->font3D= font;}
 	void addText(string text);
-	void switchOnEdit();
-	
+	void switchOnEdit(CustomInputCallbackInterface *customCB=NULL,int maxCustomTextLength=-1);
 
 	bool getDisableTeamMode() const { return disableTeamMode; }
 	void setDisableTeamMode(bool value);
 
 	void setAutoCompleteTextList(vector<string> list) { autoCompleteTextList = list; }
+
+	bool isInCustomInputMode() const { return customCB != NULL; };
 };
 
 }}//end namespace

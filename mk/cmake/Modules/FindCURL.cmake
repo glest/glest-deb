@@ -6,12 +6,15 @@
 #  CURL_FOUND        - True if curl found.
 
 # Look for the header file.
-FIND_PATH(CURL_INCLUDE_DIR NAMES curl/curl.h)
+FIND_PATH(CURL_INCLUDE_DIR NAMES curl/curl.h
+                           PATHS /usr/local/include/
+                                /opt/local/include/)
 MARK_AS_ADVANCED(CURL_INCLUDE_DIR)
 
 # Look for the library.
 FIND_LIBRARY(CURL_LIBRARY NAMES curl curl-gnutls
-                          PATHS "/usr/local/lib/")
+                          PATHS /usr/local/lib/
+                                /opt/local/lib/)
 MARK_AS_ADVANCED(CURL_LIBRARY)
 
 # handle the QUIETLY and REQUIRED arguments and set CURL_FOUND to TRUE if 
@@ -42,12 +45,12 @@ IF(CURL_FOUND)
 	        OUTPUT_VARIABLE CURL_STATIC_LIBS
 	        RETURN_VALUE RET)
 
-	MESSAGE(STATUS "CURL RET = ${RET}")
+	MESSAGE(STATUS "CURL RET = ${RET} libs: [${CURL_STATIC_LIBS}]")
       ELSE()
       	SET(RET 1)
       ENDIF()
 
-      IF(${RET} EQUAL 0)
+      IF(RET EQUAL 0 AND CURL_STATIC_LIBS)
         MESSAGE(STATUS "USING CURL STATIC LIBS: ${CURL_STATIC_LIBS}")
       	SET(CURL_LIBRARIES "-Bstatic ${CURL_STATIC_LIBS}")
       ELSE()

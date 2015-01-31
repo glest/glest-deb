@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_CONFIG_H_
 #define _GLEST_GAME_CONFIG_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "properties.h"
 #include <vector>
 #include "game_constants.h"
@@ -31,14 +36,17 @@ using Shared::Util::Properties;
 enum ConfigType {
     cfgMainGame,
     cfgUserGame,
+    cfgTempGame,
     cfgMainKeys,
-    cfgUserKeys
+    cfgUserKeys,
+    cfgTempKeys
 };
 
 class Config {
 private:
 
 	std::pair<Properties,Properties> properties;
+	Properties tempProperties;
 	std::pair<ConfigType,ConfigType> cfgType;
 	std::pair<string,string> fileNameParameter;
 	std::pair<string,string> fileName;
@@ -58,6 +66,10 @@ public:
 
     static const char *ACTIVE_MOD_PROPERTY_NAME;
 
+    static const char *colorPicking;
+    static const char *selectBufPicking;
+    static const char *frustumPicking;
+
 protected:
 
 	Config();
@@ -65,6 +77,7 @@ protected:
 	bool tryCustomPath(std::pair<ConfigType,ConfigType> &type, std::pair<string,string> &file, string custom_path);
 	static void CopyAll(Config *src,Config *dest);
 	vector<pair<string,string> > getPropertiesFromContainer(const Properties &propertiesObj) const;
+	static bool replaceFileWithLocalFile(const vector<string> &dirList, string fileNamePart, string &resultToReplace);
 
 public:
 
@@ -86,10 +99,10 @@ public:
 	//char getCharKey(const char *key) const;
 	SDLKey getSDLKey(const char *key) const;
 
-	void setInt(const string &key, int value);
-	void setBool(const string &key, bool value);
-	void setFloat(const string &key, float value);
-	void setString(const string &key, const string &value);
+	void setInt(const string &key, int value, bool tempBuffer=false);
+	void setBool(const string &key, bool value, bool tempBuffer=false);
+	void setFloat(const string &key, float value, bool tempBuffer=false);
+	void setString(const string &key, const string &value, bool tempBuffer=false);
 
     vector<string> getPathListForType(PathType type, string scenarioDir = "");
 
@@ -106,6 +119,10 @@ public:
 
 	static string getCustomRuntimeProperty(string key) 				{ return customRuntimeProperties[key]; }
 	static void setCustomRuntimeProperty(string key, string value) 	{ customRuntimeProperties[key] = value; }
+
+	static string findValidLocalFileFromPath(string fileName);
+
+	static string getMapPath(const string &mapName, string scenarioDir="", bool errorOnNotFound=true);
 };
 
 }}//end namespace

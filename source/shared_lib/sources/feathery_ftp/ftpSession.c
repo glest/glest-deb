@@ -183,9 +183,8 @@ ftpSession_S* ftpGetSession(int id)
 LOCAL int normalizePath(char* path)
 {
     char *in;
-    char *r = NULL;
+    char *r = path;
 
-    r = path;
     in = path;
 
     while((in = strchr(in, '/')))
@@ -258,8 +257,9 @@ const char* ftpGetRealPath(int id, const char* path, int normalize)
 	int ftpRootLen;
 	int len;
 
-	strcpy(ftpRoot,ftpGetRoot(sessions[id].userId, &len));
-	ftpRootLen = strlen(ftpRoot);
+	const char *ftp_rootget = ftpGetRoot(sessions[id].userId, &len);
+	snprintf(ftpRoot,2047,"%s",ftp_rootget);
+	ftpRootLen = (int)strlen(ftpRoot);
 	if(ftpRootLen > 0 && ftpRoot[ftpRootLen-1] != '/') {
 		strcat(ftpRoot,"/");
 	}
@@ -314,7 +314,7 @@ if(VERBOSE_MODE_ENABLED) printf("ftpChangeDir path [%s] realPath [%s] sessions[i
 	if(ftpStat(realPath, &fileInfo) || (fileInfo.type != TYPE_DIR)) // directory accessible?
 		return -2;
 
-	strncpy(sessions[id].workingDir, &realPath[len], MAX_PATH_LEN); // apply path
+	strncpy(sessions[id].workingDir, &realPath[len], MAX_PATH_LEN-1); // apply path
 	if(sessions[id].workingDir[0] == '\0')
 		strcpy(sessions[id].workingDir, "/");
 
@@ -324,7 +324,7 @@ if(VERBOSE_MODE_ENABLED) printf("ftpChangeDir path [%s] realPath [%s] NEW sessio
 }
 
 /**
- *  @todo documentation
+ *  Open an ftp transmission
  */
 void ftpOpenTransmission(int id, operation_E op, void* fsHandle, socket_t dataSocket, uint32_t fileSize)
 {
@@ -336,7 +336,7 @@ void ftpOpenTransmission(int id, operation_E op, void* fsHandle, socket_t dataSo
 }
 
 /**
- *  @todo documentation
+ *  Close an ftp transmission
  */
 void ftpCloseTransmission(int id)
 {
@@ -367,7 +367,7 @@ void ftpCloseTransmission(int id)
 }
 
 /**
- *  @todo documentation
+ *  Get the active transaction count
  */
 int ftpGetActiveTransCnt(void)
 {

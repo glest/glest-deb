@@ -28,7 +28,7 @@
 
 namespace Glest{ namespace Game{
 
-using namespace Shared::Util;
+using namespace ::Shared::Util;
 
 struct FormatString {
 	void operator()(string &s) {
@@ -84,53 +84,59 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 	keyButtonsToRender		= listBoxLength / keyButtonsLineHeight;
 	labelWidth				= 5;
 	keyButtonsXBase			= 0;
+	modMenuState            = mmst_None;
+	oldMenuState            = mmst_None;
 
 	int installButtonYPos = scrollListsYPos-listBoxLength-20;
 
 	int returnLineY = 80;
+	enableMapPreview = config.getBool("MapPreview","true");
+	validMapPreview = false;
+    mapPreviewTexture=NULL;
 
 	//create
 	techInfoXPos = 10;
 	keyTechScrollBarTitle1.registerGraphicComponent(containerName,"keyTechScrollBarTitle1");
 	keyTechScrollBarTitle1.init(techInfoXPos,scrollListsYPos + 25,labelWidth,20);
-	keyTechScrollBarTitle1.setText(lang.get("TechTitle1"));
+	keyTechScrollBarTitle1.setText(lang.getString("TechTitle1"));
 	keyTechScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyTechScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 	keyTechScrollBarTitle2.registerGraphicComponent(containerName,"keyTechScrollBarTitle2");
 	keyTechScrollBarTitle2.init(techInfoXPos + 200,scrollListsYPos + 25,labelWidth,20);
-	keyTechScrollBarTitle2.setText(lang.get("TechTitle2"));
+	keyTechScrollBarTitle2.setText(lang.getString("TechTitle2"));
 	keyTechScrollBarTitle2.setFont(CoreData::getInstance().getMenuFontNormal());
 	keyTechScrollBarTitle2.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
 	mapInfoXPos = 270;
 	keyMapScrollBarTitle1.registerGraphicComponent(containerName,"keyMapScrollBarTitle1");
 	keyMapScrollBarTitle1.init(mapInfoXPos,scrollListsYPos + 25,labelWidth,20);
-	keyMapScrollBarTitle1.setText(lang.get("MapTitle1"));
+	keyMapScrollBarTitle1.setText(lang.getString("MapTitle1"));
 	keyMapScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyMapScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 	keyMapScrollBarTitle2.registerGraphicComponent(containerName,"keyMapScrollBarTitle2");
 	keyMapScrollBarTitle2.init(mapInfoXPos + 200,scrollListsYPos + 25,labelWidth,20);
-	keyMapScrollBarTitle2.setText(lang.get("MapTitle2"));
+	keyMapScrollBarTitle2.setText(lang.getString("MapTitle2"));
 	keyMapScrollBarTitle2.setFont(CoreData::getInstance().getMenuFontNormal());
 	keyMapScrollBarTitle2.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
 	tilesetInfoXPos = 530;
 	keyTilesetScrollBarTitle1.registerGraphicComponent(containerName,"keyTilesetScrollBarTitle1");
 	keyTilesetScrollBarTitle1.init(tilesetInfoXPos,scrollListsYPos + 25,labelWidth,20);
-	keyTilesetScrollBarTitle1.setText(lang.get("TilesetTitle1"));
+	keyTilesetScrollBarTitle1.setText(lang.getString("TilesetTitle1"));
 	keyTilesetScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyTilesetScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
+
 
 	scenarioInfoXPos = 760;
 	keyScenarioScrollBarTitle1.registerGraphicComponent(containerName,"keyScenarioScrollBarTitle1");
 	keyScenarioScrollBarTitle1.init(scenarioInfoXPos,scrollListsYPos + 25,labelWidth,20);
-	keyScenarioScrollBarTitle1.setText(lang.get("ScenarioTitle1"));
+	keyScenarioScrollBarTitle1.setText(lang.getString("ScenarioTitle1"));
 	keyScenarioScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyScenarioScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 
 	mainMessageBoxState = ftpmsg_None;
     mainMessageBox.registerGraphicComponent(containerName,"mainMessageBox");
-	mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
+	mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
 	mainMessageBox.setEnabled(false);
 
 	lineHorizontal.init(0,installButtonYPos-60);
@@ -143,9 +149,15 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 	modDescrLabel.setWordWrap(true);
 	modDescrLabel.setText("description is empty");
 
+	pleaseWaitLabel.registerGraphicComponent(containerName,"pleaseWaitLabel");
+	pleaseWaitLabel.init(50,installButtonYPos-120,450,20);
+	pleaseWaitLabel.setText("");
+	pleaseWaitLabel.setFont(CoreData::getInstance().getMenuFontBig());
+	pleaseWaitLabel.setFont3D(CoreData::getInstance().getMenuFontBig3D());
+
 	buttonReturn.registerGraphicComponent(containerName,"buttonReturn");
 	buttonReturn.init(800, returnLineY - 30, 125);
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
 	lineVerticalReturn.init(buttonReturn.getX() - 10, returnLineY-80, 5, 81);
 	lineVerticalReturn.setHorizontal(false);
@@ -156,7 +168,7 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 	int legendButtonY= buttonLineDownY-30;
 	buttonInstalled.registerGraphicComponent(containerName,"buttonInstalled");
 	buttonInstalled.init(techInfoXPos, legendButtonY, 200);
-	buttonInstalled.setText(lang.get("ModInstalled"));
+	buttonInstalled.setText(lang.getString("ModInstalled"));
 	buttonInstalled.setUseCustomTexture(true);
 	buttonInstalled.setCustomTexture(CoreData::getInstance().getOnServerInstalledTexture());
 	buttonInstalled.setEnabled(false);
@@ -165,48 +177,48 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 	buttonAvailable.init(tilesetInfoXPos, legendButtonY, 200);
 	buttonAvailable.setUseCustomTexture(true);
 	buttonAvailable.setCustomTexture(CoreData::getInstance().getOnServerTexture());
-	buttonAvailable.setText(lang.get("ModAvailable"));
+	buttonAvailable.setText(lang.getString("ModAvailable"));
 
 	buttonOnlyLocal.registerGraphicComponent(containerName,"buttonOnlyLocal");
 	buttonOnlyLocal.init(mapInfoXPos, legendButtonY, 200);
 	buttonOnlyLocal.setUseCustomTexture(true);
 	buttonOnlyLocal.setCustomTexture(CoreData::getInstance().getNotOnServerTexture());
-	buttonOnlyLocal.setText(lang.get("ModOnlyLocal"));
+	buttonOnlyLocal.setText(lang.getString("ModOnlyLocal"));
 
 	buttonConflict.registerGraphicComponent(containerName,"buttonConflict");
 	buttonConflict.init(scenarioInfoXPos, legendButtonY, 200);
 	buttonConflict.setUseCustomTexture(true);
 	buttonConflict.setCustomTexture(CoreData::getInstance().getOnServerDifferentTexture());
-	buttonConflict.setText(lang.get("ModHasConflict"));
+	buttonConflict.setText(lang.getString("ModHasConflict"));
 
 
 	buttonInstallTech.registerGraphicComponent(containerName,"buttonInstallTech");
 	buttonInstallTech.init(techInfoXPos + 40, buttonLineUpY, 125);
-	buttonInstallTech.setText(lang.get("Install"));
+	buttonInstallTech.setText(lang.getString("Install"));
 	buttonRemoveTech.registerGraphicComponent(containerName,"buttonRemoveTech");
 	buttonRemoveTech.init(techInfoXPos + 40, buttonLineDownY, 125);
-	buttonRemoveTech.setText(lang.get("Remove"));
+	buttonRemoveTech.setText(lang.getString("Remove"));
 
 	buttonInstallTileset.registerGraphicComponent(containerName,"buttonInstallTileset");
 	buttonInstallTileset.init(tilesetInfoXPos + 20, buttonLineUpY, 125);
-	buttonInstallTileset.setText(lang.get("Install"));
+	buttonInstallTileset.setText(lang.getString("Install"));
 	buttonRemoveTileset.registerGraphicComponent(containerName,"buttonRemoveTileset");
 	buttonRemoveTileset.init(tilesetInfoXPos + 20, buttonLineDownY, 125);
-	buttonRemoveTileset.setText(lang.get("Remove"));
+	buttonRemoveTileset.setText(lang.getString("Remove"));
 
 	buttonInstallMap.registerGraphicComponent(containerName,"buttonInstallMap");
 	buttonInstallMap.init(mapInfoXPos + 40, buttonLineUpY, 125);
-	buttonInstallMap.setText(lang.get("Install"));
+	buttonInstallMap.setText(lang.getString("Install"));
 	buttonRemoveMap.registerGraphicComponent(containerName,"buttonRemoveMap");
 	buttonRemoveMap.init(mapInfoXPos + 40, buttonLineDownY, 125);
-	buttonRemoveMap.setText(lang.get("Remove"));
+	buttonRemoveMap.setText(lang.getString("Remove"));
 
 	buttonInstallScenario.registerGraphicComponent(containerName,"buttonInstallScenario");
 	buttonInstallScenario.init(scenarioInfoXPos + 20, buttonLineUpY, 125);
-	buttonInstallScenario.setText(lang.get("Install"));
+	buttonInstallScenario.setText(lang.getString("Install"));
 	buttonRemoveScenario.registerGraphicComponent(containerName,"buttonRemoveScenario");
 	buttonRemoveScenario.init(scenarioInfoXPos + 20, buttonLineDownY, 125);
-	buttonRemoveScenario.setText(lang.get("Remove"));
+	buttonRemoveScenario.setText(lang.getString("Remove"));
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -238,8 +250,9 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	// Start http meta data thread
+	static string mutexOwnerId = string(extractFileFromDirectoryPath(__FILE__).c_str()) + string("_") + intToStr(__LINE__);
 	modHttpServerThread = new SimpleTaskThread(this,0,200);
-	modHttpServerThread->setUniqueID(__FILE__);
+	modHttpServerThread->setUniqueID(mutexOwnerId);
 	modHttpServerThread->start();
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -290,11 +303,28 @@ MenuStateMods::MenuStateMods(Program *program, MainMenu *mainMenu) :
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+	console.setOnlyChatMessagesInStoredLines(false);
+
+	// Get path to temp files
+	string tempFilePath = "temp/";
+	if(getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) != "") {
+		tempFilePath = getGameReadWritePath(GameConstants::path_logs_CacheLookupKey) + tempFilePath;
+	}
+	else {
+        string userData = config.getString("UserData_Root","");
+        if(userData != "") {
+        	endPathWithSlash(userData);
+        }
+        tempFilePath = userData + tempFilePath;
+	}
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Temp files path [%s]\n",tempFilePath.c_str());
+
 	ftpClientThread = new FTPClientThread(-1,"",
 			mapsPath,tilesetsPath,techtreesPath,scenariosPath,
 			this,fileArchiveExtension,fileArchiveExtractCommand,
 			fileArchiveExtractCommandParameters,
-			fileArchiveExtractCommandSuccessResult);
+			fileArchiveExtractCommandSuccessResult,
+			tempFilePath);
 	ftpClientThread->start();
 
 
@@ -307,58 +337,62 @@ void MenuStateMods::reloadUI() {
 	Lang &lang= Lang::getInstance();
 
 	console.resetFonts();
-	keyTechScrollBarTitle1.setText(lang.get("TechTitle1"));
+	keyTechScrollBarTitle1.setText(lang.getString("TechTitle1"));
 	keyTechScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyTechScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
-	keyTechScrollBarTitle2.setText(lang.get("TechTitle2"));
+	keyTechScrollBarTitle2.setText(lang.getString("TechTitle2"));
 	keyTechScrollBarTitle2.setFont(CoreData::getInstance().getMenuFontNormal());
 	keyTechScrollBarTitle2.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
-	keyMapScrollBarTitle1.setText(lang.get("MapTitle1"));
+	keyMapScrollBarTitle1.setText(lang.getString("MapTitle1"));
 	keyMapScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyMapScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
-	keyMapScrollBarTitle2.setText(lang.get("MapTitle2"));
+	keyMapScrollBarTitle2.setText(lang.getString("MapTitle2"));
 	keyMapScrollBarTitle2.setFont(CoreData::getInstance().getMenuFontNormal());
 	keyMapScrollBarTitle2.setFont3D(CoreData::getInstance().getMenuFontNormal3D());
 
-	keyTilesetScrollBarTitle1.setText(lang.get("TilesetTitle1"));
+	keyTilesetScrollBarTitle1.setText(lang.getString("TilesetTitle1"));
 	keyTilesetScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyTilesetScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 
-	keyScenarioScrollBarTitle1.setText(lang.get("ScenarioTitle1"));
+	pleaseWaitLabel.setText("");
+	pleaseWaitLabel.setFont(CoreData::getInstance().getMenuFontBig());
+	pleaseWaitLabel.setFont3D(CoreData::getInstance().getMenuFontBig3D());
+
+	keyScenarioScrollBarTitle1.setText(lang.getString("ScenarioTitle1"));
 	keyScenarioScrollBarTitle1.setFont(CoreData::getInstance().getMenuFontBig());
 	keyScenarioScrollBarTitle1.setFont3D(CoreData::getInstance().getMenuFontBig3D());
 
-	mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
+	mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
 
 	modDescrLabel.setText("description is empty");
 
-	buttonReturn.setText(lang.get("Return"));
+	buttonReturn.setText(lang.getString("Return"));
 
-	buttonInstalled.setText(lang.get("ModInstalled"));
+	buttonInstalled.setText(lang.getString("ModInstalled"));
 
-	buttonAvailable.setText(lang.get("ModAvailable"));
+	buttonAvailable.setText(lang.getString("ModAvailable"));
 
-	buttonOnlyLocal.setText(lang.get("ModOnlyLocal"));
+	buttonOnlyLocal.setText(lang.getString("ModOnlyLocal"));
 
-	buttonConflict.setText(lang.get("ModHasConflict"));
+	buttonConflict.setText(lang.getString("ModHasConflict"));
 
-	buttonInstallTech.setText(lang.get("Install"));
-	buttonRemoveTech.setText(lang.get("Remove"));
+	buttonInstallTech.setText(lang.getString("Install"));
+	buttonRemoveTech.setText(lang.getString("Remove"));
 
-	buttonInstallTileset.setText(lang.get("Install"));
-	buttonRemoveTileset.setText(lang.get("Remove"));
+	buttonInstallTileset.setText(lang.getString("Install"));
+	buttonRemoveTileset.setText(lang.getString("Remove"));
 
-	buttonInstallMap.setText(lang.get("Install"));
-	buttonRemoveMap.setText(lang.get("Remove"));
+	buttonInstallMap.setText(lang.getString("Install"));
+	buttonRemoveMap.setText(lang.getString("Remove"));
 
-	buttonInstallScenario.setText(lang.get("Install"));
-	buttonRemoveScenario.setText(lang.get("Remove"));
+	buttonInstallScenario.setText(lang.getString("Install"));
+	buttonRemoveScenario.setText(lang.getString("Remove"));
 
 	GraphicComponent::reloadFontsForRegisterGraphicComponents(containerName);
 }
 
-void MenuStateMods::simpleTask(BaseThread *callingThread) {
+void MenuStateMods::simpleTask(BaseThread *callingThread,void *userdata) {
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
@@ -378,8 +412,8 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 	bool findArchive = executeShellCommand(fileArchiveExtractCommand,expectedResult);
 	if(findArchive == false) {
 		mainMessageBoxState = ftpmsg_None;
-		mainMessageBox.init(lang.get("Ok"),450);
-		showMessageBox(lang.get("ModRequires7z"), lang.get("Notice"), true);
+		mainMessageBox.init(lang.getString("Ok"),450);
+		showMessageBox(lang.getString("ModRequires7z"), lang.getString("Notice"), true);
 	}
 
 	std::string techsMetaData = "";
@@ -387,16 +421,21 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 	std::string mapsMetaData = "";
 	std::string scenariosMetaData = "";
 
+	modMenuState=mmst_Loading;
+
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	if(config.getString("Masterserver","") != "") {
 		string baseURL = config.getString("Masterserver");
+		string phpVersionParam = config.getString("phpVersionParam","?version=0.1");
+		string playerUUID = "&uuid=" + SystemFlags::escapeURL(Config::getInstance().getString("PlayerId",""));
+		string gameVersion = "&glestVersion=" + SystemFlags::escapeURL(glestVersionString);
 
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] About to call first http url, base [%s]..\n",__FILE__,__FUNCTION__,__LINE__,baseURL.c_str());
 
 		CURL *handle = SystemFlags::initHTTP();
 		CURLcode curlResult = CURLE_OK;
-		techsMetaData = SystemFlags::getHTTP(baseURL + "showTechsForGlest.php",handle,-1,&curlResult);
+		techsMetaData = SystemFlags::getHTTP(baseURL + "showTechsForGlest.php"+phpVersionParam+gameVersion+playerUUID,handle,-1,&curlResult);
 		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("techsMetaData [%s] curlResult = %d\n",techsMetaData.c_str(),curlResult);
 
 	    if(callingThread->getQuitStatus() == true || safeMutexThreadOwner.isValidMutex() == false) {
@@ -406,8 +445,8 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 
 	    if(curlResult != CURLE_OK) {
 			string curlError = curl_easy_strerror(curlResult);
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModErrorGettingServerData").c_str(),curlError.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModErrorGettingServerData").c_str(),curlError.c_str());
 			console.addLine(string("#1 ") + szBuf,true);
 	    }
 
@@ -415,7 +454,7 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 			(curlResult != CURLE_COULDNT_RESOLVE_HOST &&
 			 curlResult != CURLE_COULDNT_CONNECT)) {
 
-			tilesetsMetaData = SystemFlags::getHTTP(baseURL + "showTilesetsForGlest.php",handle,-1,&curlResult);
+			tilesetsMetaData = SystemFlags::getHTTP(baseURL + "showTilesetsForGlest.php"+phpVersionParam+gameVersion,handle,-1,&curlResult);
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("tilesetsMetaData [%s]\n",tilesetsMetaData.c_str());
 
 		    if(callingThread->getQuitStatus() == true || safeMutexThreadOwner.isValidMutex() == false) {
@@ -425,12 +464,12 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 
 		    if(curlResult != CURLE_OK) {
 				string curlError = curl_easy_strerror(curlResult);
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModErrorGettingServerData").c_str(),curlError.c_str());
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModErrorGettingServerData").c_str(),curlError.c_str());
 				console.addLine(string("#2 ") + szBuf,true);
 		    }
 
-			mapsMetaData = SystemFlags::getHTTP(baseURL + "showMapsForGlest.php",handle,-1,&curlResult);
+			mapsMetaData = SystemFlags::getHTTP(baseURL + "showMapsForGlest.php"+phpVersionParam+gameVersion,handle,-1,&curlResult);
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("mapsMetaData [%s]\n",mapsMetaData.c_str());
 
 		    if(callingThread->getQuitStatus() == true || safeMutexThreadOwner.isValidMutex() == false) {
@@ -440,25 +479,25 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 
 		    if(curlResult != CURLE_OK) {
 				string curlError = curl_easy_strerror(curlResult);
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModErrorGettingServerData").c_str(),curlError.c_str());
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModErrorGettingServerData").c_str(),curlError.c_str());
 				console.addLine(string("#3 ") + szBuf,true);
 		    }
 
-			scenariosMetaData = SystemFlags::getHTTP(baseURL + "showScenariosForGlest.php",handle,-1,&curlResult);
+			scenariosMetaData = SystemFlags::getHTTP(baseURL + "showScenariosForGlest.php"+phpVersionParam+gameVersion,handle,-1,&curlResult);
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("scenariosMetaData [%s]\n",scenariosMetaData.c_str());
 
 		    if(curlResult != CURLE_OK) {
 				string curlError = curl_easy_strerror(curlResult);
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModErrorGettingServerData").c_str(),curlError.c_str());
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModErrorGettingServerData").c_str(),curlError.c_str());
 				console.addLine(string("#4 ") + szBuf,true);
 		    }
 		}
 		SystemFlags::cleanupHTTP(&handle);
 	}
 	else {
-        console.addLine(lang.get("MasterServerMissing"),true);
+        console.addLine(lang.getString("MasterServerMissing"),true);
 	}
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -471,6 +510,8 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
     if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	tilesetListRemote.clear();
 	Tokenize(tilesetsMetaData,tilesetListRemote,"\n");
+
+	modMenuState=mmst_CalculatingCRC;
 
 	getTilesetsLocalList();
 	for(unsigned int i=0; i < tilesetListRemote.size(); i++) {
@@ -589,7 +630,7 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 			button->setCustomTexture(CoreData::getInstance().getCustomTexture());
 			keyTechButtons.push_back(button);
 
-			int techFactionCount = factions.size();
+			int techFactionCount = (int)factions.size();
 			GraphicLabel *label=new GraphicLabel();
 			label->init(techInfoXPos + keyButtonsWidth+10,keyButtonsYBase,labelWidth,20);
 			label->setText(intToStr(techFactionCount));
@@ -744,27 +785,29 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 
 	keyTilesetScrollBar.init(tilesetInfoXPos + keyButtonsWidth,scrollListsYPos-listBoxLength+keyButtonsLineHeight,false,200,20);
 	keyTilesetScrollBar.setLength(listBoxLength);
-	keyTilesetScrollBar.setElementCount(keyTilesetButtons.size());
+	keyTilesetScrollBar.setElementCount((int)keyTilesetButtons.size());
 	keyTilesetScrollBar.setVisibleSize(keyButtonsToRender);
 	keyTilesetScrollBar.setVisibleStart(0);
 
 	keyTechScrollBar.init(techInfoXPos + keyButtonsWidth + labelWidth + 20,scrollListsYPos-listBoxLength+keyButtonsLineHeight,false,200,20);
 	keyTechScrollBar.setLength(listBoxLength);
-	keyTechScrollBar.setElementCount(keyTechButtons.size());
+	keyTechScrollBar.setElementCount((int)keyTechButtons.size());
 	keyTechScrollBar.setVisibleSize(keyButtonsToRender);
 	keyTechScrollBar.setVisibleStart(0);
 
 	keyMapScrollBar.init(mapInfoXPos + keyButtonsWidth + labelWidth + 20,scrollListsYPos-listBoxLength+keyButtonsLineHeight,false,200,20);
 	keyMapScrollBar.setLength(listBoxLength);
-	keyMapScrollBar.setElementCount(keyMapButtons.size());
+	keyMapScrollBar.setElementCount((int)keyMapButtons.size());
 	keyMapScrollBar.setVisibleSize(keyButtonsToRender);
 	keyMapScrollBar.setVisibleStart(0);
 
 	keyScenarioScrollBar.init(scenarioInfoXPos + keyButtonsWidth,scrollListsYPos-listBoxLength+keyButtonsLineHeight,false,200,20);
 	keyScenarioScrollBar.setLength(listBoxLength);
-	keyScenarioScrollBar.setElementCount(keyScenarioButtons.size());
+	keyScenarioScrollBar.setElementCount((int)keyScenarioButtons.size());
 	keyScenarioScrollBar.setVisibleSize(keyButtonsToRender);
 	keyScenarioScrollBar.setVisibleStart(0);
+
+	modMenuState=mmst_None;
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -776,51 +819,14 @@ void MenuStateMods::simpleTask(BaseThread *callingThread) {
 }
 
 MapInfo MenuStateMods::loadMapInfo(string file) {
-
-
-/*
-	Lang &lang= Lang::getInstance();
-
-	MapInfo mapInfo;
-	//memset(&mapInfo,0,sizeof(mapInfo));
-	try{
-#ifdef WIN32
-		FILE *f= _wfopen(utf8_decode(file).c_str(), L"rb");
-#else
-		FILE *f= fopen(file.c_str(), "rb");
-#endif
-		if(f != NULL) {
-
-			MapFileHeader header;
-			size_t readBytes = fread(&header, sizeof(MapFileHeader), 1, f);
-
-			mapInfo.size.x= header.width;
-			mapInfo.size.y= header.height;
-			mapInfo.players= header.maxFactions;
-
-			mapInfo.desc= lang.get("MaxPlayers")+": "+intToStr(mapInfo.players)+"\n";
-			mapInfo.desc+=lang.get("Size")+": "+intToStr(mapInfo.size.x) + " x " + intToStr(mapInfo.size.y);
-
-			fclose(f);
-		}
-	}
-	catch(exception &e) {
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s] loading map [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what(),file.c_str());
-		throw runtime_error("Error loading map file: [" + file + "] msg: " + e.what());
-	}
-
-	return mapInfo;
-*/
-
-	MapInfo mapInfo;
-	//memset(&mapInfo,0,sizeof(mapInfo));
 	try{
 		Lang &lang= Lang::getInstance();
-		MapPreview::loadMapInfo(file, &mapInfo, lang.get("MaxPlayers"),lang.get("Size"),true);
+		// Not painting properly so this is on hold
+		MapPreview::loadMapInfo(file, &mapInfo, lang.getString("MaxPlayers"),lang.getString("Size"),true);
 	}
 	catch(exception &e) {
 		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s] loading map [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what(),file.c_str());
-		throw runtime_error("Error loading map file: [" + file + "] msg: " + e.what());
+		throw megaglest_runtime_error("Error loading map file: [" + file + "] msg: " + e.what());
 	}
 
 	return mapInfo;
@@ -837,21 +843,13 @@ void MenuStateMods::getTechsLocalList() {
 		string path = config.getPathListForType(ptTechs)[1];
 		endPathWithSlash(path);
 		findDirs(path, techTreeFilesUserData, false, false);
-
-		//for(unsigned int i = 0; i < techTreeFilesUserData.size(); ++i) {
-			//string itemPath = config.getPathListForType(ptTechs,"")[1] + "/" + techTreeFilesUserData[i] + string("/*");
-			//bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
-			//mapCRCUpdateList[itemPath] = getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL,forceRefresh);
-			//mapCRCUpdateList[itemPath] = getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL,false);
-			//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC for techtree [%s] is [%d]\n",__FILE__,__FUNCTION__,__LINE__,itemPath.c_str(),mapCRCUpdateList[itemPath]);
-		//}
 	}
 }
 
 string MenuStateMods::refreshTechModInfo(string techInfo) {
 	std::vector<std::string> techInfoList;
 	Tokenize(techInfo,techInfoList,"|");
-	if(techInfoList.size() >= 5) {
+	if(techInfoList.size() >= 6) {
 		Config &config = Config::getInstance();
 		ModInfo modinfo;
 		modinfo.name = techInfoList[0];
@@ -861,11 +859,19 @@ string MenuStateMods::refreshTechModInfo(string techInfo) {
 		modinfo.url = techInfoList[4];
 		modinfo.imageUrl = techInfoList[5];
 		modinfo.type = mt_Techtree;
+
 		string itemPath = config.getPathListForType(ptTechs,"")[1] + "/" + modinfo.name + string("/*");
-		if(itemPath.empty()==false){
+		if(itemPath.empty() == false) {
 		   bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
-		   int crc=getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
-		   modinfo.localCRC=intToStr(crc);
+		   uint32 crc = getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+		   if(crc == 0) {
+				itemPath = config.getPathListForType(ptTechs,"")[0] + "/" + modinfo.name + string("/*");
+				if(itemPath.empty() == false) {
+				   forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
+				   crc = getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+				}
+		   }
+		   modinfo.localCRC=uIntToStr(crc);
 		   //printf("itemPath='%s' remote crc:'%s'  local crc:'%s'   crc='%d' \n",itemPath.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str(),crc);
 		}
 		else {
@@ -879,7 +885,7 @@ string MenuStateMods::refreshTechModInfo(string techInfo) {
 
 void MenuStateMods::refreshTechs() {
 	getTechsLocalList();
-	for(int i=0; i < techListRemote.size(); i++) {
+	for(int i=0; i < (int)techListRemote.size(); i++) {
 		refreshTechModInfo(techListRemote[i]);
 	}
 }
@@ -901,7 +907,7 @@ void MenuStateMods::getTilesetsLocalList() {
 string MenuStateMods::refreshTilesetModInfo(string tilesetInfo) {
 	std::vector<std::string> tilesetInfoList;
 	Tokenize(tilesetInfo,tilesetInfoList,"|");
-	if(tilesetInfoList.size() >= 4) {
+	if(tilesetInfoList.size() >= 5) {
 		Config &config = Config::getInstance();
 		ModInfo modinfo;
 		modinfo.name = tilesetInfoList[0];
@@ -912,14 +918,25 @@ string MenuStateMods::refreshTilesetModInfo(string tilesetInfo) {
 		modinfo.type = mt_Tileset;
 
 		string itemPath = config.getPathListForType(ptTilesets,"")[1] + "/" + modinfo.name + string("/*");
-		if(itemPath.empty()==false){
+		if(itemPath.empty() == false) {
 		   bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
-		   int crc=getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
-		   modinfo.localCRC=intToStr(crc);
+		   uint32 crc = getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+		   if(crc == 0) {
+				itemPath = config.getPathListForType(ptTilesets,"")[0] + "/" + modinfo.name + string("/*");
+				if(itemPath.empty() == false) {
+				   forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
+				   crc=getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+				}
+		   }
+		   modinfo.localCRC=uIntToStr(crc);
 		   //printf("itemPath='%s' remote crc:'%s'  local crc:'%s'   crc='%d' \n",itemPath.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str(),crc);
+
+		   //printf("#1 refreshTilesetModInfo name [%s] modInfo.crc [%s] modInfo.localCRC [%s]\n",modinfo.name.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str());
 		}
 		else {
 			modinfo.localCRC="";
+
+			//printf("#2 refreshTilesetModInfo name [%s] modInfo.crc [%s] modInfo.localCRC [%s]\n",modinfo.name.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str());
 		}
 
 		tilesetCacheList[modinfo.name] = modinfo;
@@ -930,7 +947,7 @@ string MenuStateMods::refreshTilesetModInfo(string tilesetInfo) {
 
 void MenuStateMods::refreshTilesets() {
 	getTilesetsLocalList();
-	for(int i=0; i < tilesetListRemote.size(); i++) {
+	for(int i=0; i < (int)tilesetListRemote.size(); i++) {
 		refreshTilesetModInfo(tilesetListRemote[i]);
 	}
 }
@@ -978,7 +995,7 @@ void MenuStateMods::getMapsLocalList() {
   	vector<string> invalidMapList;
   	vector<string> allMaps = MapPreview::findAllValidMaps(pathList,scenarioDir,false,false,&invalidMapList);
 	if (allMaps.empty()) {
-        throw runtime_error("No maps were found!");
+        throw megaglest_runtime_error("No maps were found!");
 	}
 	vector<string> results;
 	copy(allMaps.begin(), allMaps.end(), std::back_inserter(results));
@@ -990,7 +1007,7 @@ void MenuStateMods::getMapsLocalList() {
 string MenuStateMods::refreshMapModInfo(string mapInfo) {
 	std::vector<std::string> mapInfoList;
 	Tokenize(mapInfo,mapInfoList,"|");
-	if(mapInfoList.size() >= 5) {
+	if(mapInfoList.size() >= 6) {
 		//Config &config = Config::getInstance();
 		ModInfo modinfo;
 		modinfo.name = mapInfoList[0];
@@ -1016,11 +1033,22 @@ string MenuStateMods::getMapCRC(string mapName) {
 		string itemPath = mappaths[1] + "/" + mapName;
 		if (fileExists(itemPath)){
 			checksum.addFile(itemPath);
-			int crc=checksum.getSum();
-			result=intToStr(crc);
+			uint32 crc=checksum.getSum();
+			result=uIntToStr(crc);
 			//printf("itemPath='%s' modinfo.name='%s' remote crc:'%s'  local crc:'%s'   crc='%d' \n",itemPath.c_str(),modinfo.name.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str(),crc);
 		}
-		else result="";
+		else {
+			itemPath = mappaths[0] + "/" + mapName;
+			if (fileExists(itemPath)){
+				checksum.addFile(itemPath);
+				uint32 crc=checksum.getSum();
+				result=uIntToStr(crc);
+				//printf("itemPath='%s' modinfo.name='%s' remote crc:'%s'  local crc:'%s'   crc='%d' \n",itemPath.c_str(),modinfo.name.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str(),crc);
+			}
+			else {
+				result="";
+			}
+		}
 	}
 	else {
 		result="";
@@ -1030,7 +1058,7 @@ string MenuStateMods::getMapCRC(string mapName) {
 
 void MenuStateMods::refreshMaps() {
 	getMapsLocalList();
-	for(int i=0; i < mapListRemote.size(); i++) {
+	for(int i=0; i < (int)mapListRemote.size(); i++) {
 		refreshMapModInfo(mapListRemote[i]);
 	}
 }
@@ -1052,7 +1080,7 @@ void MenuStateMods::getScenariosLocalList() {
 string MenuStateMods::refreshScenarioModInfo(string scenarioInfo) {
 	std::vector<std::string> scenarioInfoList;
 	Tokenize(scenarioInfo,scenarioInfoList,"|");
-	if(scenarioInfoList.size() >= 4) {
+	if(scenarioInfoList.size() >= 5) {
 		Config &config = Config::getInstance();
 		ModInfo modinfo;
 		modinfo.name = scenarioInfoList[0];
@@ -1063,10 +1091,17 @@ string MenuStateMods::refreshScenarioModInfo(string scenarioInfo) {
 		modinfo.type = mt_Scenario;
 
 		string itemPath = config.getPathListForType(ptScenarios,"")[1] + "/" + modinfo.name + string("/*");
-		if(itemPath.empty()==false){
+		if(itemPath.empty() == false) {
 		   bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
-		   int crc=getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
-		   modinfo.localCRC=intToStr(crc);
+		   uint32 crc = getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+		   if(crc == 0) {
+				itemPath = config.getPathListForType(ptScenarios,"")[0] + "/" + modinfo.name + string("/*");
+				if(itemPath.empty() == false) {
+				   forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
+				   crc = getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh);
+				}
+		   }
+		   modinfo.localCRC=uIntToStr(crc);
 		   //printf(" itemPath='%s' remote crc:'%s'  local crc:'%s'   crc='%d' \n",itemPath.c_str(),modinfo.crc.c_str(),modinfo.localCRC.c_str(),crc);
 		}
 		else {
@@ -1080,7 +1115,7 @@ string MenuStateMods::refreshScenarioModInfo(string scenarioInfo) {
 
 void MenuStateMods::refreshScenarios() {
 	getScenariosLocalList();
-	for(int i=0; i < scenarioListRemote.size(); i++) {
+	for(int i=0; i < (int)scenarioListRemote.size(); i++) {
 		refreshScenarioModInfo(scenarioListRemote[i]);
 	}
 }
@@ -1108,15 +1143,33 @@ void MenuStateMods::cleanUp() {
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 	if(ftpClientThread != NULL) {
-	    ftpClientThread->signalQuit();
-	    ftpClientThread->setCallBackObject(NULL);
-	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
-	    if( ftpClientThread->shutdownAndWait() == true) {
-	    	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
-            delete ftpClientThread;
-	    }
-	    ftpClientThread = NULL;
-	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		ftpClientThread->setCallBackObject(NULL);
+		ftpClientThread->signalQuit();
+		sleep(0);
+		if(ftpClientThread->canShutdown(true) == true &&
+				ftpClientThread->shutdownAndWait() == true) {
+			delete ftpClientThread;
+		}
+		else {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"In [%s::%s %d] Error cannot shutdown ftpClientThread\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+			//SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("%s",szBuf);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"%s",szBuf);
+
+			//publishToMasterserverThread->cleanup();
+		}
+		ftpClientThread = NULL;
+
+//		ftpClientThread->signalQuit();
+//	    ftpClientThread->setCallBackObject(NULL);
+//	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
+//	    if( ftpClientThread->shutdownAndWait() == true) {
+//	    	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
+//            delete ftpClientThread;
+//	    }
+//	    ftpClientThread = NULL;
+//	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	}
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -1125,6 +1178,7 @@ void MenuStateMods::cleanUp() {
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	cleanupPreviewTexture();
+	cleanupMapPreviewTexture();
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
@@ -1188,10 +1242,10 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 
 		if(fileFTPProgressList.empty() == false) {
 			mainMessageBoxState = ftpmsg_Quit;
-			mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadInProgressCancelQuestion").c_str(),fileFTPProgressList.size());
-			showMessageBox(szBuf, lang.get("Question"), true);
+			mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadInProgressCancelQuestion").c_str(),fileFTPProgressList.size());
+			showMessageBox(szBuf, lang.getString("Question"), true);
 		}
 		else {
 			cleanUp();
@@ -1200,12 +1254,12 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
     }
 	else if(mainMessageBox.getEnabled()) {
-		int button= 1;
+		int button= 0;
 		if(mainMessageBox.mouseClick(x, y, button)) {
 			soundRenderer.playFx(coreData.getClickSoundA());
 			mainMessageBox.setEnabled(false);
-			mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-			if(button == 1) {
+			mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+			if(button == 0) {
 			    if(mainMessageBoxState == ftpmsg_Quit) {
 			    	mainMessageBoxState = ftpmsg_None;
 					mainMenu->setState(new MenuStateRoot(program, mainMenu));
@@ -1234,7 +1288,7 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 									delete button;
 									keyMapButtons.erase(keyMapButtons.begin() + i);
 									labelsMap.erase(labelsMap.begin() + i);
-									keyMapScrollBar.setElementCount(keyMapButtons.size());
+									keyMapScrollBar.setElementCount((int)keyMapButtons.size());
 									break;
 								}
 							}
@@ -1283,7 +1337,7 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 								if(button != NULL && button->getText() == selectedTilesetName) {
 									delete button;
 									keyTilesetButtons.erase(keyTilesetButtons.begin() + i);
-									keyTilesetScrollBar.setElementCount(keyTilesetButtons.size());
+									keyTilesetScrollBar.setElementCount((int)keyTilesetButtons.size());
 									break;
 								}
 							}
@@ -1341,7 +1395,7 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 									delete button;
 									keyTechButtons.erase(keyTechButtons.begin() + i);
 									labelsTech.erase(labelsTech.begin() + i);
-									keyTechScrollBar.setElementCount(keyTechButtons.size());
+									keyTechScrollBar.setElementCount((int)keyTechButtons.size());
 									break;
 								}
 							}
@@ -1400,7 +1454,7 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 								if(button != NULL && button->getText() == selectedScenarioName) {
 									delete button;
 									keyScenarioButtons.erase(keyScenarioButtons.begin() + i);
-									keyScenarioScrollBar.setElementCount(keyScenarioButtons.size());
+									keyScenarioScrollBar.setElementCount((int)keyScenarioButtons.size());
 									break;
 								}
 							}
@@ -1441,25 +1495,24 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 	}
 	else if(keyTechScrollBar.mouseClick(x, y)) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-		soundRenderer.playFx(coreData.getClickSoundB());
+		soundRenderer.playFx(coreData.getClickSoundA());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
     }
 	else if(keyTilesetScrollBar.mouseClick(x, y)) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-		soundRenderer.playFx(coreData.getClickSoundB());
+		soundRenderer.playFx(coreData.getClickSoundA());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
     }
 	else if(keyMapScrollBar.mouseClick(x, y)) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-		soundRenderer.playFx(coreData.getClickSoundB());
+		soundRenderer.playFx(coreData.getClickSoundA());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
     }
 	else if(keyScenarioScrollBar.mouseClick(x, y)) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-		soundRenderer.playFx(coreData.getClickSoundB());
+		soundRenderer.playFx(coreData.getClickSoundA());
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
     }
-
 	else if(buttonInstallTech.mouseClick(x, y) && buttonInstallTech.getEnabled()) {
 		soundRenderer.playFx(coreData.getClickSoundB());
 		if(selectedTechName != "") {
@@ -1474,22 +1527,22 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 					Config &config = Config::getInstance();
 					string itemPath = config.getPathListForType(ptTechs,"")[1] + "/" + selectedTechName + string("/*");
 					bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
-					if( strToInt(modInfo.crc) != 0 &&
-						strToInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh)) {
-						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%d]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL));
+					if( strToUInt(modInfo.crc) != 0 &&
+							strToUInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh)) {
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%u]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL));
 
 						mainMessageBoxState = ftpmsg_ReplaceTechtree;
-						mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModLocalRemoteMismatch").c_str(),selectedTechName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModLocalRemoteMismatch").c_str(),selectedTechName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 					else {
 						mainMessageBoxState = ftpmsg_None;
-						mainMessageBox.init(lang.get("Ok"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModTechAlreadyInstalled").c_str(),selectedTechName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Ok"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModTechAlreadyInstalled").c_str(),selectedTechName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 					mapCRCUpdateList[itemPath] = true;
 				}
@@ -1509,8 +1562,8 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectTechToInstall"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectTechToInstall"), lang.getString("Notice"), true);
 		}
 	}
 	else if(buttonRemoveTech.mouseClick(x, y) && buttonRemoveTech.getEnabled()) {
@@ -1520,24 +1573,24 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 			if(alreadyHasTech == true) {
 				mainMessageBoxState = ftpmsg_GetTechtree;
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModRemoveTechConfirm").c_str(),selectedTechName.c_str());
-				showMessageBox(szBuf, lang.get("Question"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModRemoveTechConfirm").c_str(),selectedTechName.c_str());
+				showMessageBox(szBuf, lang.getString("Question"), true);
 			}
 			else {
 				mainMessageBoxState = ftpmsg_None;
-				mainMessageBox.init(lang.get("Ok"),450);
+				mainMessageBox.init(lang.getString("Ok"),450);
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModCannotRemoveTechNotInstalled").c_str(),selectedTechName.c_str());
-				showMessageBox(szBuf, lang.get("Notice"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModCannotRemoveTechNotInstalled").c_str(),selectedTechName.c_str());
+				showMessageBox(szBuf, lang.getString("Notice"), true);
 			}
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
+			mainMessageBox.init(lang.getString("Ok"),450);
 
-			showMessageBox(lang.get("ModSelectTechToRemove"), lang.get("Notice"), true);
+			showMessageBox(lang.getString("ModSelectTechToRemove"), lang.getString("Notice"), true);
 		}
 	}
 
@@ -1555,22 +1608,22 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 					string itemPath = config.getPathListForType(ptTilesets,"")[1] + "/" + selectedTilesetName + string("/*");
 					bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
 
-					if( strToInt(modInfo.crc) != 0 &&
-						strToInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh)) {
-						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%d]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL));
+					if( strToUInt(modInfo.crc) != 0 &&
+						strToUInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL,forceRefresh)) {
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%u] [%s]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, ".xml", NULL),itemPath.c_str());
 
 						mainMessageBoxState = ftpmsg_ReplaceTileset;
-						mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModLocalRemoteMismatch").c_str(),selectedTilesetName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModLocalRemoteMismatch").c_str(),selectedTilesetName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 					else {
 						mainMessageBoxState = ftpmsg_None;
-						mainMessageBox.init(lang.get("Ok"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModTilesetAlreadyInstalled").c_str(),selectedTilesetName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Ok"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModTilesetAlreadyInstalled").c_str(),selectedTilesetName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 				}
 			}
@@ -1589,8 +1642,8 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectTilesetToInstall"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectTilesetToInstall"), lang.getString("Notice"), true);
 		}
 	}
 	else if(buttonRemoveTileset.mouseClick(x, y) && buttonRemoveTileset.getEnabled()) {
@@ -1600,23 +1653,23 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 			if(alreadyHasTileset == true) {
 				mainMessageBoxState = ftpmsg_GetTileset;
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModRemoveTilesetConfirm").c_str(),selectedTilesetName.c_str());
-				showMessageBox(szBuf, lang.get("Question"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModRemoveTilesetConfirm").c_str(),selectedTilesetName.c_str());
+				showMessageBox(szBuf, lang.getString("Question"), true);
 			}
 			else {
 				mainMessageBoxState = ftpmsg_None;
-				mainMessageBox.init(lang.get("Ok"),450);
+				mainMessageBox.init(lang.getString("Ok"),450);
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModCannotRemoveTilesetNotInstalled").c_str(),selectedTilesetName.c_str());
-				showMessageBox(szBuf, lang.get("Notice"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModCannotRemoveTilesetNotInstalled").c_str(),selectedTilesetName.c_str());
+				showMessageBox(szBuf, lang.getString("Notice"), true);
 			}
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectTilesetToRemove"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectTilesetToRemove"), lang.getString("Notice"), true);
 		}
 	}
 
@@ -1630,17 +1683,17 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 					ModInfo &modInfo = mapCacheList[selectedMapName];
 					if( modInfo.crc != modInfo.localCRC ) {
 						mainMessageBoxState = ftpmsg_ReplaceMap;
-						mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModLocalRemoteMismatch").c_str(),selectedMapName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModLocalRemoteMismatch").c_str(),selectedMapName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 					else {
 						mainMessageBoxState = ftpmsg_None;
-						mainMessageBox.init(lang.get("Ok"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModMapAlreadyInstalled").c_str(),selectedMapName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Ok"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModMapAlreadyInstalled").c_str(),selectedMapName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 				}
 			}
@@ -1659,8 +1712,8 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectMapToInstall"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectMapToInstall"), lang.getString("Notice"), true);
 		}
 	}
 	else if(buttonRemoveMap.mouseClick(x, y) && buttonRemoveMap.getEnabled()) {
@@ -1670,23 +1723,23 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 			if(alreadyHasMap == true) {
 				mainMessageBoxState = ftpmsg_GetMap;
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModRemoveMapConfirm").c_str(),selectedMapName.c_str());
-				showMessageBox(szBuf, lang.get("Question"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModRemoveMapConfirm").c_str(),selectedMapName.c_str());
+				showMessageBox(szBuf, lang.getString("Question"), true);
 			}
 			else {
 				mainMessageBoxState = ftpmsg_None;
-				mainMessageBox.init(lang.get("Ok"),450);
+				mainMessageBox.init(lang.getString("Ok"),450);
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModCannotRemoveMapNotInstalled").c_str(),selectedMapName.c_str());
-				showMessageBox(szBuf, lang.get("Notice"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModCannotRemoveMapNotInstalled").c_str(),selectedMapName.c_str());
+				showMessageBox(szBuf, lang.getString("Notice"), true);
 			}
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectMapToRemove"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectMapToRemove"), lang.getString("Notice"), true);
 		}
 	}
 
@@ -1704,22 +1757,22 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 					string itemPath = config.getPathListForType(ptScenarios,"")[1] + "/" + selectedScenarioName + string("/*");
 					bool forceRefresh = (mapCRCUpdateList.find(itemPath) == mapCRCUpdateList.end());
 
-					if( strToInt(modInfo.crc) != 0 &&
-						strToInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL,forceRefresh)) {
-						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%d]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL));
+					if( strToUInt(modInfo.crc) != 0 &&
+						strToUInt(modInfo.crc) != getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL,forceRefresh)) {
+						if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line %d] local CRC [%u]\n",__FILE__,__FUNCTION__,__LINE__,getFolderTreeContentsCheckSumRecursively(itemPath, "", NULL));
 
 						mainMessageBoxState = ftpmsg_ReplaceScenario;
-						mainMessageBox.init(lang.get("Yes"),lang.get("No"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModLocalRemoteMismatch").c_str(),selectedScenarioName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Yes"),lang.getString("No"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModLocalRemoteMismatch").c_str(),selectedScenarioName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 					else {
 						mainMessageBoxState = ftpmsg_None;
-						mainMessageBox.init(lang.get("Ok"),450);
-						char szBuf[1024]="";
-						sprintf(szBuf,lang.get("ModScenarioAlreadyInstalled").c_str(),selectedScenarioName.c_str());
-						showMessageBox(szBuf, lang.get("Notice"), true);
+						mainMessageBox.init(lang.getString("Ok"),450);
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,lang.getString("ModScenarioAlreadyInstalled").c_str(),selectedScenarioName.c_str());
+						showMessageBox(szBuf, lang.getString("Notice"), true);
 					}
 				}
 			}
@@ -1740,8 +1793,8 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectScenarioToInstall"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectScenarioToInstall"), lang.getString("Notice"), true);
 		}
 	}
 	else if(buttonRemoveScenario.mouseClick(x, y) && buttonRemoveScenario.getEnabled()) {
@@ -1751,23 +1804,23 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 			if(alreadyHasScenario == true) {
 				mainMessageBoxState = ftpmsg_GetScenario;
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModRemoveScenarioConfirm").c_str(),selectedScenarioName.c_str());
-				showMessageBox(szBuf, lang.get("Question"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModRemoveScenarioConfirm").c_str(),selectedScenarioName.c_str());
+				showMessageBox(szBuf, lang.getString("Question"), true);
 			}
 			else {
 				mainMessageBoxState = ftpmsg_None;
-				mainMessageBox.init(lang.get("Ok"),450);
+				mainMessageBox.init(lang.getString("Ok"),450);
 
-				char szBuf[1024]="";
-				sprintf(szBuf,lang.get("ModCannotRemoveScenarioNotInstalled").c_str(),selectedScenarioName.c_str());
-				showMessageBox(szBuf, lang.get("Notice"), true);
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,lang.getString("ModCannotRemoveScenarioNotInstalled").c_str(),selectedScenarioName.c_str());
+				showMessageBox(szBuf, lang.getString("Notice"), true);
 			}
 		}
 		else {
 			mainMessageBoxState = ftpmsg_None;
-			mainMessageBox.init(lang.get("Ok"),450);
-			showMessageBox(lang.get("ModSelectScenarioToRemove"), lang.get("Notice"), true);
+			mainMessageBox.init(lang.getString("Ok"),450);
+			showMessageBox(lang.getString("ModSelectScenarioToRemove"), lang.getString("Notice"), true);
 		}
 	}
 
@@ -1786,10 +1839,15 @@ void MenuStateMods::mouseClick(int x, int y, MouseButton mouseButton) {
 						bool remoteHasMap = (mapCacheList.find(mapName) != mapCacheList.end());
 						if(remoteHasMap) {
 							showRemoteDesription(&mapCacheList[selectedMapName]);
+							if(mapCacheList[selectedMapName].localCRC!=""){
+								loadMapPreview(mapName);
+							}
 						}
 						else {
 							showLocalDescription(mapName);
+							loadMapPreview(mapName);
 						}
+
 					}
 					break;
 				}
@@ -1879,6 +1937,12 @@ string MenuStateMods::getPreviewImageFileForMod(const ModInfo *modInfo) {
 	    	endPathWithSlash(userData);
 	    }
 	    string tempPath = userData + "temp/";
+	    if(isdir(tempPath.c_str()) == false) {
+	    	createDirectoryPaths(tempPath);
+	    }
+
+	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("### tempPath [%s] isdir = %d\n",tempPath.c_str(),isdir(tempPath.c_str()));
+
         if(isdir(tempPath.c_str()) == true) {
 			fileName = tempPath;
 			switch(modInfo->type) {
@@ -1906,12 +1970,37 @@ void MenuStateMods::showLocalDescription(string name) {
 	Lang &lang= Lang::getInstance();
 	modInfoSelected=NULL;
 	cleanupPreviewTexture();
-	modDescrLabel.setText(lang.get("ModOnlyLocal")+":\n'"+name+"'");
+	validMapPreview=false;
+	cleanupMapPreviewTexture();
+	modDescrLabel.setText(lang.getString("ModOnlyLocal")+":\n'"+name+"'");
 }
+
+void MenuStateMods::loadMapPreview(string mapName) {
+	Config &config = Config::getInstance();
+	cleanupMapPreviewTexture();
+	vector<string> mapPaths = config.getPathListForType(ptMaps);
+	string &mapPath = mapPaths[1];
+	endPathWithSlash(mapPath);
+	mapPath += mapName;
+	MapInfo mapInfo = loadMapInfo(mapPath);
+	if(enableMapPreview == true) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		mapPreview.loadFromFile(mapPath.c_str());
+
+		//printf("Loading map preview MAP\n");
+		cleanupMapPreviewTexture();
+		validMapPreview=true;
+	}
+}
+
+
 
 void MenuStateMods::showRemoteDesription(ModInfo *modInfo) {
 	//displayModPreviewImage = false;
 	modInfoSelected = modInfo;
+	validMapPreview=false;
+	cleanupMapPreviewTexture();
 
 	string modText = modInfo->description;
 	replaceAll(modText, "\\n", "\n");
@@ -1945,6 +2034,15 @@ void MenuStateMods::showRemoteDesription(ModInfo *modInfo) {
 			}
 			safeMutexFTPProgress.ReleaseLock();
 	    }
+	}
+}
+
+void MenuStateMods::mouseUp(int x, int y, const MouseButton mouseButton){
+	if (mouseButton == mbLeft) {
+		keyTechScrollBar.mouseUp(x, y);
+		keyTilesetScrollBar.mouseUp(x, y);
+		keyMapScrollBar.mouseUp(x, y);
+		keyScenarioScrollBar.mouseUp(x, y);
 	}
 }
 
@@ -2008,6 +2106,22 @@ void MenuStateMods::cleanupPreviewTexture() {
 	modPreviewImage = NULL;
 }
 
+void MenuStateMods::cleanupMapPreviewTexture() {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+	//printf("CLEANUP map preview texture\n");
+	if(mapPreviewTexture != NULL) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+
+		mapPreviewTexture->end();
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		delete mapPreviewTexture;
+		mapPreviewTexture = NULL;
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+}
+
 
 void MenuStateMods::render() {
 	try {
@@ -2045,7 +2159,7 @@ void MenuStateMods::render() {
 
 					if(tempImage != "" && fileExists(tempImage) == true) {
 						cleanupPreviewTexture();
-						modPreviewImage = Renderer::findFactionLogoTexture(tempImage);
+						modPreviewImage = Renderer::findTexture(tempImage);
 					}
 				}
 				if(modPreviewImage != NULL) {
@@ -2120,6 +2234,8 @@ void MenuStateMods::render() {
 						}
 						else {
 							//printf("modInfo.name=%s modInfo.crc=%s modInfo.localCRC=%s\n",modInfo.name.c_str(),modInfo.crc.c_str(),modInfo.localCRC.c_str());
+							//printf("name [%s] modInfo.crc [%s] modInfo.localCRC [%s]\n",modInfo.name.c_str(),modInfo.crc.c_str(),modInfo.localCRC.c_str());
+
 							keyTilesetButtons[i]->setCustomTexture(CoreData::getInstance().getOnServerDifferentTexture());
 						}
 					}
@@ -2186,10 +2302,10 @@ void MenuStateMods::render() {
 		if(keyScenarioScrollBar.getElementCount() != 0) {
 			for(int i = keyScenarioScrollBar.getVisibleStart();
 					i <= keyScenarioScrollBar.getVisibleEnd(); ++i) {
-				if(i >= keyScenarioButtons.size()) {
-					char szBuf[1024]="";
-					sprintf(szBuf,"i >= keyScenarioButtons.size(), i = %d keyScenarioButtons.size() = %d",i,(int)keyScenarioButtons.size());
-					throw runtime_error(szBuf);
+				if(i >= (int)keyScenarioButtons.size()) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"i >= keyScenarioButtons.size(), i = %d keyScenarioButtons.size() = %d",i,(int)keyScenarioButtons.size());
+					throw megaglest_runtime_error(szBuf);
 				}
 				bool alreadyHasScenario = (std::find(scenarioFiles.begin(),scenarioFiles.end(),keyScenarioButtons[i]->getText()) != scenarioFiles.end());
 
@@ -2237,7 +2353,7 @@ void MenuStateMods::render() {
             for(std::map<string,pair<int,string> >::iterator iterMap = fileFTPProgressList.begin();
                 iterMap != fileFTPProgressList.end(); ++iterMap) {
 
-                string progressLabelPrefix = lang.get("ModDownloading") + " " + extractFileFromDirectoryPath(iterMap->first) + " ";
+                string progressLabelPrefix = lang.getString("ModDownloading") + " " + extractFileFromDirectoryPath(iterMap->first) + " ";
                 //if(SystemFlags::VERBOSE_MODE_ENABLED) printf("\nRendering file progress with the following prefix [%s]\n",progressLabelPrefix.c_str());
 
                 if(Renderer::renderText3DEnabled) {
@@ -2271,12 +2387,49 @@ void MenuStateMods::render() {
 		if(mainMessageBox.getEnabled()) {
 			renderer.renderMessageBox(&mainMessageBox);
 		}
+
+		if(modMenuState!=mmst_None) {
+			if(oldMenuState!=modMenuState)
+			{
+				Lang &lang= Lang::getInstance();
+				if(modMenuState== mmst_Loading){
+					pleaseWaitLabel.setText(lang.getString("GettingModlistFromMasterserver"));
+				}
+				else if(modMenuState== mmst_CalculatingCRC){
+					pleaseWaitLabel.setText(lang.getString("PleaseWaitCalculatingCRC"));
+				}
+				oldMenuState=modMenuState;
+			}
+			float anim= GraphicComponent::getAnim();
+			if(anim < 0.5f) {
+				anim = 1.f - anim;
+			}
+			Vec4f colorWithAlpha = Vec4f(ORANGE.x,ORANGE.y,ORANGE.z,anim);
+			renderer.renderLabel(&pleaseWaitLabel,&colorWithAlpha);
+		}
+		if(validMapPreview){
+			if(mapPreviewTexture != NULL) {
+				renderer.renderTextureQuad(5,185,150,150,mapPreviewTexture,1.0f);
+			}
+			if(enableMapPreview && (mapPreview.hasFileLoaded() == true)) {
+
+				int mouseX = mainMenu->getMouseX();
+				int mouseY = mainMenu->getMouseY();
+				int mouse2dAnim = mainMenu->getMouse2dAnim();
+
+				if(mapPreviewTexture == NULL) {
+					renderer.renderMouse2d(mouseX, mouseY, mouse2dAnim);
+					renderer.renderMapPreview(&mapPreview, true, 10, 350, &mapPreviewTexture);
+				}
+			}
+		}
+
 	}
 	catch(const std::exception &ex) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
-		throw runtime_error(szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 }
 
@@ -2290,10 +2443,10 @@ void MenuStateMods::update() {
 	if (keyTechScrollBar.getElementCount() != 0) {
 		for (int i = keyTechScrollBar.getVisibleStart();
 				i <= keyTechScrollBar.getVisibleEnd(); ++i) {
-			if(i >= keyTechButtons.size()) {
-				char szBuf[1024]="";
-				sprintf(szBuf,"i >= keyTechButtons.size(), i = %d, keyTechButtons.size() = %d",i,(int)keyTechButtons.size());
-				throw runtime_error(szBuf);
+			if(i >= (int)keyTechButtons.size()) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"i >= keyTechButtons.size(), i = %d, keyTechButtons.size() = %d",i,(int)keyTechButtons.size());
+				throw megaglest_runtime_error(szBuf);
 			}
 
 			keyTechButtons[i]->setY(keyButtonsYBase - keyButtonsLineHeight * (i
@@ -2307,10 +2460,10 @@ void MenuStateMods::update() {
 	if (keyTilesetScrollBar.getElementCount() != 0) {
 		for (int i = keyTilesetScrollBar.getVisibleStart();
 				i <= keyTilesetScrollBar.getVisibleEnd(); ++i) {
-			if(i >= keyTilesetButtons.size()) {
-				char szBuf[1024]="";
-				sprintf(szBuf,"i >= keyTilesetButtons.size(), i = %d, keyTilesetButtons.size() = %d",i,(int)keyTilesetButtons.size());
-				throw runtime_error(szBuf);
+			if(i >= (int)keyTilesetButtons.size()) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"i >= keyTilesetButtons.size(), i = %d, keyTilesetButtons.size() = %d",i,(int)keyTilesetButtons.size());
+				throw megaglest_runtime_error(szBuf);
 			}
 
 			int yPos = keyButtonsYBase - keyButtonsLineHeight *
@@ -2323,10 +2476,10 @@ void MenuStateMods::update() {
 	if (keyMapScrollBar.getElementCount() != 0) {
 		for (int i = keyMapScrollBar.getVisibleStart();
 				i <= keyMapScrollBar.getVisibleEnd(); ++i) {
-			if(i >= keyMapButtons.size()) {
-				char szBuf[1024]="";
-				sprintf(szBuf,"i >= keyMapButtons.size(), i = %d, keyMapButtons.size() = %d",i,(int)keyMapButtons.size());
-				throw runtime_error(szBuf);
+			if(i >= (int)keyMapButtons.size()) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"i >= keyMapButtons.size(), i = %d, keyMapButtons.size() = %d",i,(int)keyMapButtons.size());
+				throw megaglest_runtime_error(szBuf);
 			}
 
 			keyMapButtons[i]->setY(keyButtonsYBase - keyButtonsLineHeight * (i
@@ -2340,10 +2493,10 @@ void MenuStateMods::update() {
 	if (keyScenarioScrollBar.getElementCount() != 0) {
 		for (int i = keyScenarioScrollBar.getVisibleStart();
 				i <= keyScenarioScrollBar.getVisibleEnd(); ++i) {
-			if(i >= keyScenarioButtons.size()) {
-				char szBuf[1024]="";
-				sprintf(szBuf,"i >= keyScenarioButtons.size(), i = %d, keyScenarioButtons.size() = %d",i,(int)keyScenarioButtons.size());
-				throw runtime_error(szBuf);
+			if(i >= (int)keyScenarioButtons.size()) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"i >= keyScenarioButtons.size(), i = %d, keyScenarioButtons.size() = %d",i,(int)keyScenarioButtons.size());
+				throw megaglest_runtime_error(szBuf);
 			}
 
 			int yPos = keyButtonsYBase - keyButtonsLineHeight *
@@ -2411,6 +2564,22 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
             safeMutexFTPProgress.ReleaseLock();
         }
     }
+    else if(type == ftp_cct_ExtractProgress) {
+    	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Got FTP extract Callback for [%s] result = %d [%s]\n",itemName.c_str(),result.first,result.second.c_str());
+    	//printf("Got FTP extract Callback for [%s] result = %d [%s]\n",itemName.c_str(),result.first,result.second.c_str());
+
+    	if(userdata == NULL) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("DataMissingExtractDownloadMod").c_str(),itemName.c_str());
+			//printf("%s\n",szBuf);
+			console.addLine(szBuf,true);
+    	}
+    	else {
+			char *szBuf = (char *)userdata;
+			//printf("%s\n",szBuf);
+			console.addLine(szBuf);
+    	}
+    }
     else if(type == ftp_cct_File) {
         if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Got FTP Callback for [%s] result = %d [%s]\n",itemName.c_str(),result.first,result.second.c_str());
 
@@ -2423,16 +2592,8 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
         //printf("### downloaded file [%s] result = %d\n",itemName.c_str(),result.first);
 
         if(result.first == ftp_crt_SUCCESS) {
-        	//displayModPreviewImage = true;
         	displayModPreviewImage[itemName] = true;
         }
-//        else {
-//            curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
-//
-//			char szBuf[1024]="";
-//			sprintf(szBuf,lang.get("ModDownloadMapFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
-//            console.addLine(szBuf,true);
-//        }
     }
 
     else if(type == ftp_cct_Map) {
@@ -2448,15 +2609,15 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
 
         if(result.first == ftp_crt_SUCCESS) {
         	refreshMaps();
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadMapSuccess").c_str(),itemName.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadMapSuccess").c_str(),itemName.c_str());
             console.addLine(szBuf,true);
         }
         else {
             curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadMapFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadMapFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
             console.addLine(szBuf,true);
         }
     }
@@ -2475,16 +2636,16 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
         if(result.first == ftp_crt_SUCCESS) {
         	refreshTilesets();
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadTilesetSuccess").c_str(),itemName.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadTilesetSuccess").c_str(),itemName.c_str());
            	console.addLine(szBuf,true);
             // END
         }
         else {
             curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadTilesetFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadTilesetFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
            	console.addLine(szBuf,true);
         }
     }
@@ -2502,8 +2663,8 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
 
         if(result.first == ftp_crt_SUCCESS) {
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadTechSuccess").c_str(),itemName.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadTechSuccess").c_str(),itemName.c_str());
            	console.addLine(szBuf,true);
 
             // START
@@ -2519,7 +2680,7 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
 
             // Refresh CRC
             Config &config = Config::getInstance();
-            int32 CRCTechtreeValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTechs,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
+            getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptTechs,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
             safeMutexFTPProgress.ReleaseLock();
 
         	refreshTechs();
@@ -2528,8 +2689,8 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
         else {
             curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadTechFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadTechFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
            	console.addLine(szBuf,true);
         }
     }
@@ -2546,8 +2707,8 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
         buttonInstallScenario.setEnabled(true);
 
         if(result.first == ftp_crt_SUCCESS) {
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadScenarioSuccess").c_str(),itemName.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadScenarioSuccess").c_str(),itemName.c_str());
            	console.addLine(szBuf,true);
 
             // START
@@ -2565,7 +2726,7 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
 
             // Refresh CRC
             Config &config = Config::getInstance();
-            int32 CRCScenarioValue = getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptScenarios,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
+            getFolderTreeContentsCheckSumRecursively(config.getPathListForType(ptScenarios,""), string("/") + itemName + string("/*"), ".xml", NULL, true);
             safeMutexFTPProgress.ReleaseLock();
 
             refreshScenarios();
@@ -2574,8 +2735,8 @@ void MenuStateMods::FTPClient_CallbackEvent(string itemName,
         else {
             curl_version_info_data *curlVersion= curl_version_info(CURLVERSION_NOW);
 
-			char szBuf[1024]="";
-			sprintf(szBuf,lang.get("ModDownloadScenarioFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,lang.getString("ModDownloadScenarioFail").c_str(),itemName.c_str(),curlVersion->version,result.second.c_str());
            	console.addLine(szBuf,true);
         }
     }

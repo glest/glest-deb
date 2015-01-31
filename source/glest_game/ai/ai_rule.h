@@ -12,8 +12,12 @@
 #ifndef _GLEST_GAME_AIRULE_H_
 #define _GLEST_GAME_AIRULE_H_
 
-#include <string>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <string>
 #include "vec.h"
 #include "skill_type.h"
 #include "leak_dumper.h"
@@ -25,6 +29,7 @@ using Shared::Graphics::Vec2i;
 namespace Glest{ namespace Game{
 
 class Ai;
+class AiInterface;
 class Unit;
 class UnitType;
 class ProduceTask;
@@ -211,6 +216,7 @@ private:
 	static const int shortInterval= 5000;
 	const ResourceType *rt;
 	int interval;
+	bool newResourceBehaviour;
 
 public:
 	AiRuleProduceResourceProducer(Ai *ai);
@@ -230,6 +236,10 @@ class AiRuleProduce: public AiRule{
 private:
 	const ProduceTask *produceTask;
 
+	typedef vector<const UnitType*> UnitTypes;
+	typedef vector<bool> UnitTypesGiveBack;
+	bool newResourceBehaviour;
+
 public:
 	AiRuleProduce(Ai *ai);
 
@@ -241,7 +251,14 @@ public:
 
 private:
 	void produceGeneric(const ProduceTask *pt);
+	void produceGenericNew(const ProduceTask *pt);
 	void produceSpecific(const ProduceTask *pt);
+	bool canUnitTypeOfferResourceType(const UnitType *ut, const ResourceType *rt);
+	bool setAIProduceTaskForResourceType(const ProduceTask* pt,
+			AiInterface* aiInterface);
+	void addUnitTypeToCandidates(const UnitType* producedUnit,
+			UnitTypes& ableUnits, UnitTypesGiveBack& ableUnitsGiveBack,
+			bool unitCanGiveBackResource);
 };
 // =====================================================
 //	class AiRuleBuild

@@ -42,24 +42,42 @@ public:
 private:
 	PropertyVector propertyVector;
 	PropertyMap propertyMap;
+	PropertyVector propertyVectorTmp;
+	PropertyMap propertyMapTmp;
+
 	string path;
 	static string applicationPath;
+	static string applicationDataPath;
 	static string gameVersion;
+
+	static string techtreePath;
+	static string scenarioPath;
+	static string tutorialPath;
 
 public:
 	static void setApplicationPath(string value) { applicationPath=value; }
 	static string getApplicationPath() { return applicationPath; }
 
+	static void setApplicationDataPath(string value) { applicationDataPath=value; }
+	static string getApplicationDataPath() { return applicationDataPath; }
+
 	static void setGameVersion(string value) { gameVersion=value; }
 	static string getGameVersion() { return gameVersion; }
+
+	static void setTechtreePath(string value) { techtreePath=value; }
+	static string getTechtreePath() { return techtreePath; }
+	static void setScenarioPath(string value) { scenarioPath=value; }
+	static string getScenarioPath() { return scenarioPath; }
+	static void setTutorialPath(string value) { tutorialPath=value; }
+	static string getTutorialPath() { return tutorialPath; }
 
 	void clear();
 	void load(const string &path,bool clearCurrentProperties=true);
 	void save(const string &path);
 
-	int getPropertyCount() const	{return (int)propertyVector.size();}
-	string getKey(int i) const	    {return propertyVector[i].first;}
-	string getString(int i) const	{return propertyVector[i].second;}
+	int getPropertyCount() const;
+	string getKey(int i) const;
+	string getString(int i) const;
 
 	bool getBool(const string &key, const char *defaultValueIfNotFound=NULL) const;
 	int getInt(const string &key, const char *defaultValueIfNotFound=NULL) const;
@@ -73,13 +91,16 @@ public:
 	bool getBool(const char *key,const char *defaultValueIfNotFound=NULL) const;
 	float getFloat(const char *key,const char *defaultValueIfNotFound=NULL) const;
 	const string getString(const char *key,const char *defaultValueIfNotFound=NULL) const;
+	const string getRandomKey(const bool realrandom) const;
 
 	void setInt(const string &key, int value);
 	void setBool(const string &key, bool value);
 	void setFloat(const string &key, float value);
 	void setString(const string &key, const string &value);
 
-	static bool applyTagsToValue(string &value, std::map<string,string> *mapTagReplacementValues=NULL);
+	bool hasString(const string &key) const;
+
+	static bool applyTagsToValue(string &value, const std::map<string,string> *mapTagReplacementValues=NULL);
 	static std::map<string,string> getTagReplacementValues(std::map<string,string> *mapExtraTagReplacementValues=NULL);
 
 	string getpath() const { return path;}

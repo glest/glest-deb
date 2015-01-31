@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -16,6 +16,7 @@
 #include "core_data.h"
 #include "config.h"
 #include "menu_state_new_game.h"
+#include "menu_state_load_game.h"
 #include "menu_state_options.h"
 #include "menu_state_about.h"
 #include "menu_state_mods.h"
@@ -48,12 +49,15 @@ MenuStateRoot::MenuStateRoot(Program *program, MainMenu *mainMenu):
 	}
 	else {
 		labelVersion.init(405, yPos);
-		labelVersion.setText(glestVersionString + " [" + getCompileDateTime() + ", " + getSVNRevisionString() + "]");
+		labelVersion.setText(glestVersionString + " [" + getCompileDateTime() + ", " + getGITRevisionString() + "]");
 	}
 
 	yPos-=55;
 	buttonNewGame.registerGraphicComponent(containerName,"buttonNewGame");
 	buttonNewGame.init(425, yPos, 150);
+    yPos-=40;
+    buttonLoadGame.registerGraphicComponent(containerName,"buttonLoadGame");
+    buttonLoadGame.init(425, yPos, 150);
     yPos-=40;
     buttonMods.registerGraphicComponent(containerName,"buttonMods");
     buttonMods.init(425, yPos, 150);
@@ -67,19 +71,20 @@ MenuStateRoot::MenuStateRoot(Program *program, MainMenu *mainMenu):
     buttonExit.registerGraphicComponent(containerName,"buttonExit");
     buttonExit.init(425, yPos, 150);
 
-	buttonNewGame.setText(lang.get("NewGame"));
-	buttonMods.setText(lang.get("Mods"));
-	buttonOptions.setText(lang.get("Options"));
-	buttonAbout.setText(lang.get("About"));
-	buttonExit.setText(lang.get("Exit"));
+	buttonNewGame.setText(lang.getString("NewGame"));
+	buttonLoadGame.setText(lang.getString("LoadGame"));
+	buttonMods.setText(lang.getString("Mods"));
+	buttonOptions.setText(lang.getString("Options"));
+	buttonAbout.setText(lang.getString("About"));
+	buttonExit.setText(lang.getString("Exit"));
 	
 	//mesage box
 	mainMessageBox.registerGraphicComponent(containerName,"mainMessageBox");
-	mainMessageBox.init(lang.get("Yes"), lang.get("No"));
+	mainMessageBox.init(lang.getString("Yes"), lang.getString("No"));
 	mainMessageBox.setEnabled(false);
 
 	errorMessageBox.registerGraphicComponent(containerName,"errorMessageBox");
-	errorMessageBox.init(lang.get("Ok"));
+	errorMessageBox.init(lang.getString("Ok"));
 	errorMessageBox.setEnabled(false);
 
 	//PopupMenu popupMenu;
@@ -105,17 +110,18 @@ void MenuStateRoot::reloadUI() {
 		labelVersion.setText(glestVersionString);
 	}
 	else {
-		labelVersion.setText(glestVersionString + " [" + getCompileDateTime() + ", " + getSVNRevisionString() + "]");
+		labelVersion.setText(glestVersionString + " [" + getCompileDateTime() + ", " + getGITRevisionString() + "]");
 	}
 
-	buttonNewGame.setText(lang.get("NewGame"));
-	buttonMods.setText(lang.get("Mods"));
-	buttonOptions.setText(lang.get("Options"));
-	buttonAbout.setText(lang.get("About"));
-	buttonExit.setText(lang.get("Exit"));
+	buttonNewGame.setText(lang.getString("NewGame"));
+	buttonLoadGame.setText(lang.getString("LoadGame"));
+	buttonMods.setText(lang.getString("Mods"));
+	buttonOptions.setText(lang.getString("Options"));
+	buttonAbout.setText(lang.getString("About"));
+	buttonExit.setText(lang.getString("Exit"));
 
-	mainMessageBox.init(lang.get("Yes"), lang.get("No"));
-	errorMessageBox.init(lang.get("Ok"));
+	mainMessageBox.init(lang.getString("Yes"), lang.getString("No"));
+	errorMessageBox.init(lang.getString("Ok"));
 	console.resetFonts();
 
 	GraphicComponent::reloadFontsForRegisterGraphicComponents(containerName);
@@ -127,15 +133,16 @@ void MenuStateRoot::mouseClick(int x, int y, MouseButton mouseButton){
 		SoundRenderer &soundRenderer= SoundRenderer::getInstance();
 
 		if(popupMenu.mouseClick(x, y)) {
-			std::pair<int,string> result = popupMenu.mouseClickedMenuItem(x, y);
+			//std::pair<int,string> result = popupMenu.mouseClickedMenuItem(x, y);
+			popupMenu.mouseClickedMenuItem(x, y);
 
 			//printf("In popup callback menuItemSelected [%s] menuIndexSelected = %d\n",result.second.c_str(),result.first);
 		}
 		//exit message box, has to be the last thing to do in this function
 		else if(mainMessageBox.getEnabled()){
-			int button= 1;
+			int button= 0;
 			if(mainMessageBox.mouseClick(x, y, button)) {
-				if(button==1) {
+				if(button==0) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 					soundRenderer.playFx(coreData.getClickSoundA());
 					program->exit();
@@ -149,7 +156,7 @@ void MenuStateRoot::mouseClick(int x, int y, MouseButton mouseButton){
 		}
 		//exit message box, has to be the last thing to do in this function
 		else if(errorMessageBox.getEnabled()){
-			int button= 1;
+			int button= 0;
 			if(mainMessageBox.mouseClick(x, y, button)) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 				//close message box
@@ -159,6 +166,10 @@ void MenuStateRoot::mouseClick(int x, int y, MouseButton mouseButton){
 		else if(mainMessageBox.getEnabled() == false && buttonNewGame.mouseClick(x, y)){
 			soundRenderer.playFx(coreData.getClickSoundB());
 			mainMenu->setState(new MenuStateNewGame(program, mainMenu));
+		}
+		else if(mainMessageBox.getEnabled() == false && buttonLoadGame.mouseClick(x, y)){
+			soundRenderer.playFx(coreData.getClickSoundB());
+			mainMenu->setState(new MenuStateLoadGame(program, mainMenu));
 		}
 		else if(mainMessageBox.getEnabled() == false && buttonMods.mouseClick(x, y)){
 			soundRenderer.playFx(coreData.getClickSoundB());
@@ -178,8 +189,8 @@ void MenuStateRoot::mouseClick(int x, int y, MouseButton mouseButton){
 		}
 	}
 	catch(exception &e) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s Line: %d]\nError in menu event:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d]\nError in menu event:\n%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
 		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
 		showErrorMessageBox(szBuf, "", true);
 	}
@@ -188,6 +199,7 @@ void MenuStateRoot::mouseClick(int x, int y, MouseButton mouseButton){
 void MenuStateRoot::mouseMove(int x, int y, const MouseState *ms){
 	popupMenu.mouseMove(x, y);
 	buttonNewGame.mouseMove(x, y);
+	buttonLoadGame.mouseMove(x, y);
     buttonMods.mouseMove(x, y);
     buttonOptions.mouseMove(x, y);
     buttonAbout.mouseMove(x, y);
@@ -230,14 +242,14 @@ void MenuStateRoot::render() {
 		coreData.getLogoTexture(), GraphicComponent::getFade());
 
 	int maxLogoWidth=0;
-	for(int idx = 0; idx < coreData.getLogoTextureExtraCount(); ++idx) {
+	for(int idx = 0; idx < (int)coreData.getLogoTextureExtraCount(); ++idx) {
 		Texture2D *extraLogo = coreData.getLogoTextureExtra(idx);
 		maxLogoWidth += extraLogo->getPixmap()->getW();
 	}
 
 	int currentX = (metrics.getVirtualW()-maxLogoWidth)/2;
 	int currentY = 50;
-	for(int idx = 0; idx < coreData.getLogoTextureExtraCount(); ++idx) {
+	for(int idx = 0; idx < (int)coreData.getLogoTextureExtraCount(); ++idx) {
 		Texture2D *extraLogo = coreData.getLogoTextureExtra(idx);
 
 		logoMainX = currentX;
@@ -260,6 +272,7 @@ void MenuStateRoot::render() {
 	}
 
 	renderer.renderButton(&buttonNewGame);
+	renderer.renderButton(&buttonLoadGame);
 	renderer.renderButton(&buttonMods);
 	renderer.renderButton(&buttonOptions);
 	renderer.renderButton(&buttonAbout);
@@ -281,9 +294,15 @@ void MenuStateRoot::render() {
 	if(program != NULL) program->renderProgramMsgBox();
 }
 
-void MenuStateRoot::update(){
-	if(Config::getInstance().getBool("AutoTest")){
-		AutoTest::getInstance().updateRoot(program, mainMenu);
+void MenuStateRoot::update() {
+	if(Config::getInstance().getBool("AutoTest")) {
+		if(AutoTest::getInstance().mustExitGame() == false) {
+			AutoTest::getInstance().updateRoot(program, mainMenu);
+		}
+		else {
+			program->exit();
+		}
+		return;
 	}
 	console.update();
 }
@@ -300,7 +319,7 @@ void MenuStateRoot::keyDown(SDL_KeyboardEvent key) {
 	//if(key == configKeys.getCharKey("ExitKey")) {
 	if(isKeyPressed(configKeys.getSDLKey("ExitKey"),key) == true) {
 		Lang &lang= Lang::getInstance();
-		showMessageBox(lang.get("ExitGame?"), "", true);
+		showMessageBox(lang.getString("ExitGame?"), "", true);
 	}
 	//else if(mainMessageBox.getEnabled() == true && key == vkReturn) {
 	else if(mainMessageBox.getEnabled() == true && isKeyPressed(SDLK_RETURN,key) == true) {
@@ -320,7 +339,7 @@ void MenuStateRoot::keyDown(SDL_KeyboardEvent key) {
 	else if(isKeyPressed(configKeys.getSDLKey("SaveGUILayout"),key) == true) {
 		GraphicComponent::saveAllCustomProperties(containerName);
 		//Lang &lang= Lang::getInstance();
-		//console.addLine(lang.get("GUILayoutSaved") + " [" + (saved ? lang.get("Yes") : lang.get("No"))+ "]");
+		//console.addLine(lang.getString("GUILayoutSaved") + " [" + (saved ? lang.getString("Yes") : lang.getString("No"))+ "]");
 	}
 
 }

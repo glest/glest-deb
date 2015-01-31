@@ -333,11 +333,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\source\glest_game\facilities\pos_iterator.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\facilities\pos_iterator.h"
+				RelativePath="..\..\source\glest_game\network\network_protocol.cpp"
 				>
 			</File>
 		</Filter>
@@ -371,39 +367,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\source\glest_game\ai\annotated_map.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\annotated_map.h"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\cartographer.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\cartographer.h"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\cluster_map.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\cluster_map.h"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\influence_map.h"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\node_pool.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\ai\node_pool.h"
+				RelativePath="..\..\source\glest_game\network\network_protocol.h"
 				>
 			</File>
 			<File
@@ -415,15 +379,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\source\glest_game\ai\route_planner.cpp"
+				RelativePath="..\..\source\shared_lib\include\xml\rapidxml\rapidxml.hpp"
 				>
 			</File>
 			<File
-				RelativePath="..\..\source\glest_game\ai\route_planner.h"
+				RelativePath="..\..\source\shared_lib\include\xml\rapidxml\rapidxml_iterators.hpp"
 				>
 			</File>
 			<File
-				RelativePath="..\..\source\glest_game\ai\search_engine.h"
+				RelativePath="..\..\source\shared_lib\include\xml\rapidxml\rapidxml_print.hpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\shared_lib\include\xml\rapidxml\rapidxml_utils.hpp"
 				>
 			</File>
 		</Filter>
@@ -538,14 +506,6 @@
 		<Filter
 			Name="graphics"
 			>
-			<File
-				RelativePath="..\..\source\glest_game\graphics\debug_renderer.cpp"
-				>
-			</File>
-			<File
-				RelativePath="..\..\source\glest_game\graphics\debug_renderer.h"
-				>
-			</File>
 			<File
 				RelativePath="..\..\source\glest_game\graphics\particle_type.cpp"
 				>
@@ -691,6 +651,14 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_load_game.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_load_game.h"
+				>
+			</File>
+			<File
 				RelativePath="..\..\source\glest_game\menu\menu_state_masterserver.cpp"
 				>
 			</File>
@@ -720,6 +688,30 @@
 			</File>
 			<File
 				RelativePath="..\..\source\glest_game\menu\menu_state_options.h"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_graphics.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_graphics.h"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_network.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_network.h"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_sound.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\source\glest_game\menu\menu_state_options_sound.h"
 				>
 			</File>
 			<File

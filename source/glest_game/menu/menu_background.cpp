@@ -32,8 +32,7 @@ namespace Glest{ namespace Game{
 // 	class MenuBackground
 // =====================================================
 
-MenuBackground::MenuBackground(){
-
+MenuBackground::MenuBackground() : rps(NULL) {
 	Renderer &renderer= Renderer::getInstance();
 
 	//load data
@@ -65,21 +64,15 @@ MenuBackground::MenuBackground(){
 	}
 
 	//rain
-	rain= menuNode->getChild("rain")->getAttribute("value")->getBoolValue();
-	if(rain){
-		RainParticleSystem *rps= new RainParticleSystem();
-		rps->setSpeed(12.f/GameConstants::updateFps);
-		rps->setEmissionRate(25);
-		rps->setWind(-90.f, 4.f/GameConstants::updateFps);
-		rps->setPos(Vec3f(0.f, 25.f, 0.f));
-		rps->setColor(Vec4f(1.f, 1.f, 1.f, 0.2f));
-		rps->setRadius(30.f);
-		renderer.manageParticleSystem(rps, rsMenu);
-
-		for(int i=0; i<raindropCount; ++i){
-			raindropStates[i]= random.randRange(0.f, 1.f);
-			raindropPos[i]= computeRaindropPos();
+	bool withRainEffect = Config::getInstance().getBool("RainEffectMenu","true");
+	if(withRainEffect == true) {
+		rain= menuNode->getChild("rain")->getAttribute("value")->getBoolValue();
+		if(rain) {
+			createRainParticleSystem();
 		}
+	}
+	else {
+		rain = false;
 	}
 
 	//camera
@@ -105,23 +98,17 @@ MenuBackground::MenuBackground(){
 		degToRad(startRotation.z))));
 
 	//load main model
-	mainModel= renderer.newModel(rsMenu);
-	if(mainModel) {
-		string mainModelFile = "data/core/menu/main_model/menu_main.g3d";
-		if(menuNode->hasChild("menu-background-model") == true) {
-			//mainModel->load(data_path + "data/core/menu/main_model/menu_main.g3d");
-			const XmlNode *mainMenuModelNode= menuNode->getChild("menu-background-model");
-			mainModelFile = mainMenuModelNode->getAttribute("value")->getRestrictedValue();
-		}
-		mainModel->load(getGameCustomCoreDataPath(data_path, mainModelFile));
-	}
+    string mainModelFile = "data/core/menu/main_model/menu_main.g3d";
+    if(menuNode->hasChild("menu-background-model") == true) {
+        //mainModel->load(data_path + "data/core/menu/main_model/menu_main.g3d");
+        const XmlNode *mainMenuModelNode= menuNode->getChild("menu-background-model");
+        mainModelFile = mainMenuModelNode->getAttribute("value")->getRestrictedValue();
+    }
+    mainModel = renderer.newModel(rsMenu, getGameCustomCoreDataPath(data_path, mainModelFile));
 
 	//models
-	for(int i=0; i<5; ++i){
-		characterModels[i]= renderer.newModel(rsMenu);
-		if(characterModels[i]) {
-			characterModels[i]->load(getGameCustomCoreDataPath(data_path, "data/core/menu/about_models/character"+intToStr(i)+".g3d"));
-		}
+	for(int i=0; i<5; ++i) {
+		characterModels[i] = renderer.newModel(rsMenu, getGameCustomCoreDataPath(data_path, "data/core/menu/about_models/character"+intToStr(i)+".g3d"));
 	}
 
 	//about position
@@ -129,12 +116,56 @@ MenuBackground::MenuBackground(){
 	aboutPosition.x= positionNode->getAttribute("x")->getFloatValue();
 	aboutPosition.y= positionNode->getAttribute("y")->getFloatValue();
 	aboutPosition.z= positionNode->getAttribute("z")->getFloatValue();
-	rotationNode= cameraNode->getChild("about-rotation");
+	//rotationNode= cameraNode->getChild("about-rotation");
 
 	targetCamera= NULL;
 	t= 0.f;
 	fade= 0.f;
 	anim= 0.f;
+}
+
+MenuBackground::~MenuBackground() {
+	//printf("In ~MenuBackground() rps = %p\n",rps);
+
+	cleanup();
+}
+
+void MenuBackground::cleanup() {
+	//printf("In MenuBackground::cleanup() rps = %p\n",rps);
+
+	if(rps != NULL) {
+		Renderer &renderer= Renderer::getInstance();
+		if(renderer.validateParticleSystemStillExists(rps,rsMenu) == true) {
+			rps->fade();
+			vector<ParticleSystem *> particleSystems;
+			particleSystems.push_back(rps);
+			renderer.cleanupParticleSystems(particleSystems, rsMenu);
+		}
+
+		rps = NULL;
+	}
+}
+
+void MenuBackground::createRainParticleSystem() {
+	//printf("In MenuBackground::createRainParticleSystem() rps = %p\n",rps);
+
+	if(rps == NULL) {
+		rps= new RainParticleSystem();
+		rps->setSpeed(12.f/GameConstants::updateFps);
+		rps->setEmissionRate(25);
+		rps->setWind(-90.f, 4.f/GameConstants::updateFps);
+		rps->setPos(Vec3f(0.f, 25.f, 0.f));
+		rps->setColor(Vec4f(1.f, 1.f, 1.f, 0.2f));
+		rps->setRadius(30.f);
+
+		Renderer &renderer= Renderer::getInstance();
+		renderer.manageParticleSystem(rps, rsMenu);
+
+		for(int i=0; i<raindropCount; ++i){
+			raindropStates[i]= random.randRange(0.f, 1.f);
+			raindropPos[i]= computeRaindropPos();
+		}
+	}
 }
 
 void MenuBackground::setTargetCamera(const Camera *targetCamera){
@@ -143,15 +174,27 @@ void MenuBackground::setTargetCamera(const Camera *targetCamera){
 	t= 0.f;
 }
 
-void MenuBackground::update(){
-
+void MenuBackground::update() {
 	//rain drops
-	for(int i=0; i<raindropCount; ++i){
-		raindropStates[i]+= 1.f / GameConstants::updateFps;
-		if(raindropStates[i]>=1.f){
-			raindropStates[i]= 0.f;
-			raindropPos[i]= computeRaindropPos();
+	bool withRainEffect = Config::getInstance().getBool("RainEffectMenu","true");
+	if(withRainEffect == true) {
+		if(rain == false) {
+			rain = true;
+			createRainParticleSystem();
 		}
+
+		for(int i=0; i<raindropCount; ++i){
+			raindropStates[i]+= 1.f / GameConstants::updateFps;
+			if(raindropStates[i]>=1.f){
+				raindropStates[i]= 0.f;
+				raindropPos[i]= computeRaindropPos();
+			}
+		}
+	}
+	else if(rain == true) {
+		rain = false;
+
+		cleanup();
 	}
 
 	if(targetCamera!=NULL){
@@ -185,7 +228,7 @@ void MenuBackground::update(){
 	}
 }
 
-Vec2f MenuBackground::computeRaindropPos(){
+Vec2f MenuBackground::computeRaindropPos() {
 	float f= static_cast<float>(meshSize);
 	return Vec2f(random.randRange(-f, f), random.randRange(-f, f));
 }

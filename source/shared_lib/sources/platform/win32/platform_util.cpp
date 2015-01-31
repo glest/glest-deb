@@ -19,7 +19,7 @@
 #include <string.h>
 #include "SDL_syswm.h"
 #include <iostream>
-
+#include <stdexcept>
 #include "leak_dumper.h"
 
 using namespace Shared::Util;
@@ -30,31 +30,49 @@ namespace Shared { namespace Platform {
 // =====================================================
 //	class PlatformExceptionHandler
 // =====================================================
-
+string PlatformExceptionHandler::application_binary="";
+bool PlatformExceptionHandler::disableBacktrace = false;
 PlatformExceptionHandler *PlatformExceptionHandler::thisPointer= NULL;
 
 // Constructs object and convert lpaszString to Unicode
 LPWSTR Ansi2WideString(LPCSTR lpaszString) {
 	LPWSTR lpwszString(NULL);
-	int nLen = ::lstrlenA(lpaszString) + 1;
-	lpwszString = new WCHAR[nLen];
-	if (lpwszString == NULL) {
-		return lpwszString;
+
+	if(lpaszString != NULL) {
+		int nLen = ::lstrlenA(lpaszString) + 1;
+		lpwszString = new WCHAR[nLen];
+		if (lpwszString == NULL) {
+			return lpwszString;
+		}
+
+		memset(lpwszString, 0, nLen * sizeof(WCHAR));
+
+		if (::MultiByteToWideChar(CP_ACP, 0, lpaszString, nLen, lpwszString, nLen) == 0) {
+			// Conversation failed
+			return lpwszString;
+		}
 	}
+	else {
+		int nLen = 1;
+		lpwszString = new WCHAR[nLen];
+		if (lpwszString == NULL) {
+			return lpwszString;
+		}
 
-	memset(lpwszString, 0, nLen * sizeof(WCHAR));
-
-	if (::MultiByteToWideChar(CP_ACP, 0, lpaszString, nLen, lpwszString, nLen) == 0) {
-		// Conversation failed
-		return lpwszString;
+		memset(lpwszString, 0, nLen * sizeof(WCHAR));
 	}
 
 	return lpwszString;
 }
 
 // Convert a wide Unicode string to an UTF8 string
-std::string utf8_encode(const std::wstring wstr) {
-    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+std::string utf8_encode(const std::wstring &wstr) {
+	if(wstr.length() == 0) {
+		std::string wstrTo;
+		return wstrTo;
+	}
+
+	int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
     std::string strTo( size_needed, 0 );
     WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
 	replaceAll(strTo, "/", "\\");
@@ -64,7 +82,11 @@ std::string utf8_encode(const std::wstring wstr) {
 }
 
 // Convert an UTF8 string to a wide Unicode String
-std::wstring utf8_decode(const std::string str) {
+std::wstring utf8_decode(const std::string &str) {
+	if(str.length() == 0) {
+		std::wstring wstrTo;
+		return wstrTo;
+	}
 	string friendly_path = str;
 	replaceAll(friendly_path, "/", "\\");
 	replaceAll(friendly_path, "\\\\", "\\");
@@ -75,6 +97,32 @@ std::wstring utf8_decode(const std::string str) {
     return wstrTo;
 }
 
+/**
+* @param location The location of the registry key. For example "Software\\Bethesda Softworks\\Morrowind"
+* @param name the name of the registry key, for example "Installed Path"
+* @return the value of the key or an empty string if an error occured.
+*/
+std::string getRegKey(const std::string& location, const std::string& name){
+    HKEY key;
+    CHAR value[1024]; 
+    DWORD bufLen = 1024*sizeof(CHAR);
+    long ret;
+    ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, location.c_str(), 0, KEY_QUERY_VALUE, &key);
+    if( ret != ERROR_SUCCESS ){
+        return std::string();
+    }
+    ret = RegQueryValueExA(key, name.c_str(), 0, 0, (LPBYTE) value, &bufLen);
+    RegCloseKey(key);
+    if ( (ret != ERROR_SUCCESS) || (bufLen > 1024*sizeof(TCHAR)) ){
+        return std::string();
+    }
+    string stringValue = value;
+    size_t i = stringValue.length();
+    while( i > 0 && stringValue[i-1] == '\0' ){
+        --i;
+    }
+    return stringValue.substr(0,i); 
+}
 
 LONG WINAPI PlatformExceptionHandler::handler(LPEXCEPTION_POINTERS pointers){
 
@@ -89,7 +137,7 @@ LONG WINAPI PlatformExceptionHandler::handler(LPEXCEPTION_POINTERS pointers){
 		CREATE_ALWAYS,
 		FILE_ATTRIBUTE_NORMAL,
 		0);
-	delete [] wstr;
+	if(wstr) delete [] wstr;
 
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -99,7 +147,7 @@ LONG WINAPI PlatformExceptionHandler::handler(LPEXCEPTION_POINTERS pointers){
 	lExceptionInformation.ExceptionPointers= pointers;
 	lExceptionInformation.ClientPointers= false;
 
-#if defined(__WIN32__) && !defined(__GNUC__)
+#if !defined(__GNUC__)
 	MiniDumpWriteDump(
 		GetCurrentProcess(),
 		GetCurrentProcessId(),
@@ -111,7 +159,7 @@ LONG WINAPI PlatformExceptionHandler::handler(LPEXCEPTION_POINTERS pointers){
 
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
-	thisPointer->handle();
+	thisPointer->handle(pointers);
 #endif
 	//printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
@@ -121,7 +169,106 @@ LONG WINAPI PlatformExceptionHandler::handler(LPEXCEPTION_POINTERS pointers){
 void PlatformExceptionHandler::install(string dumpFileName){
 	thisPointer= this;
 	this->dumpFileName= dumpFileName;
+#if !defined(HAVE_GOOGLE_BREAKPAD)
 	SetUnhandledExceptionFilter(handler);
+#endif
+}
+
+string PlatformExceptionHandler::getStackTrace() {
+	 string result = "\nStack Trace:\n";
+	 if(PlatformExceptionHandler::disableBacktrace == true) {
+		 result += "disabled...";
+		 return result;
+	 }
+#ifndef __MINGW32__
+
+    CONTEXT context = { 0 };
+    context.ContextFlags = CONTEXT_FULL;
+
+    IMAGEHLP_SYMBOL *pSym = (IMAGEHLP_SYMBOL*)new BYTE[sizeof(IMAGEHLP_SYMBOL) + 256];
+    pSym->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL);
+    pSym->MaxNameLength = 256;
+
+    IMAGEHLP_LINE line = { 0 };
+    line.SizeOfStruct = sizeof(IMAGEHLP_LINE);
+
+    IMAGEHLP_MODULE module = { 0 };
+    module.SizeOfStruct = sizeof(IMAGEHLP_MODULE);
+
+    HANDLE hProcess = GetCurrentProcess();
+    HANDLE hThread = GetCurrentThread();
+    if (GetThreadContext(hThread, &context)) {
+        STACKFRAME stackframe = { 0 };
+#if !defined(_WIN64)
+        stackframe.AddrPC.Offset = context.Eip;
+#else
+		stackframe.AddrPC.Offset = context.Rip;
+#endif
+        stackframe.AddrPC.Mode = AddrModeFlat;
+#if !defined(_WIN64)
+        stackframe.AddrFrame.Offset = context.Ebp;
+#else
+		stackframe.AddrFrame.Offset = context.Rbp;
+#endif
+        stackframe.AddrFrame.Mode = AddrModeFlat;
+
+		SymInitialize(hProcess, NULL, TRUE);
+        BOOL fSuccess = TRUE;
+
+        do
+        {
+#if !defined(_WIN64)
+            fSuccess = StackWalk(IMAGE_FILE_MACHINE_I386,
+#else
+			fSuccess = StackWalk(IMAGE_FILE_MACHINE_AMD64,
+#endif
+                                 GetCurrentProcess(),
+                                 GetCurrentThread(),
+                                 &stackframe,
+                                 &context,
+                                 NULL,
+                                 NULL,
+                                 NULL,
+                                 NULL);
+#if !defined(_WIN64)
+            DWORD dwDisplacement = 0;
+#else
+			DWORD64 dwDisplacement = 0;
+#endif
+			DWORD dwDisplacement2 = 0;
+            SymGetSymFromAddr(hProcess, stackframe.AddrPC.Offset, &dwDisplacement, pSym);
+            SymGetLineFromAddr(hProcess, stackframe.AddrPC.Offset, &dwDisplacement2, &line);
+            SymGetModuleInfo(hProcess, stackframe.AddrPC.Offset, &module);
+
+			// RetAddr Arg1 Arg2 Arg3 module!funtion FileName(line)+offset
+
+			char szBuf[8096]="";
+            snprintf(szBuf,8096,"%08lx %08lx %08lx %08lx %s!%s %s(%lu) %+ld\n",
+                   stackframe.AddrReturn.Offset,
+                   stackframe.Params[0],
+                   stackframe.Params[1],
+                   stackframe.Params[2],
+                   pSym->Name,
+                   module.ModuleName,
+                   line.FileName, 
+                   line.LineNumber, 
+                   dwDisplacement);
+			result += szBuf;
+
+        } while (fSuccess);
+
+        SymCleanup(hProcess);
+	}
+#endif
+
+#ifndef __MINGW32__
+    delete [] pSym;
+#endif
+	return result;
+}
+
+megaglest_runtime_error::megaglest_runtime_error(const string& __arg,bool noStackTrace)
+: std::runtime_error(noStackTrace == false ? __arg + PlatformExceptionHandler::getStackTrace() : __arg), noStackTrace(noStackTrace) {
 }
 
 // =====================================================
@@ -198,21 +345,16 @@ void PlatformExceptionHandler::install(string dumpFileName){
 //	assert(dispChangeErr==DISP_CHANGE_SUCCESSFUL);
 //}
 
-void message(string message){
+void message(string message, bool isNonGraphicalModeEnabled,string writepath) {
 	std::cerr << "******************************************************\n";
 	std::cerr << "    " << message << "\n";
 	std::cerr << "******************************************************\n";
 
-	LPWSTR wstr = Ansi2WideString(message.c_str());
-	MessageBox(NULL, wstr, L"Message", MB_OK);
-	delete [] wstr;
-}
-
-bool ask(string message){
-	LPWSTR wstr = Ansi2WideString(message.c_str());	
-	bool result = MessageBox(NULL, wstr, L"Confirmation", MB_YESNO)==IDYES;
-	delete [] wstr;
-	return result;
+	if(isNonGraphicalModeEnabled == false) {
+		LPWSTR wstr = Ansi2WideString(message.c_str());
+		MessageBox(NULL, wstr, L"Message", MB_OK | MB_SYSTEMMODAL);
+		if(wstr) delete [] wstr;
+	}
 }
 
 void exceptionMessage(const exception &excp){
@@ -227,9 +369,9 @@ void exceptionMessage(const exception &excp){
 
 	LPWSTR wstr = Ansi2WideString(message.c_str());	
 	LPWSTR wstr1 = Ansi2WideString(title.c_str());	
-	MessageBox(NULL, wstr, wstr1, MB_ICONSTOP | MB_OK | MB_TASKMODAL);
-	delete [] wstr;
-	delete [] wstr1;
+	MessageBox(NULL, wstr, wstr1, MB_ICONSTOP | MB_OK | MB_SYSTEMMODAL);
+	if(wstr) delete [] wstr;
+	if(wstr1) delete [] wstr1;
 }
 
 //int getScreenW(){
@@ -250,8 +392,7 @@ void init_win32() {
 
 	SDL_SysWMinfo wminfo;
 	SDL_VERSION(&wminfo.version)
-	if (SDL_GetWMInfo(&wminfo) != 1)
-	{
+	if (SDL_GetWMInfo(&wminfo) != 1) {
 		// error: wrong SDL version
 	}
 
@@ -264,11 +405,79 @@ void init_win32() {
 #ifndef __MINGW32__
 	LONG iconPtr = (LONG)icon;
 
+#if !defined(_WIN64)
 	::SetClassLong(hwnd, GCL_HICON, iconPtr);
+#else
+	::SetClassLongPtr(hwnd, GCLP_HICON, (LONG_PTR)&iconPtr);
 #endif
+#endif
+
+	ontop_win32(0, 0);
 }
+
+void ontop_win32(int width, int height) {
+	SDL_SysWMinfo wminfo;
+	SDL_VERSION(&wminfo.version)
+	if (SDL_GetWMInfo(&wminfo) != 1) {
+		// error: wrong SDL version
+	}
+
+	HWND hwnd = wminfo.window;
+
+	SetWindowLong(hwnd, GWL_EXSTYLE, 0);
+    SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    if(width > 0 && height > 0) {
+    	SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, width, height, SWP_SHOWWINDOW);
+    }
+}
+
 void done_win32() {
 	::DestroyIcon(icon);
 }
+
+void CheckPacketThrottling() {
+	static bool alreadyChecked = false;
+	if(alreadyChecked == true) {
+		return;
+	}
+	alreadyChecked = true;
+	//printf("Checking Windows Network Packet Throttle Setting...\n");
+	//Open the registry key.
+	wstring subKey = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile";
+	wstring Key = L"NetworkThrottlingIndex";
+	HKEY keyHandle;
+	DWORD dwDesiredThrottle = 0xffffffff;
+	//LONG reg_result = RegCreateKeyEx(HKEY_LOCAL_MACHINE,subKey.c_str(),0, NULL, 0, KEY_ALL_ACCESS, NULL, &keyHandle, &dwDisposition);
+	//LONG reg_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE,subKey.c_str(),0, KEY_ALL_ACCESS, &keyHandle);
+	LONG reg_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE,subKey.c_str(),0, KEY_QUERY_VALUE, &keyHandle);
+
+	if(reg_result != ERROR_SUCCESS) {
+		//printf("\nError opening network throttle registry hive: %d\n",reg_result);
+		return;
+	}
+	//Set the value.
+
+	DWORD disableThrottle = 0;
+	DWORD len = sizeof(DWORD);
+
+	reg_result = RegQueryValueEx(keyHandle, Key.c_str(), 0, 0, (LPBYTE) &disableThrottle, &len);
+	if(reg_result != ERROR_SUCCESS) {
+		printf("\nError opening network throttle registry key: %d\n",reg_result);
+	}
+
+	if(disableThrottle != dwDesiredThrottle) {
+		printf("\n***WARNING*** Windows network throttling is enabled, value: %d\n",disableThrottle);
+		wprintf(L"Please set: HKEY_LOCAL_MACHINE\\%s\nKey: %s to the value: %X\n",subKey.c_str(),Key.c_str(),dwDesiredThrottle);
+
+//		disableThrottle = 0xffffffff;
+//		reg_result = RegSetValueEx(keyHandle, L"NetworkThrottlingIndex", 0, REG_DWORD, (LPBYTE) &disableThrottle, len);
+//		if(reg_result != ERROR_SUCCESS) {
+//			printf("Error setting network throttle registry key: %d [%s]\n",reg_result,getWindowsAPIError(reg_result).c_str());
+//		}
+	}
+	RegCloseKey(keyHandle);
+}
+
 
 }}//end namespace

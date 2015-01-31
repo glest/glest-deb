@@ -13,7 +13,7 @@
 #define _SHARED_UTIL_CONVERSION_H_
 
 #include <string>
-#include "types.h"
+#include "data_types.h"
 #include "leak_dumper.h"
 
 using std::string;
@@ -24,14 +24,17 @@ namespace Shared { namespace Util {
 
 bool strToBool(const string &s);
 int strToInt(const string &s);
+uint32 strToUInt(const string &s);
 float strToFloat(const string &s); 
 
 bool strToBool(const string &s, bool *b);
 bool strToInt(const string &s, int *i);
+bool strToUInt(const string &s, uint32 *i);
 bool strToFloat(const string &s, float *f);
 
 string boolToStr(bool b);
-string intToStr(int64 i);
+string uIntToStr(const uint64 value);
+string intToStr(const int64 value);
 string intToHex(int i);
 string floatToStr(float f,int precsion=2);
 string doubleToStr(double f,int precsion=2);
@@ -39,6 +42,8 @@ string doubleToStr(double f,int precsion=2);
 bool IsNumeric(const char *p, bool  allowNegative=true);
 
 string formatNumber(uint64 f);
+
+string getTimeDuationString(int frames, int updateFps);
 
 }}//end namespace
 

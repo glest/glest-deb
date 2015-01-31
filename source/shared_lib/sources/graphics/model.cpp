@@ -22,6 +22,8 @@
 #include "opengl.h"
 #include "platform_util.h"
 #include <memory>
+#include <map>
+#include <vector>
 #include "leak_dumper.h"
 
 using namespace Shared::Platform;
@@ -35,6 +37,164 @@ namespace Shared{ namespace Graphics{
 
 using namespace Util;
 
+// Utils methods for endianness conversion
+void toEndianFileHeader(FileHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		for(unsigned int i = 0; i < 3; ++i) {
+			header.id[i] = Shared::PlatformByteOrder::toCommonEndian(header.id[i]);
+		}
+		header.version = Shared::PlatformByteOrder::toCommonEndian(header.version);
+	}
+}
+void fromEndianFileHeader(FileHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		for(unsigned int i = 0; i < 3; ++i) {
+			header.id[i] = Shared::PlatformByteOrder::fromCommonEndian(header.id[i]);
+		}
+		header.version = Shared::PlatformByteOrder::fromCommonEndian(header.version);
+	}
+}
+
+void toEndianModelHeader(ModelHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.type = Shared::PlatformByteOrder::toCommonEndian(header.type);
+		header.meshCount = Shared::PlatformByteOrder::toCommonEndian(header.meshCount);
+	}
+}
+void fromEndianModelHeader(ModelHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.type = Shared::PlatformByteOrder::toCommonEndian(header.type);
+		header.meshCount = Shared::PlatformByteOrder::toCommonEndian(header.meshCount);
+	}
+}
+
+void toEndianMeshHeader(MeshHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		for(unsigned int i = 0; i < meshNameSize; ++i) {
+			header.name[i] = Shared::PlatformByteOrder::toCommonEndian(header.name[i]);
+		}
+		header.frameCount = Shared::PlatformByteOrder::toCommonEndian(header.frameCount);
+		header.vertexCount = Shared::PlatformByteOrder::toCommonEndian(header.vertexCount);
+		header.indexCount = Shared::PlatformByteOrder::toCommonEndian(header.indexCount);
+		for(unsigned int i = 0; i < 3; ++i) {
+			header.diffuseColor[i] = Shared::PlatformByteOrder::toCommonEndian(header.diffuseColor[i]);
+			header.specularColor[i] = Shared::PlatformByteOrder::toCommonEndian(header.specularColor[i]);
+		}
+		header.specularPower = Shared::PlatformByteOrder::toCommonEndian(header.specularPower);
+		header.opacity = Shared::PlatformByteOrder::toCommonEndian(header.opacity);
+		header.properties = Shared::PlatformByteOrder::toCommonEndian(header.properties);
+		header.textures = Shared::PlatformByteOrder::toCommonEndian(header.textures);
+	}
+}
+
+void fromEndianMeshHeader(MeshHeader &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		for(unsigned int i = 0; i < meshNameSize; ++i) {
+			header.name[i] = Shared::PlatformByteOrder::fromCommonEndian(header.name[i]);
+		}
+		header.frameCount = Shared::PlatformByteOrder::fromCommonEndian(header.frameCount);
+		header.vertexCount = Shared::PlatformByteOrder::fromCommonEndian(header.vertexCount);
+		header.indexCount = Shared::PlatformByteOrder::fromCommonEndian(header.indexCount);
+		for(unsigned int i = 0; i < 3; ++i) {
+			header.diffuseColor[i] = Shared::PlatformByteOrder::fromCommonEndian(header.diffuseColor[i]);
+			header.specularColor[i] = Shared::PlatformByteOrder::fromCommonEndian(header.specularColor[i]);
+		}
+		header.specularPower = Shared::PlatformByteOrder::fromCommonEndian(header.specularPower);
+		header.opacity = Shared::PlatformByteOrder::fromCommonEndian(header.opacity);
+		header.properties = Shared::PlatformByteOrder::fromCommonEndian(header.properties);
+		header.textures = Shared::PlatformByteOrder::fromCommonEndian(header.textures);
+	}
+}
+
+void toEndianModelHeaderV3(ModelHeaderV3 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.meshCount = Shared::PlatformByteOrder::toCommonEndian(header.meshCount);
+	}
+}
+void fromEndianModelHeaderV3(ModelHeaderV3 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.meshCount = Shared::PlatformByteOrder::fromCommonEndian(header.meshCount);
+	}
+}
+
+void toEndianMeshHeaderV3(MeshHeaderV3 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.vertexFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.vertexFrameCount);
+		header.normalFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.normalFrameCount);
+		header.texCoordFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.texCoordFrameCount);
+		header.colorFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.colorFrameCount);
+		header.pointCount = Shared::PlatformByteOrder::toCommonEndian(header.pointCount);
+		header.indexCount = Shared::PlatformByteOrder::toCommonEndian(header.indexCount);
+		header.properties = Shared::PlatformByteOrder::toCommonEndian(header.properties);
+		for(unsigned int i = 0; i < 64; ++i) {
+			header.texName[i] = Shared::PlatformByteOrder::toCommonEndian(header.texName[i]);
+		}
+	}
+}
+
+void fromEndianMeshHeaderV3(MeshHeaderV3 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.vertexFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.vertexFrameCount);
+		header.normalFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.normalFrameCount);
+		header.texCoordFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.texCoordFrameCount);
+		header.colorFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.colorFrameCount);
+		header.pointCount = Shared::PlatformByteOrder::fromCommonEndian(header.pointCount);
+		header.indexCount = Shared::PlatformByteOrder::fromCommonEndian(header.indexCount);
+		header.properties = Shared::PlatformByteOrder::fromCommonEndian(header.properties);
+		for(unsigned int i = 0; i < 64; ++i) {
+			header.texName[i] = Shared::PlatformByteOrder::fromCommonEndian(header.texName[i]);
+		}
+	}
+}
+
+void toEndianMeshHeaderV2(MeshHeaderV2 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.vertexFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.vertexFrameCount);
+		header.normalFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.normalFrameCount);
+		header.texCoordFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.texCoordFrameCount);
+		header.colorFrameCount = Shared::PlatformByteOrder::toCommonEndian(header.colorFrameCount);
+		header.pointCount = Shared::PlatformByteOrder::toCommonEndian(header.pointCount);
+		header.indexCount = Shared::PlatformByteOrder::toCommonEndian(header.indexCount);
+		header.hasTexture = Shared::PlatformByteOrder::toCommonEndian(header.hasTexture);
+		header.primitive = Shared::PlatformByteOrder::toCommonEndian(header.primitive);
+		header.cullFace = Shared::PlatformByteOrder::toCommonEndian(header.cullFace);
+
+		for(unsigned int i = 0; i < 64; ++i) {
+			header.texName[i] = Shared::PlatformByteOrder::toCommonEndian(header.texName[i]);
+		}
+	}
+}
+
+void fromEndianMeshHeaderV2(MeshHeaderV2 &header) {
+	static bool bigEndianSystem = Shared::PlatformByteOrder::isBigEndian();
+	if(bigEndianSystem == true) {
+		header.vertexFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.vertexFrameCount);
+		header.normalFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.normalFrameCount);
+		header.texCoordFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.texCoordFrameCount);
+		header.colorFrameCount = Shared::PlatformByteOrder::fromCommonEndian(header.colorFrameCount);
+		header.pointCount = Shared::PlatformByteOrder::fromCommonEndian(header.pointCount);
+		header.indexCount = Shared::PlatformByteOrder::fromCommonEndian(header.indexCount);
+		header.hasTexture = Shared::PlatformByteOrder::fromCommonEndian(header.hasTexture);
+		header.primitive = Shared::PlatformByteOrder::fromCommonEndian(header.primitive);
+		header.cullFace = Shared::PlatformByteOrder::fromCommonEndian(header.cullFace);
+
+		for(unsigned int i = 0; i < 64; ++i) {
+			header.texName[i] = Shared::PlatformByteOrder::fromCommonEndian(header.texName[i]);
+		}
+	}
+}
+
 // =====================================================
 //	class Mesh
 // =====================================================
@@ -47,6 +207,8 @@ Mesh::Mesh() {
 	vertexCount= 0;
 	indexCount= 0;
 	texCoordFrameCount = 0;
+	opacity = 0.0f;
+	specularPower = 0.0f;
 
 	vertices= NULL;
 	normals= NULL;
@@ -62,6 +224,7 @@ Mesh::Mesh() {
 
 	twoSided= false;
 	customColor= false;
+	noSelect= false;
 
 	textureFlags=0;
 
@@ -78,10 +241,38 @@ Mesh::~Mesh() {
 }
 
 void Mesh::init() {
-	vertices= new Vec3f[frameCount*vertexCount];
-	normals= new Vec3f[frameCount*vertexCount];
-	texCoords= new Vec2f[vertexCount];
-	indices= new uint32[indexCount];
+	try {
+		vertices= new Vec3f[frameCount*vertexCount];
+	}
+	catch(bad_alloc& ba) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,(frameCount*vertexCount),ba.what());
+		throw megaglest_runtime_error(szBuf);
+	}
+	try {
+		normals= new Vec3f[frameCount*vertexCount];
+	}
+	catch(bad_alloc& ba) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,(frameCount*vertexCount),ba.what());
+		throw megaglest_runtime_error(szBuf);
+	}
+	try {
+		texCoords= new Vec2f[vertexCount];
+	}
+	catch(bad_alloc& ba) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,vertexCount,ba.what());
+		throw megaglest_runtime_error(szBuf);
+	}
+	try {
+		indices= new uint32[indexCount];
+	}
+	catch(bad_alloc& ba) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,indexCount,ba.what());
+		throw megaglest_runtime_error(szBuf);
+	}
 }
 
 void Mesh::end() {
@@ -98,8 +289,7 @@ void Mesh::end() {
 	delete [] indices;
 	indices=NULL;
 
-	delete interpolationData;
-	interpolationData=NULL;
+	cleanupInterpolationData();
 
 	if(textureManager != NULL) {
 		for(int i = 0; i < meshTextureCount; ++i) {
@@ -116,7 +306,15 @@ void Mesh::end() {
 // ========================== shadows & interpolation =========================
 
 void Mesh::buildInterpolationData(){
+	if(interpolationData != NULL) {
+		printf("**WARNING possible memory leak [Mesh::buildInterpolationData()]\n");
+	}
 	interpolationData= new InterpolationData(this);
+}
+
+void Mesh::cleanupInterpolationData() {
+	delete interpolationData;
+	interpolationData=NULL;
 }
 
 void Mesh::updateInterpolationData(float t, bool cycle) {
@@ -134,13 +332,13 @@ void Mesh::updateInterpolationVertices(float t, bool cycle) {
 void Mesh::BuildVBOs() {
 	if(getVBOSupported() == true) {
 		if(hasBuiltVBOs == false) {
-			//printf("In [%s::%s Line: %d] setting up a VBO...\n",__FILE__,__FUNCTION__,__LINE__);
+			//printf("In [%s::%s Line: %d] setting up a VBO...\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 			// Generate And Bind The Vertex Buffer
 			glGenBuffersARB( 1,(GLuint*) &m_nVBOVertices );					// Get A Valid Name
 			glBindBufferARB( GL_ARRAY_BUFFER_ARB, m_nVBOVertices );			// Bind The Buffer
 			// Load The Data
-			glBufferDataARB( GL_ARRAY_BUFFER_ARB,  sizeof(Vec3f)*frameCount*vertexCount, getInterpolationData()->getVertices(), GL_STATIC_DRAW_ARB );
+			glBufferDataARB( GL_ARRAY_BUFFER_ARB,  sizeof(Vec3f)*frameCount*vertexCount, vertices, GL_STATIC_DRAW_ARB );
 			glBindBufferARB(GL_ARRAY_BUFFER_ARB, 0);
 
 			// Generate And Bind The Texture Coordinate Buffer
@@ -154,7 +352,7 @@ void Mesh::BuildVBOs() {
 			glGenBuffersARB( 1, (GLuint*)&m_nVBONormals );					// Get A Valid Name
 			glBindBufferARB( GL_ARRAY_BUFFER_ARB, m_nVBONormals );			// Bind The Buffer
 			// Load The Data
-			glBufferDataARB( GL_ARRAY_BUFFER_ARB,  sizeof(Vec3f)*frameCount*vertexCount, getInterpolationData()->getNormals(), GL_STATIC_DRAW_ARB );
+			glBufferDataARB( GL_ARRAY_BUFFER_ARB,  sizeof(Vec3f)*frameCount*vertexCount, normals, GL_STATIC_DRAW_ARB );
 			glBindBufferARB(GL_ARRAY_BUFFER_ARB, 0);
 
 			// Generate And Bind The Index Buffer
@@ -212,23 +410,28 @@ string Mesh::findAlternateTexture(vector<string> conversionList, string textureF
 
 void Mesh::loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
 		bool deletePixMapAfterLoad, std::map<string,vector<pair<string, string> > > *loadedFileList,
-		string sourceLoader) {
+		string sourceLoader,string modelFile) {
 	this->textureManager = textureManager;
 	//read header
 	MeshHeaderV2 meshHeader;
 	size_t readBytes = fread(&meshHeader, sizeof(MeshHeaderV2), 1, f);
-
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianMeshHeaderV2(meshHeader);
 
 	if(meshHeader.normalFrameCount != meshHeader.vertexFrameCount) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"Old v2 model: vertex frame count different from normal frame count [v = %d, n = %d] meshIndex = %d",meshHeader.vertexFrameCount,meshHeader.normalFrameCount,meshIndex);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Old v2 model: vertex frame count different from normal frame count [v = %d, n = %d] meshIndex = %d modelFile [%s]",meshHeader.vertexFrameCount,meshHeader.normalFrameCount,meshIndex,modelFile.c_str());
+		throw megaglest_runtime_error(szBuf,true);
 	}
 
 	if(meshHeader.texCoordFrameCount != 1) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"Old v2 model: texture coord frame count is not 1 [t = %d] meshIndex = %d",meshHeader.texCoordFrameCount,meshIndex);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Old v2 model: texture coord frame count is not 1 [t = %d] meshIndex = %d modelFile [%s]",meshHeader.texCoordFrameCount,meshIndex,modelFile.c_str());
+		throw megaglest_runtime_error(szBuf,true);
 	}
 
 	//init
@@ -242,8 +445,9 @@ void Mesh::loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *tex
 	//misc
 	twoSided= false;
 	customColor= false;
+	noSelect= false;
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Load v2, this = %p Found meshHeader.hasTexture = %d, texName [%s] mtDiffuse = %d meshIndex = %d\n",this,meshHeader.hasTexture,toLower(reinterpret_cast<char*>(meshHeader.texName)).c_str(),mtDiffuse,meshIndex);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Load v2, this = %p Found meshHeader.hasTexture = %d, texName [%s] mtDiffuse = %d meshIndex = %d modelFile [%s]\n",this,meshHeader.hasTexture,toLower(reinterpret_cast<char*>(meshHeader.texName)).c_str(),mtDiffuse,meshIndex,modelFile.c_str());
 
 	textureFlags= 0;
 	if(meshHeader.hasTexture) {
@@ -259,6 +463,8 @@ void Mesh::loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *tex
         }
 		texPath += texturePaths[mtDiffuse];
 
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] v2 model texture [%s] meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshIndex,modelFile.c_str());
+
 		textures[mtDiffuse]= dynamic_cast<Texture2D*>(textureManager->getTexture(texPath));
 		if(textures[mtDiffuse] == NULL) {
 			if(fileExists(texPath) == false) {
@@ -270,6 +476,8 @@ void Mesh::loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *tex
 				texPath = findAlternateTexture(conversionList, texPath);
 			}
 			if(fileExists(texPath) == true) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] v2 model texture [%s] meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshIndex,modelFile.c_str());
+
 				textures[mtDiffuse]= textureManager->newTexture2D();
 				textures[mtDiffuse]->load(texPath);
 				if(loadedFileList) {
@@ -282,38 +490,88 @@ void Mesh::loadV2(int meshIndex, const string &dir, FILE *f, TextureManager *tex
 				}
 			}
 			else {
-				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v2 model is missing texture [%s] meshIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,texPath.c_str(),meshIndex);
+				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v2 model is missing texture [%s] meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshIndex,modelFile.c_str());
 			}
 		}
 	}
 
 	//read data
 	readBytes = fread(vertices, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(vertices, frameCount*vertexCount);
+
 	readBytes = fread(normals, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
-	if(textures[mtDiffuse]!=NULL){
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(normals, frameCount*vertexCount);
+
+	if(textureFlags & (1<<mtDiffuse)) {
 		readBytes = fread(texCoords, sizeof(Vec2f)*vertexCount, 1, f);
+		if(readBytes != 1 && vertexCount != 0) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		fromEndianVecArray<Vec2f>(texCoords, vertexCount);
 	}
 	readBytes = fread(&diffuseColor, sizeof(Vec3f), 1, f);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(&diffuseColor, 1);
+
 	readBytes = fread(&opacity, sizeof(float32), 1, f);
-	fseek(f, sizeof(Vec4f)*(meshHeader.colorFrameCount-1), SEEK_CUR);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	opacity = Shared::PlatformByteOrder::fromCommonEndian(opacity);
+
+	int seek_result = fseek(f, sizeof(Vec4f)*(meshHeader.colorFrameCount-1), SEEK_CUR);
+	if(seek_result != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fseek returned failure = %d [%u] on line: %d.",seek_result,indexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
 	readBytes = fread(indices, sizeof(uint32)*indexCount, 1, f);
+	if(readBytes != 1 && indexCount != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,indexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	Shared::PlatformByteOrder::fromEndianTypeArray<uint32>(indices, indexCount);
 }
 
 void Mesh::loadV3(int meshIndex, const string &dir, FILE *f,
 		TextureManager *textureManager,bool deletePixMapAfterLoad,
 		std::map<string,vector<pair<string, string> > > *loadedFileList,
-		string sourceLoader) {
+		string sourceLoader,string modelFile) {
 	this->textureManager = textureManager;
 
 	//read header
 	MeshHeaderV3 meshHeader;
 	size_t readBytes = fread(&meshHeader, sizeof(MeshHeaderV3), 1, f);
-
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianMeshHeaderV3(meshHeader);
 
 	if(meshHeader.normalFrameCount != meshHeader.vertexFrameCount) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"Old v3 model: vertex frame count different from normal frame count [v = %d, n = %d] meshIndex = %d",meshHeader.vertexFrameCount,meshHeader.normalFrameCount,meshIndex);
-		throw runtime_error(szBuf);
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Old v3 model: vertex frame count different from normal frame count [v = %d, n = %d] meshIndex = %d modelFile [%s]",meshHeader.vertexFrameCount,meshHeader.normalFrameCount,meshIndex,modelFile.c_str());
+		throw megaglest_runtime_error(szBuf,true);
 	}
 
 	//init
@@ -327,13 +585,14 @@ void Mesh::loadV3(int meshIndex, const string &dir, FILE *f,
 	//misc
 	twoSided= (meshHeader.properties & mp3TwoSided) != 0;
 	customColor= (meshHeader.properties & mp3CustomColor) != 0;
+	noSelect = false;
 
 	textureFlags= 0;
 	if((meshHeader.properties & mp3NoTexture) != mp3NoTexture) {
 		textureFlags= 1;
 	}
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Load v3, this = %p Found meshHeader.properties = %d, textureFlags = %d, texName [%s] mtDiffuse = %d meshIndex = %d\n",this,meshHeader.properties,textureFlags,toLower(reinterpret_cast<char*>(meshHeader.texName)).c_str(),mtDiffuse,meshIndex);
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Load v3, this = %p Found meshHeader.properties = %d, textureFlags = %d, texName [%s] mtDiffuse = %d meshIndex = %d modelFile [%s]\n",this,meshHeader.properties,textureFlags,toLower(reinterpret_cast<char*>(meshHeader.texName)).c_str(),mtDiffuse,meshIndex,modelFile.c_str());
 
 	//texture
 	if((meshHeader.properties & mp3NoTexture) != mp3NoTexture && textureManager!=NULL){
@@ -344,6 +603,8 @@ void Mesh::loadV3(int meshIndex, const string &dir, FILE *f,
         	endPathWithSlash(texPath);
         }
 		texPath += texturePaths[mtDiffuse];
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] v3 model texture [%s] meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshIndex,modelFile.c_str());
 
 		textures[mtDiffuse]= dynamic_cast<Texture2D*>(textureManager->getTexture(texPath));
 		if(textures[mtDiffuse] == NULL) {
@@ -357,6 +618,8 @@ void Mesh::loadV3(int meshIndex, const string &dir, FILE *f,
 			}
 
 			if(fileExists(texPath) == true) {
+				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] v3 model texture [%s] meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshIndex,modelFile.c_str());
+
 				textures[mtDiffuse]= textureManager->newTexture2D();
 				textures[mtDiffuse]->load(texPath);
 				if(loadedFileList) {
@@ -370,32 +633,78 @@ void Mesh::loadV3(int meshIndex, const string &dir, FILE *f,
 				}
 			}
 			else {
-				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v3 model is missing texture [%s] meshHeader.properties = %d meshIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,texPath.c_str(),meshHeader.properties,meshIndex);
+				SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v3 model is missing texture [%s] meshHeader.properties = %d meshIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,texPath.c_str(),meshHeader.properties,meshIndex,modelFile.c_str());
 			}
 		}
 	}
 
 	//read data
 	readBytes = fread(vertices, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(vertices, frameCount*vertexCount);
+
 	readBytes = fread(normals, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
-	if(textures[mtDiffuse]!=NULL){
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(normals, frameCount*vertexCount);
+
+	if(textureFlags & (1<<mtDiffuse)) {
 		for(unsigned int i=0; i<meshHeader.texCoordFrameCount; ++i){
 			readBytes = fread(texCoords, sizeof(Vec2f)*vertexCount, 1, f);
+			if(readBytes != 1 && vertexCount != 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			fromEndianVecArray<Vec2f>(texCoords, vertexCount);
 		}
 	}
 	readBytes = fread(&diffuseColor, sizeof(Vec3f), 1, f);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(&diffuseColor, 1);
+
 	readBytes = fread(&opacity, sizeof(float32), 1, f);
-	fseek(f, sizeof(Vec4f)*(meshHeader.colorFrameCount-1), SEEK_CUR);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	opacity = Shared::PlatformByteOrder::fromCommonEndian(opacity);
+
+	int seek_result = fseek(f, sizeof(Vec4f)*(meshHeader.colorFrameCount-1), SEEK_CUR);
+	if(seek_result != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fseek returned failure = %d [%u] on line: %d.",seek_result,indexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 	readBytes = fread(indices, sizeof(uint32)*indexCount, 1, f);
+	if(readBytes != 1 && indexCount != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,indexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	Shared::PlatformByteOrder::fromEndianTypeArray<uint32>(indices, indexCount);
 }
 
 Texture2D* Mesh::loadMeshTexture(int meshIndex, int textureIndex,
 		TextureManager *textureManager, string textureFile,
 		int textureChannelCount, bool &textureOwned, bool deletePixMapAfterLoad,
 		std::map<string,vector<pair<string, string> > > *loadedFileList,
-		string sourceLoader) {
+		string sourceLoader,string modelFile) {
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] #1 load texture [%s]\n",__FUNCTION__,textureFile.c_str());
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] #1 load texture [%s] modelFile [%s]\n",__FUNCTION__,textureFile.c_str(),modelFile.c_str());
 
 	Texture2D* texture = dynamic_cast<Texture2D*>(textureManager->getTexture(textureFile));
 	if(texture == NULL) {
@@ -411,6 +720,7 @@ Texture2D* Mesh::loadMeshTexture(int meshIndex, int textureIndex,
 		}
 
 		if(fileExists(textureFile) == true) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] #3 load texture [%s] modelFile [%s]\n",__FUNCTION__,textureFile.c_str(),modelFile.c_str());
 			//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] texture exists loading [%s]\n",__FUNCTION__,textureFile.c_str());
 
 			texture = textureManager->newTexture2D();
@@ -433,8 +743,8 @@ Texture2D* Mesh::loadMeshTexture(int meshIndex, int textureIndex,
 			//if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] texture inited [%s]\n",__FUNCTION__,textureFile.c_str());
 		}
 		else {
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] #3 cannot load texture [%s]\n",__FUNCTION__,textureFile.c_str());
-			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v4 model is missing texture [%s] textureFlags = %d meshIndex = %d textureIndex = %d\n",__FILE__,__FUNCTION__,__LINE__,textureFile.c_str(),textureFlags,meshIndex,textureIndex);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s] #3 cannot load texture [%s] modelFile [%s]\n",__FUNCTION__,textureFile.c_str(),modelFile.c_str());
+			SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error v4 model is missing texture [%s] textureFlags = %d meshIndex = %d textureIndex = %d modelFile [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,textureFile.c_str(),textureFlags,meshIndex,textureIndex,modelFile.c_str());
 		}
 	}
 
@@ -443,12 +753,18 @@ Texture2D* Mesh::loadMeshTexture(int meshIndex, int textureIndex,
 
 void Mesh::load(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
 				bool deletePixMapAfterLoad,std::map<string,vector<pair<string, string> > > *loadedFileList,
-				string sourceLoader) {
+				string sourceLoader,string modelFile) {
 	this->textureManager = textureManager;
-
+	
 	//read header
 	MeshHeader meshHeader;
 	size_t readBytes = fread(&meshHeader, sizeof(MeshHeader), 1, f);
+	if(readBytes != 1) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianMeshHeader(meshHeader);
 
 	name = reinterpret_cast<char*>(meshHeader.name);
 
@@ -464,13 +780,18 @@ void Mesh::load(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 	//properties
 	customColor= (meshHeader.properties & mpfCustomColor) != 0;
 	twoSided= (meshHeader.properties & mpfTwoSided) != 0;
+	noSelect= (meshHeader.properties & mpfNoSelect) != 0;
 
 	//material
 	diffuseColor= Vec3f(meshHeader.diffuseColor);
 	specularColor= Vec3f(meshHeader.specularColor);
 	specularPower= meshHeader.specularPower;
 	opacity= meshHeader.opacity;
-
+	if(opacity==0){
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("found a mesh with opacity=0 in header, using opacity=1 to see it now \n");
+		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("file: %s\n",modelFile.c_str());
+		opacity=1.0f;
+	}
 	textureFlags= meshHeader.textures;
 
 	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Load v4, this = %p Found meshHeader.textures = %d meshIndex = %d\n",this,meshHeader.textures,meshIndex);
@@ -478,33 +799,72 @@ void Mesh::load(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 	//maps
 	uint32 flag= 1;
 	for(int i = 0; i < meshTextureCount; ++i) {
-		if((meshHeader.textures & flag) && textureManager != NULL) {
-			uint8 cMapPath[mapPathSize];
+		if(meshHeader.textures & flag) {
+			uint8 cMapPath[mapPathSize+1];
+			memset(&cMapPath[0],0,mapPathSize+1);
 			readBytes = fread(cMapPath, mapPathSize, 1, f);
-			string mapPath= toLower(reinterpret_cast<char*>(cMapPath));
+			cMapPath[mapPathSize] = 0;
+			if(readBytes != 1 && mapPathSize != 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,mapPathSize,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			Shared::PlatformByteOrder::fromEndianTypeArray<uint8>(cMapPath, mapPathSize);
+
+			char mapPathString[mapPathSize+1]="";
+			memset(&mapPathString[0],0,mapPathSize+1);
+			memcpy(&mapPathString[0],reinterpret_cast<char*>(cMapPath),mapPathSize);
+			string mapPath= toLower(mapPathString);
 
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("mapPath [%s] meshHeader.textures = %d flag = %d (meshHeader.textures & flag) = %d meshIndex = %d i = %d\n",mapPath.c_str(),meshHeader.textures,flag,(meshHeader.textures & flag),meshIndex,i);
 
 			string mapFullPath= dir;
 			if(mapFullPath != "") {
-                endPathWithSlash(mapFullPath);
+				endPathWithSlash(mapFullPath);
 			}
 			mapFullPath += mapPath;
-
-			textures[i] = loadMeshTexture(meshIndex, i, textureManager, mapFullPath,
-					meshTextureChannelCount[i],texturesOwned[i],
-					deletePixMapAfterLoad, loadedFileList, sourceLoader);
+			if(textureManager) {
+				textures[i] = loadMeshTexture(meshIndex, i, textureManager, mapFullPath,
+						meshTextureChannelCount[i],texturesOwned[i],
+						deletePixMapAfterLoad, loadedFileList, sourceLoader,modelFile);
+			}
 		}
 		flag *= 2;
 	}
 
 	//read data
 	readBytes = fread(vertices, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(vertices, frameCount*vertexCount);
+
 	readBytes = fread(normals, sizeof(Vec3f)*frameCount*vertexCount, 1, f);
+	if(readBytes != 1 && (frameCount * vertexCount) != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	fromEndianVecArray<Vec3f>(normals, frameCount*vertexCount);
+
 	if(meshHeader.textures!=0){
 		readBytes = fread(texCoords, sizeof(Vec2f)*vertexCount, 1, f);
+		if(readBytes != 1 && vertexCount != 0) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u][%u] on line: %d.",readBytes,frameCount,vertexCount,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		fromEndianVecArray<Vec2f>(texCoords, vertexCount);
 	}
 	readBytes = fread(indices, sizeof(uint32)*indexCount, 1, f);
+	if(readBytes != 1 && indexCount != 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,indexCount,__LINE__);
+		throw megaglest_runtime_error(szBuf);
+	}
+	Shared::PlatformByteOrder::fromEndianTypeArray<uint32>(indices, indexCount);
 
 	//tangents
 	if(textures[mtNormal]!=NULL){
@@ -514,7 +874,7 @@ void Mesh::load(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 
 void Mesh::save(int meshIndex, const string &dir, FILE *f, TextureManager *textureManager,
 		string convertTextureToFormat, std::map<string,int> &textureDeleteList,
-		bool keepsmallest) {
+		bool keepsmallest,string modelFile) {
 	MeshHeader meshHeader;
 	memset(&meshHeader, 0, sizeof(struct MeshHeader));
 
@@ -536,6 +896,9 @@ void Mesh::save(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 	}
 	if(twoSided) {
 		meshHeader.properties |= mpfTwoSided;
+	}
+	if(noSelect) {
+		meshHeader.properties |= mpfNoSelect;
 	}
 
 	meshHeader.textures = textureFlags;
@@ -614,7 +977,7 @@ void Mesh::save(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 						}
 					}
 					else {
-						throw runtime_error("Unsupported texture format: [" + convertTextureToFormat + "]");
+						throw megaglest_runtime_error("Unsupported texture format: [" + convertTextureToFormat + "]");
 					}
 
 					//textureManager->endTexture(texture);
@@ -624,17 +987,20 @@ void Mesh::save(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 						texture = loadMeshTexture(meshIndex, i, textureManager,file,
 													meshTextureChannelCount[i],
 													texturesOwned[i],
-													false);
+													false,
+													NULL,
+													"",
+													modelFile);
 					}
 				}
 
 				file = extractFileFromDirectoryPath(texture->getPath());
 
 				if(file.length() > mapPathSize) {
-					throw runtime_error("file.length() > mapPathSize, file.length() = " + intToStr(file.length()));
+					throw megaglest_runtime_error("file.length() > mapPathSize, file.length() = " + intToStr(file.length()));
 				}
 				else if(file.length() == 0) {
-					throw runtime_error("file.length() == 0");
+					throw megaglest_runtime_error("file.length() == 0");
 				}
 
 				if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Save, new texture file [%s]\n",file.c_str());
@@ -659,7 +1025,15 @@ void Mesh::save(int meshIndex, const string &dir, FILE *f, TextureManager *textu
 
 void Mesh::computeTangents(){
 	delete [] tangents;
-	tangents= new Vec3f[vertexCount];
+	try {
+		tangents= new Vec3f[vertexCount];
+	}
+	catch(bad_alloc& ba) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,vertexCount,ba.what());
+		throw megaglest_runtime_error(szBuf);
+	}
+
 	for(unsigned int i=0; i<vertexCount; ++i){
 		tangents[i]= Vec3f(0.f);
 	}
@@ -710,9 +1084,13 @@ void Mesh::deletePixels() {
 // ==================== constructor & destructor ====================
 
 Model::Model() {
-	assert(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == false);
+	if(GlobalStaticFlags::getIsNonGraphicalModeEnabled() == true) {
+		throw megaglest_runtime_error("Loading graphics in headless server mode not allowed!");
+	}
+
 	meshCount		= 0;
 	meshes			= NULL;
+	fileVersion		= 0;
 	textureManager	= NULL;
 	lastTData		= -1;
 	lastCycleData	= false;
@@ -787,7 +1165,7 @@ void Model::load(const string &path, bool deletePixMapAfterLoad,
 		loadG3d(path,deletePixMapAfterLoad,loadedFileList, this->sourceLoader);
 	}
 	else {
-		throw runtime_error("Unknown model format: " + extension);
+		throw megaglest_runtime_error("Unknown model format: " + extension);
 	}
 }
 
@@ -798,7 +1176,7 @@ void Model::save(const string &path, string convertTextureToFormat,
 		saveG3d(path,convertTextureToFormat,keepsmallest);
 	}
 	else {
-		throw runtime_error("Unknown model format: " + extension);
+		throw megaglest_runtime_error("Unknown model format: " + extension);
 	}
 }
 
@@ -814,8 +1192,8 @@ void Model::loadG3d(const string &path, bool deletePixMapAfterLoad,
 		FILE *f=fopen(path.c_str(),"rb");
 #endif
 		if (f == NULL) {
-		    printf("In [%s::%s] cannot load file = [%s]\n",__FILE__,__FUNCTION__,path.c_str());
-			throw runtime_error("Error opening g3d model file [" + path + "]");
+		    printf("In [%s::%s] cannot load file = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,path.c_str());
+			throw megaglest_runtime_error("Error opening g3d model file [" + path + "]",true);
 		}
 
 		if(loadedFileList) {
@@ -827,11 +1205,23 @@ void Model::loadG3d(const string &path, bool deletePixMapAfterLoad,
 		//file header
 		FileHeader fileHeader;
 		size_t readBytes = fread(&fileHeader, sizeof(FileHeader), 1, f);
-		if(strncmp(reinterpret_cast<char*>(fileHeader.id), "G3D", 3) != 0) {
+		if(readBytes != 1) {
+			fclose(f);
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+			throw megaglest_runtime_error(szBuf);
+		}
+		fromEndianFileHeader(fileHeader);
+
+		char fileId[4] = "";
+		memset(&fileId[0],0,4);
+		memcpy(&fileId[0],reinterpret_cast<char*>(fileHeader.id),3);
+
+		if(strncmp(fileId, "G3D", 3) != 0) {
 			fclose(f);
 			f = NULL;
-		    printf("In [%s::%s] file = [%s] fileheader.id = [%s][%c]\n",__FILE__,__FUNCTION__,path.c_str(),reinterpret_cast<char*>(fileHeader.id),fileHeader.id[0]);
-			throw runtime_error("Not a valid G3D model");
+		    printf("In [%s::%s] file = [%s] fileheader.id = [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,path.c_str(),fileId);
+			throw megaglest_runtime_error("Not a valid G3D model",true);
 		}
 		fileVersion= fileHeader.version;
 
@@ -842,57 +1232,110 @@ void Model::loadG3d(const string &path, bool deletePixMapAfterLoad,
 			//model header
 			ModelHeader modelHeader;
 			readBytes = fread(&modelHeader, sizeof(ModelHeader), 1, f);
+			if(readBytes != 1) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " on line: %d.",readBytes,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			fromEndianModelHeader(modelHeader);
+
 			meshCount= modelHeader.meshCount;
 
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("meshCount = %d\n",meshCount);
 
 			if(modelHeader.type != mtMorphMesh) {
-				throw runtime_error("Invalid model type");
+				throw megaglest_runtime_error("Invalid model type");
 			}
 
 			//load meshes
-			meshes= new Mesh[meshCount];
+			try {
+				meshes= new Mesh[meshCount];
+			}
+			catch(bad_alloc& ba) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,meshCount,ba.what());
+				throw megaglest_runtime_error(szBuf);
+			}
+
 			for(uint32 i = 0; i < meshCount; ++i) {
 				meshes[i].load(i, dir, f, textureManager,deletePixMapAfterLoad,
-						loadedFileList,sourceLoader);
+						loadedFileList,sourceLoader,path);
 				meshes[i].buildInterpolationData();
 			}
 		}
 		//version 3
 		else if(fileHeader.version == 3) {
 			readBytes = fread(&meshCount, sizeof(meshCount), 1, f);
+			if(readBytes != 1 && meshCount != 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,meshCount,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			meshCount = Shared::PlatformByteOrder::fromCommonEndian(meshCount);
 
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("meshCount = %d\n",meshCount);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("meshCount = %u\n",meshCount);
 
-			meshes= new Mesh[meshCount];
+			try {
+				meshes= new Mesh[meshCount];
+			}
+			catch(bad_alloc& ba) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,meshCount,ba.what());
+				throw megaglest_runtime_error(szBuf);
+			}
+
 			for(uint32 i = 0; i < meshCount; ++i) {
 				meshes[i].loadV3(i, dir, f, textureManager,deletePixMapAfterLoad,
-						loadedFileList,sourceLoader);
+						loadedFileList,sourceLoader,path);
 				meshes[i].buildInterpolationData();
 			}
 		}
 		//version 2
 		else if(fileHeader.version == 2) {
 			readBytes = fread(&meshCount, sizeof(meshCount), 1, f);
+			if(readBytes != 1 && meshCount != 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"fread returned wrong size = " MG_SIZE_T_SPECIFIER " [%u] on line: %d.",readBytes,meshCount,__LINE__);
+				throw megaglest_runtime_error(szBuf);
+			}
+			meshCount = Shared::PlatformByteOrder::fromCommonEndian(meshCount);
+
 
 			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("meshCount = %d\n",meshCount);
 
-			meshes= new Mesh[meshCount];
+			try {
+				meshes= new Mesh[meshCount];
+			}
+			catch(bad_alloc& ba) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"Error on line: %d size: %d msg: %s\n",__LINE__,meshCount,ba.what());
+				throw megaglest_runtime_error(szBuf);
+			}
+
 			for(uint32 i = 0; i < meshCount; ++i){
 				meshes[i].loadV2(i,dir, f, textureManager,deletePixMapAfterLoad,
-						loadedFileList,sourceLoader);
+						loadedFileList,sourceLoader,path);
 				meshes[i].buildInterpolationData();
 			}
 		}
 		else {
-			throw runtime_error("Invalid model version: "+ intToStr(fileHeader.version));
+			throw megaglest_runtime_error("Invalid model version: "+ intToStr(fileHeader.version));
 		}
 
 		fclose(f);
+
+		autoJoinMeshFrames();
+    }
+    catch(megaglest_runtime_error& ex) {
+    	//printf("1111111 ex.wantStackTrace() = %d\n",ex.wantStackTrace());
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
+		//printf("2222222\n");
+		throw megaglest_runtime_error("Exception caught loading 3d file: " + path +"\n"+ ex.what(),!ex.wantStackTrace());
     }
 	catch(exception &e){
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Exception caught loading 3d file: " + path +"\n"+ e.what());
+		//abort();
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		throw megaglest_runtime_error("Exception caught loading 3d file: " + path +"\n"+ e.what());
 	}
 }
 
@@ -907,7 +1350,7 @@ void Model::saveG3d(const string &path, string convertTextureToFormat,
 	FILE *f= fopen(tempModelFilename.c_str(), "wb");
 #endif
 	if(f == NULL) {
-		throw runtime_error("Cant open file for writing: [" + tempModelFilename + "]");
+		throw megaglest_runtime_error("Cant open file for writing: [" + tempModelFilename + "]");
 	}
 
 	convertTextureToFormat = toLower(convertTextureToFormat);
@@ -934,7 +1377,7 @@ void Model::saveG3d(const string &path, string convertTextureToFormat,
 		for(uint32 i = 0; i < meshCount; ++i) {
 			meshes[i].save(i,tempModelFilename, f, textureManager,
 					convertTextureToFormat,textureDeleteList,
-					keepsmallest);
+					keepsmallest,path);
 		}
 
 		removeFile(path);
@@ -947,7 +1390,7 @@ void Model::saveG3d(const string &path, string convertTextureToFormat,
 		}
 	}
 	else {
-		throw runtime_error("Invalid model version: "+ intToStr(fileHeader.version));
+		throw megaglest_runtime_error("Invalid model version: "+ intToStr(fileHeader.version));
 	}
 
 	fclose(f);
@@ -958,6 +1401,350 @@ void Model::deletePixels() {
 		meshes[i].deletePixels();
 	}
 }
+
+class MeshContainer {
+protected:
+	int indexValue;
+	std::vector<Mesh *> meshes;
+
+public:
+
+	MeshContainer() {
+		this->indexValue = -1;
+	}
+	void add(int index, Mesh *mesh) {
+		if(this->indexValue < 0) {
+			this->indexValue = index;
+		}
+		meshes.push_back(mesh);
+	}
+	int index() {
+		return indexValue;
+	}
+	int size() {
+		return (int)meshes.size();
+	}
+	std::vector<Mesh *>  get() {
+		return meshes;
+	}
+};
+
+void Mesh::setVertices(Vec3f *data, uint32 count) {
+	delete [] this->vertices;
+	this->vertices = data;
+
+	this->vertexCount = count;
+}
+void Mesh::setNormals(Vec3f *data, uint32 count) {
+	delete [] this->normals;
+	this->normals = data;
+
+	this->vertexCount = count;
+}
+
+void Mesh::setTexCoords(Vec2f *data, uint32 count) {
+	delete [] this->texCoords;
+	this->texCoords = data;
+
+	this->vertexCount = count;
+}
+
+void Mesh::setIndices(uint32 *data, uint32 count) {
+	delete [] this->indices;
+	this->indices = data;
+
+	this->indexCount = count;
+}
+
+void Mesh::copyInto(Mesh *dest, bool ignoreInterpolationData,
+								bool destinationOwnsTextures) {
+
+	for(int index = 0; index < meshTextureCount; ++index){
+		dest->textures[index] 		= this->textures[index];
+		dest->texturesOwned[index] 	= this->texturesOwned[index];
+		dest->texturePaths[index] 	= this->texturePaths[index];
+
+		if(destinationOwnsTextures == true) {
+			this->texturesOwned[index] = false;
+		}
+	}
+
+	dest->name = this->name;
+	//vertex data counts
+	dest->frameCount 			= this->frameCount;
+	dest->vertexCount 			= this->vertexCount;
+	dest->indexCount 			= this->indexCount;
+	dest->texCoordFrameCount 	= this->texCoordFrameCount;
+
+	//vertex data
+	if(dest->vertices != NULL) {
+		delete [] dest->vertices;
+		dest->vertices = NULL;
+	}
+	if(this->vertices != NULL) {
+		dest->vertices = new Vec3f[this->frameCount * this->vertexCount];
+		memcpy(&dest->vertices[0],&this->vertices[0],this->frameCount * this->vertexCount * sizeof(Vec3f));
+	}
+
+	if(dest->normals != NULL) {
+		delete [] dest->normals;
+		dest->normals = NULL;
+	}
+	if(this->normals != NULL) {
+		dest->normals = new Vec3f[this->frameCount * this->vertexCount];
+		memcpy(&dest->normals[0],&this->normals[0],this->frameCount * this->vertexCount * sizeof(Vec3f));
+	}
+
+	if(dest->texCoords != NULL) {
+		delete [] dest->texCoords;
+		dest->texCoords = NULL;
+	}
+	if(this->texCoords != NULL) {
+		dest->texCoords = new Vec2f[this->vertexCount];
+		memcpy(&dest->texCoords[0],&this->texCoords[0],this->vertexCount * sizeof(Vec2f));
+	}
+
+	if(dest->tangents != NULL) {
+		delete [] dest->tangents;
+		dest->tangents = NULL;
+	}
+	if(this->tangents != NULL) {
+		dest->tangents = new Vec3f[this->vertexCount];
+		memcpy(&dest->tangents[0],&this->tangents[0],this->vertexCount * sizeof(Vec3f));
+	}
+
+	if(dest->indices != NULL) {
+		delete [] dest->indices;
+		dest->indices = NULL;
+	}
+	if(this->indices != NULL) {
+		dest->indices = new uint32[this->indexCount];
+		memcpy(&dest->indices[0],&this->indices[0],this->indexCount * sizeof(uint32));
+	}
+
+	//material data
+	dest->diffuseColor 	= this->diffuseColor;
+	dest->specularColor = this->specularColor;
+	dest->specularPower = this->specularPower;
+	dest->opacity 		= this->opacity;
+
+	//properties
+	dest->twoSided 		= this->twoSided;
+	dest->customColor 	= this->customColor;
+	dest->noSelect 		= this->noSelect;
+
+	dest->textureFlags 	= this->textureFlags;
+
+	if(ignoreInterpolationData == false) {
+		dest->interpolationData = this->interpolationData;
+	}
+	dest->textureManager = this->textureManager;
+
+	// Vertex Buffer Object Names
+	dest->hasBuiltVBOs 		= this->hasBuiltVBOs;
+	dest->m_nVBOVertices 	= this-> m_nVBOVertices;
+	dest->m_nVBOTexCoords 	= this->m_nVBOTexCoords;
+	dest->m_nVBONormals 	= this->m_nVBONormals;
+	dest->m_nVBOIndexes 	= this->m_nVBOIndexes;
+}
+
+void Model::autoJoinMeshFrames() {
+
+/*
+	print "auto-joining compatible meshes..."
+        meshes = {}
+        for mesh in self.meshes:
+            key = (mesh.texture,mesh.frame_count,mesh.twoSided|mesh.customColour)
+            if key in meshes:
+                meshes[key].append(mesh)
+            else:
+                meshes[key] = [mesh]
+        for joinable in meshes.values():
+            if len(joinable) < 2: continue
+            base = joinable[0]
+            print "\tjoining to",base
+            for mesh in joinable[1:]:
+                if base.index_count+mesh.index_count > 0xffff:
+                    base = mesh
+                    print "\tjoining to",base
+                    continue
+                print "\t\t",mesh
+                for a,b in zip(base.frames,mesh.frames):
+                    a.vertices.extend(b.vertices)
+                    a.normals.extend(b.normals)
+                if base.texture:
+                    base.textures.extend(mesh.textures)
+                base.indices.extend(index+base.vertex_count for index in mesh.indices)
+                base.vertex_count += mesh.vertex_count
+                base.index_count += mesh.index_count
+                self.meshes.remove(mesh)
+*/
+
+
+
+	bool haveJoinedMeshes = false;
+
+	// First looks for meshes with same texture in the same frame
+	std::map<std::string,MeshContainer> joinedMeshes;
+	for(uint32 index = 0; index < meshCount; ++index) {
+		Mesh &mesh = meshes[index];
+
+		// Duplicate mesh vertices are considered to be those with the same
+		// 1. texture 2. framecount 3. twosided flag value 4. same custom texture color
+
+//		It's possible the texture is missing and will be NULL
+//		if(mesh.getTextureFlags() & 1) {
+//			printf("Mesh has textures:\n");
+//			for(unsigned int meshTexIndex = 0; meshTexIndex < meshTextureCount; ++meshTexIndex) {
+//				printf("Mesh texture index: %d [%p] [%s]\n",meshTexIndex,mesh.getTexture(meshTexIndex),(mesh.getTexture(meshTexIndex) != NULL ? mesh.getTexture(meshTexIndex)->getPath().c_str() : "n/a"));
+//			}
+//		}
+		string mesh_key = ((mesh.getTextureFlags() & 1) && mesh.getTexture(0) ? mesh.getTexture(0)->getPath() : "none");
+		       mesh_key += string("_") + intToStr(mesh.getFrameCount()) +
+		    		       string("_") + intToStr(mesh.getTwoSided()) +
+				           string("_") + intToStr(mesh.getCustomTexture()) +
+				           string("_") + intToStr(mesh.getNoSelect()) +
+				           string("_") + floatToStr(mesh.getOpacity()) +
+				           string("_") + mesh.getDiffuseColor().getString() +
+				           string("_") + mesh.getSpecularColor().getString() +
+				           string("_") + floatToStr(mesh.getSpecularPower());
+
+		joinedMeshes[mesh_key].add(index,&mesh);
+		if(haveJoinedMeshes == false && joinedMeshes[mesh_key].size() > 1) {
+			haveJoinedMeshes = true;
+		}
+	}
+	if(haveJoinedMeshes == true) {
+		//printf("*** Detected Joined meshes for model [%s]\n",fileName.c_str());
+
+		// We have mesh data to join we now create a list in the same order
+		// as the original meshes but each index will have 1 or more meshes
+		// This is done to maintain original mesh ordering
+		std::map<int, std::vector<Mesh *> > orderedMeshes;
+		for(std::map<std::string,MeshContainer >::iterator iterMap = joinedMeshes.begin();
+				iterMap != joinedMeshes.end(); ++iterMap) {
+			orderedMeshes[iterMap->second.index()] = iterMap->second.get();
+
+			//if(iterMap->second.size() > 1) {
+			//	printf("Key [%s] joined meshes: %d\n",iterMap->first.c_str(),iterMap->second.size());
+			//}
+		}
+
+		// Now the real work of creating a new list of joined mesh data
+		Mesh *joinedMeshList = new Mesh[joinedMeshes.size()];
+
+		int index = 0;
+		for(std::map<int, std::vector<Mesh *> >::iterator iterMap = orderedMeshes.begin();
+				iterMap != orderedMeshes.end(); ++iterMap) {
+			//printf("Join index: %d joincount: %d\n",index,iterMap->second.size());
+
+			Mesh *base = &joinedMeshList[index];
+
+			// Deep copy mesh data
+			iterMap->second[0]->copyInto(base, true, true);
+
+			if(iterMap->second.size() > 1) {
+				// Time to join mesh data for this mesh
+				for(unsigned int joinIndex = 1;
+						joinIndex < iterMap->second.size(); ++joinIndex) {
+					Mesh *mesh = iterMap->second[joinIndex];
+					//if(base->getIndexCount() + mesh->getIndexCount() > 0xffff) {
+					//	printf("Not exactly sure what this IF statement is for?\n");
+					//	mesh->copyInto(base, true, true);
+					//}
+					//else {
+						// Need to add verticies for each from from mesh to base
+						uint32 originalBaseVertexCount = base->getVertexCount();
+
+						uint32 newVertexCount =
+								base->getVertexCount() + mesh->getVertexCount();
+
+						uint32 newVertexFrameCount =
+								(base->getFrameCount() * newVertexCount);
+
+						Vec3f *joined_vertices = new Vec3f[newVertexFrameCount];
+						Vec3f *joined_normals = new Vec3f[newVertexFrameCount];
+						uint32 join_index = 0;
+
+						// Join mesh vertices and normals
+						for(unsigned int frameIndex = 0;
+								frameIndex < base->getFrameCount(); ++frameIndex) {
+							uint32 baseIndex = frameIndex * originalBaseVertexCount;
+							uint32 meshIndex = frameIndex * mesh->getVertexCount();
+							//uint32 appendBaseJoinIndex = frameIndex * newVertexCount;
+
+							// first original mesh values get copied
+							memcpy(&joined_vertices[join_index],
+									&base->getVertices()[baseIndex],
+									originalBaseVertexCount * sizeof(Vec3f));
+							memcpy(&joined_normals[join_index],
+									&base->getNormals()[baseIndex],
+									originalBaseVertexCount * sizeof(Vec3f));
+							join_index += originalBaseVertexCount;
+
+							// second joined mesh values get copied
+							memcpy(&joined_vertices[join_index],
+									&mesh->getVertices()[meshIndex],
+									mesh->getVertexCount() * sizeof(Vec3f));
+							memcpy(&joined_normals[join_index],
+									&mesh->getNormals()[meshIndex],
+									mesh->getVertexCount() * sizeof(Vec3f));
+							join_index += mesh->getVertexCount();
+						}
+
+						// update vertex and normal buffers with joined mesh data
+						base->setVertices(joined_vertices, newVertexCount);
+						base->setNormals(joined_normals, newVertexCount);
+
+						// If we have texture coords join them
+						if(base->getTextureFlags() & 1) {
+							Vec2f *joined_texCoords = new Vec2f[newVertexCount];
+
+							// update texture coord buffers with joined mesh data
+							memcpy(&joined_texCoords[0],
+									&base->getTexCoords()[0],
+									originalBaseVertexCount * sizeof(Vec2f));
+							memcpy(&joined_texCoords[originalBaseVertexCount],
+									&mesh->getTexCoords()[0],
+									mesh->getVertexCount() * sizeof(Vec2f));
+
+							base->setTexCoords(joined_texCoords, newVertexCount);
+						}
+
+						// update index buffers with joined mesh data
+						uint32 newindexCount = base->getIndexCount() + mesh->getIndexCount();
+						uint32 *joined_indexes = new uint32[newindexCount];
+
+						uint32 join_index_index = 0;
+						memcpy(&joined_indexes[join_index_index],
+								&base->getIndices()[0],
+								base->getIndexCount() * sizeof(uint32));
+						join_index_index += base->getIndexCount();
+
+						for(unsigned int meshIndex = 0;
+								meshIndex < mesh->getIndexCount(); ++meshIndex) {
+							uint32 index_value = mesh->getIndices()[meshIndex];
+
+							// join index values
+							joined_indexes[join_index_index] = index_value + originalBaseVertexCount;
+							join_index_index++;
+						}
+						base->setIndices(joined_indexes, newindexCount);
+					//}
+				}
+			}
+			base->buildInterpolationData();
+
+			index++;
+		}
+
+		delete [] meshes;
+		meshes = joinedMeshList;
+		meshCount = (uint32)joinedMeshes.size();
+	}
+}
+
+// ----------------------------------------------------------------------------
 
 bool PixelBufferWrapper::isPBOEnabled 	= false;
 int PixelBufferWrapper::index 			= 0;
@@ -974,6 +1761,8 @@ PixelBufferWrapper::PixelBufferWrapper(int pboCount,int bufferSize) {
 		//
 
 		for(int i = 0; i < pboCount; ++i) {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("PBO Gen i = %d\n",i);
+
 			pboIds.push_back(0);
 			glGenBuffersARB(1, (GLuint*)&pboIds[i]);
 			// create pixel buffer objects, you need to delete them when program exits.
@@ -994,7 +1783,7 @@ Pixmap2D *PixelBufferWrapper::getPixelBufferFor(int x,int y,int w,int h, int col
 	    index = (index + 1) % 2;
 
 	    // pbo index used for next frame
-	    int nextIndex = (index + 1) % 2;
+	    //int nextIndex = (index + 1) % 2;
 
 	    // read framebuffer ///////////////////////////////
 		// copy pixels from framebuffer to PBO
@@ -1019,8 +1808,8 @@ Pixmap2D *PixelBufferWrapper::getPixelBufferFor(int x,int y,int w,int h, int col
 		glBindBufferARB(GL_PIXEL_PACK_BUFFER_ARB, pboIds[index]);
 		GLubyte* src = (GLubyte*)glMapBufferARB(GL_PIXEL_PACK_BUFFER_ARB, GL_READ_ONLY_ARB);
 		if(src) {
-			pixmapScreenShot = new Pixmap2D(w+1, h+1, colorComponents);
-			memcpy(pixmapScreenShot->getPixels(),src,(size_t)pixmapScreenShot->getPixelByteCount());
+			pixmapScreenShot = new Pixmap2D(w, h, colorComponents);
+			memcpy(pixmapScreenShot->getPixels(),src,pixmapScreenShot->getPixelByteCount());
 			glUnmapBufferARB(GL_PIXEL_PACK_BUFFER_ARB);     // release pointer to the mapped buffer
 			//pixmapScreenShot->save("debugPBO.png");
 		}
@@ -1051,8 +1840,12 @@ void PixelBufferWrapper::end() {
 void PixelBufferWrapper::cleanup() {
 	if(PixelBufferWrapper::isPBOEnabled == true) {
 		if(pboIds.empty() == false) {
-			glDeleteBuffersARB(pboIds.size(), &pboIds[0]);
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("PBO Delete size = %d\n",(int)pboIds.size());
+
+			glDeleteBuffersARB((int)pboIds.size(), &pboIds[0]);
 			pboIds.clear();
+
+			glBindBufferARB(GL_PIXEL_PACK_BUFFER_ARB, 0);
 		}
 	}
 }
@@ -1061,69 +1854,197 @@ PixelBufferWrapper::~PixelBufferWrapper() {
 	cleanup();
 }
 
-//unsigned char BaseColorPickEntity::nextColorID[COLOR_COMPONENTS] = {1, 1, 1, 1};
-unsigned char BaseColorPickEntity::nextColorID[COLOR_COMPONENTS] = { 1, 1, 1 };
-Mutex BaseColorPickEntity::mutexNextColorID;
+// ---------------------------------------------------------------------------
+
+int BaseColorPickEntity::bufferSizeRequired = -1;
+const unsigned int BaseColorPickEntity::p = 64007;
+const unsigned int BaseColorPickEntity::k = 43067;
+unsigned int BaseColorPickEntity::nextColorRGB = BaseColorPickEntity::k;
+
+unsigned char BaseColorPickEntity::nextColorID[COLOR_COMPONENTS] = { 1, 1, 1, 0 };
 auto_ptr<PixelBufferWrapper> BaseColorPickEntity::pbo;
 
+map<string,bool> BaseColorPickEntity::usedColorIDList;
+bool BaseColorPickEntity::trackColorUse = true;
+
+vector<vector<unsigned char> > BaseColorPickEntity::nextColorIDReuseList;
+
+bool BaseColorPickEntity::using_loop_method = false;
+
 BaseColorPickEntity::BaseColorPickEntity() {
-	 MutexSafeWrapper safeMutex(&mutexNextColorID);
-
-	 uniqueColorID[0] = nextColorID[0];
-	 uniqueColorID[1] = nextColorID[1];
-	 uniqueColorID[2] = nextColorID[2];
-	 //uniqueColorID[3] = nextColorID[3];
-
-	 const int colorSpacing = 2;
-
-	 if(nextColorID[0] + colorSpacing <= 255) {
-		 nextColorID[0] += colorSpacing;
-	 }
-	 else {
-		 nextColorID[0] = 1;
-	 	 if(nextColorID[1] + colorSpacing <= 255) {
-	 		 nextColorID[1] += colorSpacing;
-	 	 }
-	 	 else {
-       	   nextColorID[1] = 1;
-       	   if(nextColorID[2] + colorSpacing <= 255) {
-       		   nextColorID[2] += colorSpacing;
-       	   }
-       	   else {
-
-        	   //printf("Color rolled over on 3rd level!\n");
-
-			   nextColorID[0] = 1;
-			   nextColorID[1] = 1;
-			   nextColorID[2] = 1;
-
-
-//          	   nextColorID[2] = 1;
-//          	   nextColorID[3]+=colorSpacing;
-//
-//               if(nextColorID[3] > 255) {
-//              	   nextColorID[0] = 1;
-//              	   nextColorID[1] = 1;
-//              	   nextColorID[2] = 1;
-//              	   nextColorID[3] = 1;
-//               }
-           }
-        }
-     }
+	if(BaseColorPickEntity::bufferSizeRequired != -1) {
+		BaseColorPickEntity::init(BaseColorPickEntity::bufferSizeRequired);
+	}
+	uniqueColorID[0] = 0;
+	uniqueColorID[1] = 0;
+	uniqueColorID[2] = 0;
+	uniqueColorID[3] = 0;
+	assign_color();
 }
 
+bool BaseColorPickEntity::get_next_assign_color(unsigned char *assign_to) {
+	 
+	 if(assign_to == NULL) {
+		 throw megaglest_runtime_error("assign_to == NULL");
+	 }
+
+	 if(BaseColorPickEntity::using_loop_method == true) {
+		 assign_color_using_loop(assign_to);
+	 }
+	 else {
+		 assign_color_using_prime(assign_to);
+	 }
+
+	 bool isDuplicate = false;
+	 if(BaseColorPickEntity::trackColorUse == true) {
+		 string color_key = getColorDescription();
+		 //printf("Assigned color [%s]\n",color_key.c_str());
+
+		 if(usedColorIDList.find(color_key) == usedColorIDList.end()) {
+			 usedColorIDList[color_key] = true;
+
+			 //printf("Color added to used list [%s] usedColorIDList = %d nextColorIDReuseList = %d!\n",color_key.c_str(),(int)usedColorIDList.size(),(int)nextColorIDReuseList.size());
+		 }
+		 else {
+			 isDuplicate = true;
+			 printf("Line ref: %d *WARNING* color [%s] used count: %d using_loop: %d ALREADY in history list!\n",__LINE__,color_key.c_str(),(int)usedColorIDList.size(),BaseColorPickEntity::using_loop_method);
+		 }
+	 }
+	 return isDuplicate;
+}
+
+void BaseColorPickEntity::assign_color() {
+	get_next_assign_color(&uniqueColorID[0]);
+}
+
+void BaseColorPickEntity::assign_color_using_prime(unsigned char *assign_to) {
+	 nextColorRGB = (nextColorRGB * k) % p;
+	 
+	 // nextColorID is a 16-bit (hi)colour (for players with 16-bit display depths)
+	 // we expand it to true-color for use with OpenGL
+	 
+	 const unsigned int
+	 	r = (nextColorRGB >> 11) & ((1<<5)-1),
+	 	g = (nextColorRGB >> 5) & ((1<<6)-1),
+	 	b = nextColorRGB & ((1<<5)-1);
+
+	 assign_to[0] = r << 3;
+	 assign_to[1] = g << 2;
+	 assign_to[2] = b << 3;
+}
+
+void BaseColorPickEntity::assign_color_using_loop(unsigned char *assign_to) {
+	if(nextColorIDReuseList.empty() == false) {
+		//printf("Color being reused [%u.%u.%u] usedColorIDList = %d nextColorIDReuseList = %d!\n",nextColorIDReuseList.back()[0],nextColorIDReuseList.back()[1],nextColorIDReuseList.back()[2],(int)usedColorIDList.size(),(int)nextColorIDReuseList.size());
+
+		assign_to[0] = nextColorIDReuseList.back()[0];
+		assign_to[1] = nextColorIDReuseList.back()[1];
+		assign_to[2] = nextColorIDReuseList.back()[2];
+
+		nextColorIDReuseList.pop_back();
+
+		string color_key = getColorDescription();
+		if(usedColorIDList.find(color_key) == usedColorIDList.end()) {
+			//usedColorIDList[color_key] = true;
+			//printf("Color added to used list [%s] usedColorIDList = %d nextColorIDReuseList = %d!\n",color_key.c_str(),(int)usedColorIDList.size(),(int)nextColorIDReuseList.size());
+		}
+		else {
+			printf("Line ref: %d *WARNING* color [%s] ALREADY FOUND in history list!\n",__LINE__,color_key.c_str());
+			assign_color_using_loop(assign_to);
+		}
+	}
+	else {
+		assign_to[0] = nextColorID[0];
+		assign_to[1] = nextColorID[1];
+		assign_to[2] = nextColorID[2];
+
+		const int colorSpacing = 8;
+
+		if((int)(nextColorID[0] + colorSpacing) <= 255) {
+			nextColorID[0] += colorSpacing;
+		}
+		else {
+			nextColorID[0] = 1;
+			if((int)(nextColorID[1] + colorSpacing) <= 255) {
+				nextColorID[1] += colorSpacing;
+			}
+			else {
+				nextColorID[1] = 1;
+				if((int)(nextColorID[2] + colorSpacing) <= 255) {
+					nextColorID[2] += colorSpacing;
+				}
+				else {
+
+					printf("Color rolled over on 3rd level usedColorIDList = %d!\n",(int)usedColorIDList.size());
+
+					nextColorID[0] = 1;
+					nextColorID[1] = 1;
+					nextColorID[2] = 1;
+
+
+				//               nextColorID[2] = 1;
+				//               nextColorID[3]+=colorSpacing;
+				//
+				//               if(nextColorID[3] > 255) {
+				//                   nextColorID[0] = 1;
+				//                   nextColorID[1] = 1;
+				//                   nextColorID[2] = 1;
+				//                   nextColorID[3] = 1;
+				//               }
+				}
+			}
+		}
+	}
+}
+
+void BaseColorPickEntity::recycleUniqueColor() {
+
+	vector<unsigned char> reUseColor;
+	reUseColor.push_back(uniqueColorID[0]);
+	reUseColor.push_back(uniqueColorID[1]);
+	reUseColor.push_back(uniqueColorID[2]);
+	nextColorIDReuseList.push_back(reUseColor);
+
+	//printf("RECYCLE Color [%u.%u.%u] usedColorIDList = %d nextColorIDReuseList = %d!\n",reUseColor[0],reUseColor[1],reUseColor[2],(int)usedColorIDList.size(),(int)nextColorIDReuseList.size());
+
+	if(usedColorIDList.empty() == false) {
+		string color_key = getColorDescription();
+		if(usedColorIDList.find(color_key) != usedColorIDList.end()) {
+			usedColorIDList.erase(color_key);
+
+			//printf("REMOVING used Color [%s] usedColorIDList = %d nextColorIDReuseList = %d!\n",color_key.c_str(),(int)usedColorIDList.size(),(int)nextColorIDReuseList.size());
+		}
+		else {
+			printf("Line ref: %d *WARNING* color [%s] used count: %d NOT FOUND in history list!\n",__LINE__,color_key.c_str(),(int)usedColorIDList.size());
+		}
+	}
+}
+
+void BaseColorPickEntity::resetUniqueColors() {
+   BaseColorPickEntity::nextColorRGB = BaseColorPickEntity::k;
+
+   BaseColorPickEntity::nextColorID[0] = 1;
+   BaseColorPickEntity::nextColorID[1] = 1;
+   BaseColorPickEntity::nextColorID[2] = 1;
+
+   usedColorIDList.clear();
+   nextColorIDReuseList.clear();
+}
 void BaseColorPickEntity::init(int bufferSize) {
 	 if(BaseColorPickEntity::pbo.get() == NULL) {
-		 BaseColorPickEntity::pbo.reset(new PixelBufferWrapper(2,bufferSize));
+		 BaseColorPickEntity::bufferSizeRequired = bufferSize;
+		 BaseColorPickEntity::pbo.reset(new PixelBufferWrapper(2,BaseColorPickEntity::bufferSizeRequired));
 	 }
+}
+
+void BaseColorPickEntity::cleanupPBO() {
+	BaseColorPickEntity::pbo.reset(0);
 }
 
 string BaseColorPickEntity::getColorDescription() const {
-	string result = "";
 	char szBuf[100]="";
-	//sprintf(szBuf,"%d.%d.%d.%d",uniqueColorID[0],uniqueColorID[1],uniqueColorID[2],uniqueColorID[3]);
-	sprintf(szBuf,"%d.%d.%d",uniqueColorID[0],uniqueColorID[1],uniqueColorID[2]);
-	result = szBuf;
+	snprintf(szBuf,100,"%d.%d.%d",uniqueColorID[0],uniqueColorID[1],uniqueColorID[2]);
+	string result = szBuf;
 	return result;
 }
 
@@ -1131,135 +2052,122 @@ void BaseColorPickEntity::beginPicking() {
 	// turn off texturing, lighting and fog
 	//glClearColor (0.0,0.0,0.0,0.0);
 	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	//glClear(GL_COLOR_BUFFER_BIT);
+
+	//reset current background. This is neeeded to get a proper black background!
+	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	glPushAttrib(GL_ENABLE_BIT);
+	//glEnable(GL_DEPTH_TEST);
 	glDisable(GL_TEXTURE_2D);
 	glDisable(GL_FOG);
 	glDisable(GL_LIGHTING);
-
 	glDisable(GL_BLEND);
 	glDisable(GL_MULTISAMPLE);
 	glDisable(GL_DITHER);
+	glDisable(GL_POLYGON_OFFSET_FILL);
+	glDisable(GL_NORMALIZE);
+
+	//glPushAttrib(GL_TEXTURE_2D | GL_LIGHTING | GL_BLEND | GL_MULTISAMPLE | GL_DITHER);
+	//glPushAttrib(GL_ENABLE_BIT | GL_LIGHTING_BIT | GL_POLYGON_BIT | GL_CURRENT_BIT | GL_TEXTURE_BIT | GL_NORMALIZE | GL_BLEND | GL_POLYGON_OFFSET_FILL);
 }
 
 void BaseColorPickEntity::endPicking() {
 	// turn off texturing, lighting and fog
-	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_FOG);
-	glEnable(GL_LIGHTING);
+	//glEnable(GL_TEXTURE_2D);
+	//glEnable(GL_FOG);
+	//glEnable(GL_LIGHTING);
 
-	glEnable(GL_BLEND);
-	glEnable(GL_MULTISAMPLE);
-	glEnable(GL_DITHER);
+	//glEnable(GL_BLEND);
+	//glEnable(GL_MULTISAMPLE);
+	//glEnable(GL_DITHER);
+	glPopAttrib();
 }
 
 vector<int> BaseColorPickEntity::getPickedList(int x,int y,int w,int h,
 						const vector<BaseColorPickEntity *> &rendererModels) {
 	vector<int> pickedModels;
+	pickedModels.reserve(rendererModels.size());
 
-	//printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
-	//static auto_ptr<unsigned char> cachedPixels;
+	//printf("In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	static auto_ptr<Pixmap2D> cachedPixels;
-	//static int cachedPixelsW = -1;
-	//static int cachedPixelsH = -1;
 
-	//printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
-
-	static Chrono lastSnapshot(true);
-	const int selectionMillisecondUpdate = 100;
-
-	if(PixelBufferWrapper::getIsPBOEnable() == true) {
-		// Only update the pixel buffer every x milliseconds or as required
-		if(cachedPixels.get() == NULL || cachedPixels->getW() != w+1 ||cachedPixels->getH() != h+1 ||
-				lastSnapshot.getMillis() > selectionMillisecondUpdate) {
-			//printf("Updating selection millis = %ld\n",lastSnapshot.getMillis());
-
-			lastSnapshot.reset();
-			//Pixmap2D *pixmapScreenShot = BaseColorPickEntity::pbo->getPixelBufferFor(x,y,w,h, COLOR_COMPONENTS);
-			cachedPixels.reset(BaseColorPickEntity::pbo->getPixelBufferFor(x,y,w,h, COLOR_COMPONENTS));
-
-			//cachedPixels.reset(new unsigned char[(unsigned int)pixmapScreenShot->getPixelByteCount()]);
-			//memcpy(cachedPixels.get(),pixmapScreenShot->getPixels(),(size_t)pixmapScreenShot->getPixelByteCount());
-			//cachedPixelsW = w+1;
-			//cachedPixelsH = h+1;
-
-			//delete pixmapScreenShot;
+	if(rendererModels.empty() == false) {
+		if(PixelBufferWrapper::getIsPBOEnable() == true) {
+				Pixmap2D *pixmapScreenShot = BaseColorPickEntity::pbo->getPixelBufferFor(x,y,w,h, COLOR_COMPONENTS);
+				//pixmapScreenShot->saveTga("/tmp/toll.tga"); //### for debugging
+				cachedPixels.reset(pixmapScreenShot);
 		}
-	}
-	else {
-		// Only update the pixel buffer every x milliseconds or as required
-		if(cachedPixels.get() == NULL || cachedPixels->getW() != w+1 ||cachedPixels->getH() != h+1 ||
-				lastSnapshot.getMillis() > selectionMillisecondUpdate) {
-			//printf("Updating selection millis = %ld\n",lastSnapshot.getMillis());
-
-			lastSnapshot.reset();
-
-			//Pixmap2D *pixmapScreenShot = new Pixmap2D(w+1, h+1, COLOR_COMPONENTS);
-			cachedPixels.reset(new Pixmap2D(w+1, h+1, COLOR_COMPONENTS));
-			//glPixelStorei(GL_PACK_ALIGNMENT, 1);
-			//glReadPixels(x, y, w, h, GL_RGB, GL_UNSIGNED_BYTE, pixmapScreenShot->getPixels());
-			//glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixmapScreenShot->getPixels());
-			glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, cachedPixels->getPixels());
-			//glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-			//cachedPixels.reset(new unsigned char[(unsigned int)pixmapScreenShot->getPixelByteCount()]);
-			//memcpy(cachedPixels.get(),pixmapScreenShot->getPixels(),(size_t)pixmapScreenShot->getPixelByteCount());
-			//cachedPixelsW = w+1;
-			//cachedPixelsH = h+1;
-
-			//delete pixmapScreenShot;
+		else {
+				Pixmap2D *pixmapScreenShot = new Pixmap2D(w, h, COLOR_COMPONENTS);
+				//glPixelStorei(GL_PACK_ALIGNMENT, 1);
+				glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixmapScreenShot->getPixels());
+				//pixmapScreenShot->saveTga("/tmp/toll.tga");
+				cachedPixels.reset(pixmapScreenShot);
+				//glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		}
-	}
-	unsigned char *pixelBuffer = cachedPixels->getPixels();
+		unsigned char *pixelBuffer = cachedPixels->getPixels();
 
-	// Enable screenshots to debug selection scene
-	//pixmapScreenShot->save("debug.png");
+		map<int,bool> modelAlreadyPickedList;
+		map<unsigned char,map<unsigned char, map<unsigned char,bool> > > colorAlreadyPickedList;
 
-	//printf("In [%s::%s] Line: %d x,y,w,h [%d,%d,%d,%d] pixels = %d\n",__FILE__,__FUNCTION__,__LINE__,x,y,w,h,pixmapScreenShot->getPixelByteCount());
+		int skipSteps=4;
+		//unsigned char *oldpixel = &pixelBuffer[0];
 
-	// now our picked screen pixel color is stored in pixel[3]
-	// so we search through our object list looking for the object that was selected
+		// now we check the screenshot if we find pixels in color of unit identity
+		// to speedup we only check every "skipSteps" line and pixel in a row if we find such a color.
+		// this is exact enough for MG purpose
+		for(int hh = 0; hh < h && pickedModels.size() < rendererModels.size(); hh=hh+skipSteps) {
+			for(int ww=0;ww < w && pickedModels.size() < rendererModels.size(); ww=ww+skipSteps){
 
-	map<int,bool> modelAlreadyPickedList;
-	map<unsigned char,map<unsigned char, map<unsigned char,bool> > > colorAlreadyPickedList;
-	int nEnd = w * h;
-	for(int x = 0; x < nEnd && pickedModels.size() < rendererModels.size(); ++x) {
-		int index = x * COLOR_COMPONENTS;
-		unsigned char *pixel = &pixelBuffer[index];
-
-		// Skip duplicate scanned colors
-		map<unsigned char,map<unsigned char, map<unsigned char,bool> > >::iterator iterFind1 = colorAlreadyPickedList.find(pixel[0]);
-		if(iterFind1 != colorAlreadyPickedList.end()) {
-			map<unsigned char, map<unsigned char,bool> >::iterator iterFind2 = iterFind1->second.find(pixel[1]);
-			if(iterFind2 != iterFind1->second.end()) {
-				map<unsigned char,bool>::iterator iterFind3 = iterFind2->second.find(pixel[2]);
-				if(iterFind3 != iterFind2->second.end()) {
+				int index = (hh*w+ww) * COLOR_COMPONENTS;
+				unsigned char *pixel = &pixelBuffer[index];
+				//printf("pixel[0]=%d pixel[1]=%d pixel[2]=%d\n",pixel[0],pixel[1],pixel[2]);
+				if(pixel[0]==0 && pixel[1]==0 && pixel[2]==0)
+				{
 					continue;
+				}
+//				if(index>0)
+//				{
+//					oldpixel = &pixelBuffer[index-1*COLOR_COMPONENTS];
+//					if(memcmp(pixel,oldpixel,3)) continue;
+//				}
+
+				// Skip duplicate scanned colors
+				map<unsigned char,map<unsigned char, map<unsigned char,bool> > >::const_iterator iterFind1 = colorAlreadyPickedList.find(pixel[0]);
+				if(iterFind1 != colorAlreadyPickedList.end()) {
+					map<unsigned char, map<unsigned char,bool> >::const_iterator iterFind2 = iterFind1->second.find(pixel[1]);
+					if(iterFind2 != iterFind1->second.end()) {
+						map<unsigned char,bool>::const_iterator iterFind3 = iterFind2->second.find(pixel[2]);
+						if(iterFind3 != iterFind2->second.end()) {
+							continue;
+						}
+					}
+				}
+
+				for(unsigned int i = 0; i < rendererModels.size(); ++i) {
+					// Skip models already selected
+					if(modelAlreadyPickedList.find(i) != modelAlreadyPickedList.end()) {
+						continue;
+					}
+					const BaseColorPickEntity *model = rendererModels[i];
+
+					if( model != NULL && model->isUniquePickingColor(pixel) == true) {
+						//printf("Found match pixel [%d.%d.%d] for model [%s] ptr [%p][%s]\n",pixel[0],pixel[1],pixel[2],model->getColorDescription().c_str(), model,model->getUniquePickName().c_str());
+
+						pickedModels.push_back(i);
+						modelAlreadyPickedList[i]=true;
+						colorAlreadyPickedList[pixel[0]][pixel[1]][pixel[2]]=true;
+						break;
+					}
 				}
 			}
 		}
 
-		for(unsigned int i = 0; i < rendererModels.size(); ++i) {
-			// Skip models already selected
-			if(modelAlreadyPickedList.find(i) != modelAlreadyPickedList.end()) {
-				continue;
-			}
-			const BaseColorPickEntity *model = rendererModels[i];
-
-			if( model != NULL && model->isUniquePickingColor(pixel) == true) {
-				//printf("Found match pixel [%d.%d.%d] for model [%s] ptr [%p][%s]\n",pixel[0],pixel[1],pixel[2],model->getColorDescription().c_str(), model,model->getUniquePickName().c_str());
-
-				pickedModels.push_back(i);
-				modelAlreadyPickedList[i]=true;
-				colorAlreadyPickedList[pixel[0]][pixel[1]][pixel[2]]=true;
-				break;
-			}
-		}
+		//printf("In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
+		//delete pixmapScreenShot;
 	}
-
-	//printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
-	//delete pixmapScreenShot;
-
-	//printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+	//printf("In [%s::%s] Line: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	return pickedModels;
 }
 
@@ -1276,10 +2184,18 @@ bool BaseColorPickEntity::isUniquePickingColor(unsigned char *pixel) const {
 }
 
 void BaseColorPickEntity::setUniquePickingColor() const {
+
+	 glColor3ub(uniqueColorID[0],
+			 	uniqueColorID[1],
+			 	uniqueColorID[2]);
+
+/*
 	 glColor3f(	uniqueColorID[0] / 255.0f,
 			 	uniqueColorID[1] / 255.0f,
 			 	uniqueColorID[2] / 255.0f);
 			 	//uniqueColorID[3] / 255.0f);
+			 	 *
+			 	 */
 }
 
 

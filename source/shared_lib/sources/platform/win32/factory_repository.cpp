@@ -28,25 +28,19 @@ GraphicsFactory *FactoryRepository::getGraphicsFactory(const string &name){
 	if(name == "OpenGL"){
 		return &graphicsFactoryGl;
 	}
-	else if(name == "OpenGL2"){
-		return &graphicsFactoryGl2;
-	}
 
-	throw runtime_error("Unknown graphics factory: " + name);
+	throw megaglest_runtime_error("Unknown graphics factory: [" + name + "]");
 }
 
 SoundFactory *FactoryRepository::getSoundFactory(const string &name){
-	if(name == "DirectSound8"){
-		return &soundFactoryDs8;
-	}
-	else if(name == "OpenAL") {
+	if(name == "OpenAL") {
 		return &soundFactoryOpenAL;
 	}
 	else if(name == "" || name == "None") {
 		return &soundFactoryNone;
 	}
 
-	throw runtime_error("Unknown sound factory: " + name);
+	throw megaglest_runtime_error("Unknown sound factory: [" + name + "]");
 }
 
 }}//end namespace

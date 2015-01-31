@@ -12,15 +12,22 @@
 #ifndef _GLEST_GAME_FACTIONTYPE_H_
 #define _GLEST_GAME_FACTIONTYPE_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "unit_type.h"
 #include "upgrade_type.h"
 #include "sound.h"
+#include <map>
+#include <string>
+#include "util.h"
 #include "leak_dumper.h"
 
 using Shared::Sound::StrSound;
 
 namespace Glest{ namespace Game{
-
 // =====================================================
 // 	class FactionType
 //
@@ -34,6 +41,37 @@ enum AIBehaviorUnitCategory {
 	aibcBuildingUnits
 };
 
+enum AIBehaviorStaticValueCategory {
+	aibsvcMaxBuildRadius,
+	aibsvcMinMinWarriors,
+	aibsvcMinMinWarriorsExpandCpuEasy,
+	aibsvcMinMinWarriorsExpandCpuMega,
+	aibsvcMinMinWarriorsExpandCpuUltra,
+	aibsvcMinMinWarriorsExpandCpuNormal,
+	aibsvcMaxMinWarriors,
+	aibsvcMaxExpansions,
+	aibsvcVillageRadius,
+	aibsvcMinStaticResourceCount,
+	aibsvcScoutResourceRange,
+	aibsvcMinWorkerAttackersHarvesting,
+	aibsvcMinBuildSpacing
+};
+template <>
+inline EnumParser<AIBehaviorStaticValueCategory>::EnumParser() {
+	enumMap["MaxBuildRadius"]				= aibsvcMaxBuildRadius;
+	enumMap["MinMinWarriors"]				= aibsvcMinMinWarriors;
+	enumMap["MinMinWarriorsExpandCpuEasy"]	= aibsvcMinMinWarriorsExpandCpuEasy;
+	enumMap["MinMinWarriorsExpandCpuMega"]	= aibsvcMinMinWarriorsExpandCpuMega;
+	enumMap["MinMinWarriorsExpandCpuUltra"]	= aibsvcMinMinWarriorsExpandCpuUltra;
+	enumMap["MinMinWarriorsExpandCpuNormal"]= aibsvcMinMinWarriorsExpandCpuNormal;
+	enumMap["MaxMinWarriors"]				= aibsvcMaxMinWarriors;
+	enumMap["MaxExpansions"]				= aibsvcMaxExpansions;
+	enumMap["VillageRadius"]				= aibsvcVillageRadius;
+	enumMap["MinStaticResourceCount"]		= aibsvcMinStaticResourceCount;
+	enumMap["ScoutResourceRange"]			= aibsvcScoutResourceRange;
+	enumMap["MinWorkerAttackersHarvesting"]	= aibsvcMinWorkerAttackersHarvesting;
+	enumMap["MinBuildSpacing"]				= aibsvcMinBuildSpacing;
+}
 
 class FactionType {
 public:
@@ -54,29 +92,37 @@ private:
 
 	std::map<AIBehaviorUnitCategory, std::vector<PairPUnitTypeInt> > mapAIBehaviorUnitCategories;
 	std::vector<const UpgradeType*> vctAIBehaviorUpgrades;
+	std::map<AIBehaviorStaticValueCategory, int > mapAIBehaviorStaticOverrideValues;
+
+	bool isLinked;
 
 public:
 	//init
 	FactionType();
-    void load(const string &dir, const TechTree *techTree, Checksum* checksum,
-    		Checksum *techtreeChecksum, std::map<string,vector<pair<string, string> > > &loadedFileList);
-	~FactionType();
+    void load(const string &factionName, const TechTree *techTree, Checksum* checksum,
+    		Checksum *techtreeChecksum,
+    		std::map<string,vector<pair<string, string> > > &loadedFileList,
+    		bool validationMode=false);
+	virtual ~FactionType();
 
 	const std::vector<FactionType::PairPUnitTypeInt> getAIBehaviorUnits(AIBehaviorUnitCategory category) const;
 	const std::vector<const UpgradeType*> getAIBehaviorUpgrades() const { return vctAIBehaviorUpgrades; };
+	int getAIBehaviorStaticOverideValue(AIBehaviorStaticValueCategory type) const;
 
     //get
-	int getUnitTypeCount() const						{return unitTypes.size();}
-	int getUpgradeTypeCount() const						{return upgradeTypes.size();}
-	string getName() const								{return name;}
+	bool getIsLinked() const { return isLinked; }
+	int getUnitTypeCount() const						{return (int)unitTypes.size();}
+	int getUpgradeTypeCount() const						{return (int)upgradeTypes.size();}
+	virtual string getName(bool translatedValue=false) const;
 	const UnitType *getUnitType(int i) const			{return &unitTypes[i];}
 	const UpgradeType *getUpgradeType(int i) const		{return &upgradeTypes[i];}
 	StrSound *getMusic() const							{return music;}
-	int getStartingUnitCount() const					{return startingUnits.size();}
+	int getStartingUnitCount() const					{return (int)startingUnits.size();}
 	const UnitType *getStartingUnit(int i) const		{return startingUnits[i].first;}
 	int getStartingUnitAmount(int i) const				{return startingUnits[i].second;}
 
 	const UnitType *getUnitType(const string &name) const;
+	const UnitType *getUnitTypeById(int id) const;
 	const UpgradeType *getUpgradeType(const string &name) const;
 	int getStartingResourceAmount(const ResourceType *resourceType) const;
 
@@ -90,6 +136,8 @@ public:
 
 	void deletePixels();
 	bool factionUsesResourceType(const ResourceType *rt) const;
+
+	void saveGame(XmlNode *rootNode);
 };
 
 }}//end namespace

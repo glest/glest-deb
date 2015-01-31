@@ -13,11 +13,17 @@
 #include "ircclient.h"
 #include "util.h"
 #include "platform_common.h"
-#include "libircclient.h"
+#include "socket.h"
+#include "cache_manager.h"
 
+#if !defined(DISABLE_IRCCLIENT)
+
+#include <libircclient.h>
 // upstream moved some defines into new headers as of 1.6
 #ifndef LIBIRCCLIENT_PRE1_6
-#include "libirc_rfcnumeric.h"
+#include <libirc_rfcnumeric.h>
+#endif
+
 #endif
 
 #include <stdio.h>
@@ -31,11 +37,15 @@ using namespace Shared::PlatformCommon;
 
 namespace Shared { namespace PlatformCommon {
 
+const char *IRCThread::globalCacheContainerName = NULL;
 const int IRC_SERVER_PORT = 6667;
+//bool IRCThread::debugEnabled = true;
+bool IRCThread::debugEnabled = false;
 
+#if !defined(DISABLE_IRCCLIENT)
 void addlog (const char * fmt, ...) {
 	//FILE * fp;
-	char buf[1024];
+	char buf[8096];
 	va_list va_alist;
 
 	va_start (va_alist, fmt);
@@ -46,7 +56,7 @@ void addlog (const char * fmt, ...) {
 #endif
 	va_end (va_alist);
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: %s\n", buf);
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: %s\n", buf);
 
     //if(SystemFlags::VERBOSE_MODE_ENABLED == true) {
     //    if ( (fp = fopen ("irctest.log", "ab")) != 0 ) {
@@ -65,7 +75,11 @@ void dump_event (irc_session_t * session, const char * event, const char * origi
 		if ( cnt ) {
 			strcat (buf, "|");
         }
-		strcat (buf, params[cnt]);
+#ifdef WIN32
+		strncat (buf, params[cnt],min((int)strlen(params[cnt]),511));
+#else
+		strncat (buf, params[cnt],std::min((int)strlen(params[cnt]),511));
+#endif
 	}
 
 	addlog ("Event \"%s\", origin: \"%s\", params: %d [%s]", event, origin ? origin : "NULL", cnt, buf);
@@ -95,7 +109,7 @@ void event_notice (irc_session_t * session, const char * event, const char * ori
 		return;
 	}
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("NOTICE from '%s': %s", origin, params[1]);
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf("NOTICE from '%s': %s", origin, params[1]);
 
 	//if(strcasecmp (origin, "nickserv")) {
 	//	return;
@@ -119,44 +133,82 @@ void event_notice (irc_session_t * session, const char * event, const char * ori
 //		}
 	}
 	else if(strstr (params[1], "Password accepted - you are now recognized") == params[1]) {
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf("Nickserv authentication succeed.");
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf("Nickserv authentication succeed.");
 	}
 }
 
 void event_join(irc_session_t * session, const char * event, const char * origin, const char ** params, unsigned int count) {
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
 	dump_event (session, event, origin, params, count);
 
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
     IRCThread *ctx = (IRCThread *)irc_get_ctx(session);
+
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
 	if(ctx != NULL) {
+
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
         if(ctx->getHasJoinedChannel() == false) {
+
+        	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
             irc_cmd_user_mode (session, "+i");
+
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
             //irc_cmd_msg (session, params[0], "MG Bot says hello!");
             ctx->setHasJoinedChannel(true);
 
-            ctx->GetIRCConnectedNickList(ctx->getChannel(),true);
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
+            //ctx->GetIRCConnectedNickList(ctx->getChannel(),true);
+            ctx->GetIRCConnectedNickList(ctx->getChannel(),false);
+
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
         }
         else {
+        	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
             char realNick[128]="";
             get_nickname(origin,realNick,127);
-            if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: user joined channel realNick [%s] origin [%s]\n", realNick,origin);
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: user joined channel realNick [%s] origin [%s]\n", realNick,origin);
 
             bool foundNick = false;
+
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
 
             MutexSafeWrapper safeMutex(ctx->getMutexNickList(),string(__FILE__) + "_" + intToStr(__LINE__));
             std::vector<string> nickList = ctx->getCachedNickList();
             for(unsigned int i = 0;
                              i < nickList.size(); ++i) {
-                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: looking for match [%s] realNick [%s]\n", nickList[i].c_str(),realNick);
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: looking for match [%s] realNick [%s]\n", nickList[i].c_str(),realNick);
 
                 if(nickList[i] == realNick) {
                     foundNick = true;
                     break;
                 }
             }
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
             if(foundNick == false) {
                 nickList.push_back(realNick);
             }
+
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
         }
+
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
+        if(ctx->getWantToLeaveChannel() == true) {
+        	ctx->leaveChannel();
+        }
+
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
     }
 }
 
@@ -184,47 +236,48 @@ void event_connect (irc_session_t * session, const char * event, const char * or
 void event_privmsg (irc_session_t * session, const char * event, const char * origin, const char ** params, unsigned int count) {
 	dump_event (session, event, origin, params, count);
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("'%s' said me (%s): %s\n",origin ? origin : "someone",params[0], params[1] );
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("'%s' said me (%s): %s\n",origin ? origin : "someone",params[0], params[1] );
 }
 
 void dcc_recv_callback (irc_session_t * session, irc_dcc_t id, int status, void * ctx, const char * data, unsigned int length) {
-	static int count = 1;
-	char buf[12]="";
 
 	switch (status)
 	{
 	case LIBIRC_ERR_CLOSED:
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC %d: chat closed\n", id);
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC %d: chat closed\n", id);
 		break;
 
 	case 0:
 		if ( !data ) {
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC %d: chat connected\n", id);
+			if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC %d: chat connected\n", id);
 			irc_dcc_msg	(session, id, "Hehe");
 		}
 		else {
-			if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC %d: %s\n", id, data);
+			if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC %d: %s\n", id, data);
+
+			static int count = 1;
+			char buf[12]="";
 			sprintf (buf, "DCC [%d]: %d", id, count++);
 			irc_dcc_msg	(session, id, buf);
 		}
 		break;
 
 	default:
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC %d: error %s\n", id, irc_strerror(status));
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC %d: error %s\n", id, irc_strerror(status));
 		break;
 	}
 }
 
 void dcc_file_recv_callback (irc_session_t * session, irc_dcc_t id, int status, void * ctx, const char * data, unsigned int length) {
 	if ( status == 0 && length == 0 ) {
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("File sent successfully\n");
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("File sent successfully\n");
 
 		if ( ctx ) {
 			fclose ((FILE*) ctx);
 		}
 	}
 	else if ( status ) {
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("File sent error: %d\n", status);
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("File sent error: %d\n", status);
 
 		if ( ctx ) {
 			fclose ((FILE*) ctx);
@@ -234,18 +287,18 @@ void dcc_file_recv_callback (irc_session_t * session, irc_dcc_t id, int status, 
 		if ( ctx ) {
 			fwrite (data, 1, length, (FILE*) ctx);
 		}
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("File sent progress: %d\n", length);
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("File sent progress: %u\n", length);
 	}
 }
 
 void event_channel(irc_session_t * session, const char * event, const char * origin, const char ** params, unsigned int count) {
 	//IRC: Event "433", origin: "leguin.freenode.net", params: 3 [*|softcoder|Nickname is already in use.]
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s] Line: %d\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf("In [%s::%s] Line: %d count = %u origin = %s\n",__FILE__,__FUNCTION__,__LINE__,count,(origin ? origin : "null"));
 
 	if ( count != 2 )
 		return;
 
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: '%s' said in channel %s: %s\n",origin ? origin : "someone",params[0], params[1] );
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: '%s' said in channel %s: %s\n",origin ? origin : "someone",params[0], params[1] );
 
 	if ( !origin ) {
 		return;
@@ -253,7 +306,7 @@ void event_channel(irc_session_t * session, const char * event, const char * ori
 
     char realNick[128]="";
     get_nickname(origin,realNick,127);
-    if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: event signalled realNick [%s] origin [%s]\n", realNick,origin);
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: event signalled realNick [%s] origin [%s]\n", realNick,origin);
 
     IRCThread *ctx = (IRCThread *)irc_get_ctx(session);
 	if(ctx != NULL) {
@@ -281,13 +334,13 @@ void event_channel(irc_session_t * session, const char * event, const char * ori
 	if ( !strcmp (params[1], "dcc chat") ) {
 		irc_dcc_t dccid;
 		irc_dcc_chat (session, 0, realNick, dcc_recv_callback, &dccid);
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC chat ID: %d\n", dccid);
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC chat ID: %d\n", dccid);
 	}
 
 	if ( !strcmp (params[1], "dcc send") ) {
 		irc_dcc_t dccid;
 		irc_dcc_sendfile (session, 0, realNick, "irctest.c", dcc_file_recv_callback, &dccid);
-		if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC send ID: %d\n", dccid);
+		if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC send ID: %d\n", dccid);
 	}
 
 	if ( !strcmp (params[1], "topic") ) {
@@ -308,14 +361,14 @@ void event_channel(irc_session_t * session, const char * event, const char * ori
 }
 
 void irc_event_dcc_chat(irc_session_t * session, const char * nick, const char * addr, irc_dcc_t dccid) {
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC chat [%d] requested from '%s' (%s)\n", dccid, nick, addr);
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC chat [%d] requested from '%s' (%s)\n", dccid, nick, addr);
 
 	irc_dcc_accept (session, dccid, 0, dcc_recv_callback);
 }
 
 void irc_event_dcc_send(irc_session_t * session, const char * nick, const char * addr, const char * filename, unsigned long size, irc_dcc_t dccid) {
 	FILE * fp;
-	if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("DCC send [%d] requested from '%s' (%s): %s (%lu bytes)\n", dccid, nick, addr, filename, size);
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("DCC send [%d] requested from '%s' (%s): %s (%lu bytes)\n", dccid, nick, addr, filename, size);
 
 	if ( (fp = fopen ("file", "wb")) == 0 ) {
 		abort();
@@ -329,11 +382,11 @@ void event_leave(irc_session_t *session, const char *event, const char *origin, 
 
 	// someone left the channel.
 	if(origin) {
-	    if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: user left channel [%s]\n", origin);
+	    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: user left channel [%s]\n", origin);
 
         char realNick[128]="";
         get_nickname(origin,realNick,127);
-        if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: user left channel realNick [%s] origin [%s]\n", realNick,origin);
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: user left channel realNick [%s] origin [%s]\n", realNick,origin);
 
         IRCThread *ctx = (IRCThread *)irc_get_ctx(session);
         if(ctx != NULL) {
@@ -341,7 +394,7 @@ void event_leave(irc_session_t *session, const char *event, const char *origin, 
             std::vector<string> &nickList = ctx->getCachedNickList();
             for(unsigned int i = 0;
                              i < nickList.size(); ++i) {
-                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: lookingfor match [%s] realNick [%s]\n", nickList[i].c_str(),realNick);
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: lookingfor match [%s] realNick [%s]\n", nickList[i].c_str(),realNick);
 
                 if(nickList[i] == realNick) {
                     nickList.erase(nickList.begin() + i);
@@ -355,7 +408,9 @@ void event_leave(irc_session_t *session, const char *event, const char *origin, 
 }
 void event_numeric(irc_session_t * session, unsigned int event, const char * origin, const char ** params, unsigned int count) {
 	char buf[24]="";
-	sprintf (buf, "%d", event);
+	sprintf (buf, "%u", event);
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d event = %u\n", __LINE__, event);
 
     switch (event) {
 		case LIBIRC_RFC_ERR_NICKNAMEINUSE :
@@ -402,6 +457,9 @@ void event_numeric(irc_session_t * session, unsigned int event, const char * ori
 		case LIBIRC_RFC_RPL_NAMREPLY :
             {
                 if(event == LIBIRC_RFC_RPL_NAMREPLY) {
+
+                	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: LIBIRC_RFC_RPL_NAMREPLY count = %u\n", count);
+
                     std::vector<string> nickList;
                     if(count >= 4) {
                         for(unsigned int i = 3; i < count && params[i]; ++i) {
@@ -412,7 +470,7 @@ void event_numeric(irc_session_t * session, unsigned int event, const char * ori
 
                                 char realNick[128]="";
                                 get_nickname(tokens[j].c_str(),realNick,127);
-                                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: user joined channel realNick [%s] tokens[j] [%s]\n", realNick,tokens[j].c_str());
+                                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: LIBIRC_RFC_RPL_NAMREPLY user joined channel realNick [%s] tokens[j] [%s]\n", realNick,tokens[j].c_str());
 
                                 // Only show Megaglest users in the user list
                                 //if(strncmp(&realNick[0],"MG_",3) == 0) {
@@ -432,10 +490,15 @@ void event_numeric(irc_session_t * session, unsigned int event, const char * ori
             }
         case LIBIRC_RFC_RPL_ENDOFNAMES:
             {
+            	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("!!!!! ===> IRC: Line: %d event = %u\n", __LINE__, event);
+
                 IRCThread *ctx = (IRCThread *)irc_get_ctx(session);
                 if(ctx != NULL) {
+                	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d event = %u\n", __LINE__, event);
+
                     ctx->setEventDataDone(true);
                 }
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d event = %u\n", __LINE__, event);
             }
             break;
     }
@@ -443,71 +506,181 @@ void event_numeric(irc_session_t * session, unsigned int event, const char * ori
 	dump_event (session, buf, origin, params, count);
 }
 
+#endif
+
+bool IRCThread::getEventDataDone() {
+	MutexSafeWrapper safeMutex(&mutexEventDataDone,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool result = eventDataDone;
+	safeMutex.ReleaseLock();
+
+	return result;
+}
+void IRCThread::setEventDataDone(bool value) {
+	MutexSafeWrapper safeMutex(&mutexEventDataDone,string(__FILE__) + "_" + intToStr(__LINE__));
+	eventDataDone=value;
+}
+
 IRCThread::IRCThread(const std::vector<string> &argv, IRCCallbackInterface *callbackObj) : BaseThread() {
+	uniqueID = "IRCThread";
     this->argv = argv;
     this->callbackObj = callbackObj;
     ircSession = NULL;
     eventData.clear();
-    eventDataDone = false;
+    setEventDataDone(false);
     hasJoinedChannel = false;
     lastNickListUpdate = time(NULL);
+    wantToLeaveChannel = false;
+    playerName = "";
 }
 
-void IRCThread::signalQuit() {
-    if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: signalQuit [%p]\n",ircSession);
+void IRCThread::disconnect() {
+#if !defined(DISABLE_IRCCLIENT)
 
-    if(ircSession != NULL) {
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+    if(validSession == true) {
         setCallbackObj(NULL);
-        if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: Quitting Channel\n");
-        irc_cmd_quit(ircSession, "MG Bot is closing!");
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Quitting Channel\n");
+
+        MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+        irc_disconnect(ircSession);
+        safeMutex1.ReleaseLock();
+
         BaseThread::signalQuit();
         hasJoinedChannel = false;
     }
+#else
+    BaseThread::signalQuit();
+#endif
+}
+
+void IRCThread::signalQuit() {
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: signalQuit [%p]\n",ircSession);
+
+#if !defined(DISABLE_IRCCLIENT)
+
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+    if(validSession == true) {
+        setCallbackObj(NULL);
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Quitting Channel\n");
+
+        MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+        irc_cmd_quit(ircSession, "MG Bot is closing!");
+        safeMutex1.ReleaseLock();
+		hasJoinedChannel = false;
+    }
+    BaseThread::signalQuit();
+
+#else
+    BaseThread::signalQuit();
+#endif
 }
 
 bool IRCThread::shutdownAndWait() {
-    if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC: shutdownAndWait [%p]\n",ircSession);
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: shutdownAndWait [%p]\n",ircSession);
 
     signalQuit();
     return BaseThread::shutdownAndWait();
 }
 
 void IRCThread::SendIRCCmdMessage(string target, string msg) {
-    if(ircSession != NULL && hasJoinedChannel == true) {
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+    if(validSession == true && hasJoinedChannel == true) {
     	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sending IRC command to [%s] cmd [%s]\n",__FILE__,__FUNCTION__,__LINE__,target.c_str(),msg.c_str());
+
+#if !defined(DISABLE_IRCCLIENT)
+    	MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
         int ret = irc_cmd_msg (ircSession, target.c_str(), msg.c_str());
+        safeMutex1.ReleaseLock();
+
         if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sending IRC command to [%s] cmd [%s] ret = %d\n",__FILE__,__FUNCTION__,__LINE__,target.c_str(),msg.c_str(),ret);
+#endif
     }
 }
 
 std::vector<string> IRCThread::GetIRCConnectedNickList(string target, bool waitForCompletion) {
-    eventDataDone = false;
-    if(ircSession != NULL && hasJoinedChannel == true) {
+    setEventDataDone(false);
+
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+	MutexSafeWrapper safeMutexSession(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutexSession.ReleaseLock();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
+    if(validSession == true && hasJoinedChannel == true) {
     	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sending IRC nick list command to [%s]\n",__FILE__,__FUNCTION__,__LINE__,target.c_str());
+
+#if !defined(DISABLE_IRCCLIENT)
+
+    	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
+    	MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+
+    	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
         int ret = irc_cmd_names (ircSession, target.c_str());
+        safeMutex1.ReleaseLock();
+
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
         if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sending IRC nick list command to [%s] ret = %d\n",__FILE__,__FUNCTION__,__LINE__,target.c_str(),ret);
 
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
         if(waitForCompletion == true) {
+
+        	if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
             for(time_t tElapsed = time(NULL);
-                eventDataDone == false &&
+                getEventDataDone() == false &&
                 this->getQuitStatus() == false &&
                 difftime(time(NULL),tElapsed) <= 5;) {
                 sleep(50);
             }
+
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
         }
+
+        if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+#endif
     }
+
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
 
     MutexSafeWrapper safeMutex(&mutexNickList,string(__FILE__) + "_" + intToStr(__LINE__));
     std::vector<string> nickList = eventData;
     safeMutex.ReleaseLock();
 
+    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC: Line: %d\n", __LINE__);
+
     return nickList;
 }
 
-bool IRCThread::isConnected() {
+bool IRCThread::isConnected(bool mutexLockRequired) {
     bool ret = false;
-    if(ircSession != NULL) {
+
+	MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
+	if(mutexLockRequired == true) {
+		safeMutex.setMutex(&mutexIRCSession);
+	}
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+    if(validSession == true) {
+#if !defined(DISABLE_IRCCLIENT)
+    	MutexSafeWrapper safeMutex1(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
+    	if(mutexLockRequired == true) {
+    		safeMutex1.setMutex(&mutexIRCSession);
+    	}
         ret = (irc_is_connected(ircSession) != 0);
+#endif
     }
 
     return ret;
@@ -545,11 +718,15 @@ void IRCThread::execute() {
         if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"IRC thread is running\n");
 
         try	{
+#if !defined(DISABLE_IRCCLIENT)
             irc_callbacks_t	callbacks;
-            ircSession=NULL;
+
+        	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+        	ircSession=NULL;
+        	safeMutex.ReleaseLock(true);
 
             if(argv.size() != 5) {
-                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC Usage: <server> <nick> <channel> : got params [%ld]\n",(long int)argv.size());
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC Usage: <server> <nick> <channel> : got params [%ld]\n",(long int)argv.size());
                 return;
             }
 
@@ -579,12 +756,16 @@ void IRCThread::execute() {
             if(this->getQuitStatus() == true) {
                 return;
             }
+            safeMutex.Lock();
             ircSession = irc_create_session (&callbacks);
+        	bool validSession = (ircSession != NULL);
 
-            if(!ircSession) {
-                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC Could not create session\n");
+            if(validSession == false) {
+            	safeMutex.ReleaseLock();
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC Could not create session\n");
                 return;
             }
+            safeMutex.ReleaseLock(true);
 
 //            this->execute_cmd_onconnect = "";
 //            if(argv.size() >= 5) {
@@ -601,16 +782,22 @@ void IRCThread::execute() {
             }
             this->channel = argv[2];
             this->nick    = argv[1];
+
+            safeMutex.Lock();
             irc_set_ctx(ircSession, this);
+            safeMutex.ReleaseLock(true);
 
             if(this->getQuitStatus() == true) {
                 return;
             }
 
+            safeMutex.Lock();
             if(irc_connect(ircSession, argv[0].c_str(), IRC_SERVER_PORT, 0, this->nick.c_str(), this->username.c_str(), "megaglest")) {
-                if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC Could not connect: %s\n", irc_strerror (irc_errno(ircSession)));
+            	safeMutex.ReleaseLock();
+                if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC Could not connect: %s\n", irc_strerror (irc_errno(ircSession)));
                 return;
             }
+            safeMutex.ReleaseLock();
 
             if(this->getQuitStatus() == true) {
                 return;
@@ -619,16 +806,30 @@ void IRCThread::execute() {
             if(this->getQuitStatus() == true) {
                 return;
             }
+
+			//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
 
             for(int iAttempts=1;
-                this->getQuitStatus() == false && iAttempts <= 5;
-                ++iAttempts) {
-                if(irc_run(ircSession)) {
-                    if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC Could not run the session: %s\n", irc_strerror (irc_errno(ircSession)));
+                this->getQuitStatus() == false && iAttempts <= 7; ++iAttempts) {
+                //if(irc_run(ircSession)) {
+
+            	int run_result = irc_run_session(ircSession);
+            	if(run_result && this->getQuitStatus() == false) {
+					//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+
+                    if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC Could not run the session: %s run_result = %d\n", irc_strerror (irc_errno(ircSession)), run_result);
+                    printf ("===> IRC Could not run the session: %s run_result = %d\n", irc_strerror (irc_errno(ircSession)), run_result);
                 }
             }
 
-            if(SystemFlags::VERBOSE_MODE_ENABLED) printf ("===> IRC exiting IRC CLient!\n");
+			//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+#else
+            for(;this->getQuitStatus() == false;) {
+            	sleep(50);
+            }
+#endif
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC exiting IRC CLient!\n");
+			//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
         }
         catch(const exception &ex) {
             SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
@@ -640,18 +841,95 @@ void IRCThread::execute() {
         }
 
         if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] IRC thread is exiting\n",__FILE__,__FUNCTION__,__LINE__);
+		//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
     }
 
+	//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
     // Delete ourself when the thread is done (no other actions can happen after this
     // such as the mutex which modifies the running status of this method
     MutexSafeWrapper safeMutex(&mutexIRCCB,string(__FILE__) + "_" + intToStr(__LINE__));
     IRCCallbackInterface *cb = getCallbackObj(false);
     if(cb != NULL) {
+		//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
        cb->IRC_CallbackEvent(IRC_evt_exitThread, NULL, NULL, 0);
     }
     safeMutex.ReleaseLock();
 
-	delete this;
+	//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+
+    if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In IRCThread() calling delete ...\n");
+
+	//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+	setDeleteAfterExecute(true);
+}
+
+int IRCThread::irc_run_session(irc_session_t * session) {
+//	if ( session->state != LIBIRC_STATE_CONNECTING )
+//	{
+//		session->lasterror = LIBIRC_ERR_STATE;
+//		return 1;
+//	}
+
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+
+	if ( isConnected(false) == false ) {
+		//session->lasterror = LIBIRC_ERR_STATE;
+		return 1;
+	}
+	safeMutex.ReleaseLock(true);
+
+	bool isSessionConnected = true;
+	while ( isSessionConnected == true && this->getQuitStatus() == false) {
+		struct timeval tv;
+		fd_set in_set, out_set;
+		int maxfd = 0;
+
+		tv.tv_usec = 250000;
+		tv.tv_sec = 0;
+
+		// Init sets
+		FD_ZERO (&in_set);
+		FD_ZERO (&out_set);
+
+		safeMutex.Lock();
+		irc_add_select_descriptors (session, &in_set, &out_set, &maxfd);
+		safeMutex.ReleaseLock(true);
+
+		if ( select (maxfd + 1, &in_set, &out_set, 0, &tv) < 0 ) {
+			int lastSocketError = Socket::getLastSocketError();
+			if ( lastSocketError == PLATFORM_SOCKET_INTERRUPTED ) {
+				continue;
+			}
+
+			//session->lasterror = LIBIRC_ERR_TERMINATED;
+			return 2;
+		}
+
+		safeMutex.Lock();
+		if ( irc_process_select_descriptors (session, &in_set, &out_set) ) {
+			return 3;
+		}
+
+		isSessionConnected = isConnected(false);
+		safeMutex.ReleaseLock(true);
+	}
+
+	return 0;
+}
+
+IRCThread::~IRCThread() {
+	//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In ~IRCThread() ...\n");
+
+	if(IRCThread::globalCacheContainerName != NULL) {
+		//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
+
+		IRCThread * &ircClient = CacheManager::getCachedItem< IRCThread * >(IRCThread::globalCacheContainerName);
+		ircClient = NULL;
+	}
+
+	//printf("In ~IRCThread Line: %d [%p]\n",__LINE__,this);
 }
 
 void normalizeNick(char *nick) {
@@ -698,6 +976,82 @@ void normalizeNick(char *nick) {
 		}
 
 		delete [] newNick;
+	}
+}
+
+void IRCThread::connectToHost() {
+	bool connectRequired = false;
+
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+	if(validSession == false) {
+		connectRequired = true;
+	}
+	else {
+#if !defined(DISABLE_IRCCLIENT)
+
+		MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+		int result = irc_is_connected(ircSession);
+		if(result != 1) {
+			connectRequired = true;
+		}
+#endif
+	}
+
+	if(connectRequired == false) {
+#if !defined(DISABLE_IRCCLIENT)
+		MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+        if(irc_connect(ircSession, argv[0].c_str(), IRC_SERVER_PORT, 0, this->nick.c_str(), this->username.c_str(), "megaglest")) {
+            if(SystemFlags::VERBOSE_MODE_ENABLED || IRCThread::debugEnabled) printf ("===> IRC Could not connect: %s\n", irc_strerror (irc_errno(ircSession)));
+            return;
+        }
+#endif
+	}
+}
+
+void IRCThread::joinChannel() {
+	wantToLeaveChannel = false;
+	connectToHost();
+
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+	if(validSession == true) {
+#if !defined(DISABLE_IRCCLIENT)
+
+		MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+		IRCThread *ctx = (IRCThread *)irc_get_ctx(ircSession);
+		if(ctx != NULL) {
+			eventData.clear();
+			setEventDataDone(false);
+			hasJoinedChannel = false;
+			lastNickListUpdate = time(NULL);
+
+			irc_cmd_join(ircSession, ctx->getChannel().c_str(), 0);
+		}
+#endif
+	}
+}
+
+void IRCThread::leaveChannel() {
+	wantToLeaveChannel = true;
+
+	MutexSafeWrapper safeMutex(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+	bool validSession = (ircSession != NULL);
+	safeMutex.ReleaseLock();
+
+	if(validSession == true) {
+#if !defined(DISABLE_IRCCLIENT)
+
+		MutexSafeWrapper safeMutex1(&mutexIRCSession,string(__FILE__) + "_" + intToStr(__LINE__));
+		IRCThread *ctx = (IRCThread *)irc_get_ctx(ircSession);
+		if(ctx != NULL) {
+			irc_cmd_part(ircSession,ctx->getChannel().c_str());
+		}
+#endif
 	}
 }
 

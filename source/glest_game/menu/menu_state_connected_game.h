@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -12,13 +12,24 @@
 #ifndef _GLEST_GAME_MENUSTATECONNECTEDGAME_H_
 #define _GLEST_GAME_MENUSTATECONNECTEDGAME_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "main_menu.h"
 #include "chat_manager.h"
 #include "map_preview.h"
 #include "miniftpclient.h"
 #include "leak_dumper.h"
 
+namespace Shared { namespace Graphics {
+	class VideoPlayer;
+}}
+
 namespace Glest { namespace Game {
+
+class TechTree;
 
 enum JoinMenu {
 	jmSimple,
@@ -38,7 +49,7 @@ enum FTPMessageType {
 // 	class MenuStateConnectedGame
 // ===============================
 
-class MenuStateConnectedGame: public MenuState, public FTPClientCallbackInterface {
+class MenuStateConnectedGame: public MenuState, public FTPClientCallbackInterface, public SimpleTaskCallbackInterface {
 private:
 	GraphicButton buttonDisconnect;
 	GraphicLabel labelControl;
@@ -54,18 +65,8 @@ private:
 	GraphicLabel labelInfo;
 	GraphicButton buttonRestoreLastSettings;
 
-	//GraphicLabel labelEnableObserverMode;
-	//GraphicListBox listBoxEnableObserverMode;
-	//GraphicLabel labelEnableServerControlledAI;
-	//GraphicListBox listBoxEnableServerControlledAI;
-	//GraphicLabel labelNetworkPauseGameForLaggedClients;
-	//GraphicListBox listBoxNetworkPauseGameForLaggedClients;
-
-	//GraphicListBox listBoxNetworkFramePeriod;
-	//GraphicLabel labelNetworkFramePeriod;
-
-	GraphicLabel labelPathFinderType;
-	GraphicListBox listBoxPathFinderType;
+	//GraphicLabel labelPathFinderType;
+	//GraphicListBox listBoxPathFinderType;
 
 	GraphicLabel labelMapPlayerCount;
 	GraphicListBox listBoxMapPlayerCount;
@@ -88,9 +89,13 @@ private:
 
 	GraphicListBox listBoxPlayerStatus;
 	GraphicLabel labelPlayerStatus[GameConstants::maxPlayers];
+	int nonAdminPlayerStatusX;
 
 	GraphicLabel labelAllowObservers;
-	GraphicListBox listBoxAllowObservers;
+	GraphicCheckBox checkBoxAllowObservers;
+
+	GraphicLabel labelAllowNativeLanguageTechtree;
+	GraphicCheckBox checkBoxAllowNativeLanguageTechtree;
 
 	GraphicLabel *activeInputLabel;
 
@@ -99,10 +104,17 @@ private:
 
 	MapInfo mapInfo;
 	Texture2D *mapPreviewTexture;
+	bool zoomedMap;
+	int render_mapPreviewTexture_X;
+	int render_mapPreviewTexture_Y;
+	int render_mapPreviewTexture_W;
+	int render_mapPreviewTexture_H;
 
 	bool needToSetChangedGameSettings;
 	time_t lastSetChangedGameSettings;
 	bool updateDataSynchDetailText;
+
+	int soundConnectionCount;
 
 	//Console console;
 	ChatManager chatManager;
@@ -130,11 +142,12 @@ private:
 	string currentFactionName_factionPreview;
 	string currentFactionLogo;
 	Texture2D *factionTexture;
+	::Shared::Graphics::VideoPlayer *factionVideo;
+	bool factionVideoSwitchedOffVolume;
 
 	MapPreview mapPreview;
 
 	GraphicMessageBox mainMessageBox;
-	int mainMessageBoxState;
 
 	std::string lastMissingMap;
 	std::string lastMissingTechtree;
@@ -153,36 +166,75 @@ private:
     FTPClientThread *ftpClientThread;
     FTPMessageType ftpMissingDataType;
 
+    SimpleTaskThread *modHttpServerThread;
+	std::vector<std::string> tilesetListRemote;
+	std::map<string, ModInfo> tilesetCacheList;
+	std::vector<std::string> techListRemote;
+	std::map<string, ModInfo> techCacheList;
+	std::vector<std::string> mapListRemote;
+	std::map<string, ModInfo> mapCacheList;
+
+	std::map<string,uint32> mapCRCUpdateList;
+
+
+
     string getMissingMapFromFTPServer;
     bool getMissingMapFromFTPServerInProgress;
+    time_t getMissingMapFromFTPServerLastPrompted;
 
     string getMissingTilesetFromFTPServer;
     bool getMissingTilesetFromFTPServerInProgress;
+    time_t getMissingTilesetFromFTPServerLastPrompted;
 
     string getMissingTechtreeFromFTPServer;
     bool getMissingTechtreeFromFTPServerInProgress;
+    time_t getMissingTechtreeFromFTPServerLastPrompted;
+
+    string getInProgressSavedGameFromFTPServer;
+    bool getInProgressSavedGameFromFTPServerInProgress;
+    bool readyToJoinInProgressGame;
 
     string lastCheckedCRCTilesetName;
     string lastCheckedCRCTechtreeName;
     string lastCheckedCRCMapName;
-    int32 lastCheckedCRCTilesetValue;
-    int32 lastCheckedCRCTechtreeValue;
-    int32 lastCheckedCRCMapValue;
-    vector<pair<string,int32> > factionCRCList;
+    uint32 lastCheckedCRCTilesetValue;
+    uint32 lastCheckedCRCTechtreeValue;
+    uint32 lastCheckedCRCMapValue;
+    vector<pair<string,uint32> > factionCRCList;
 
     std::map<string,pair<int,string> > fileFTPProgressList;
     GraphicButton buttonCancelDownloads;
 
 	GraphicLabel labelEnableSwitchTeamMode;
-	GraphicListBox listBoxEnableSwitchTeamMode;
+	//GraphicListBox listBoxEnableSwitchTeamMode;
+	GraphicCheckBox checkBoxEnableSwitchTeamMode;
+
 	GraphicLabel labelAISwitchTeamAcceptPercent;
 	GraphicListBox listBoxAISwitchTeamAcceptPercent;
+	GraphicLabel labelFallbackCpuMultiplier;
+	GraphicListBox listBoxFallbackCpuMultiplier;
+
 
 	GraphicButton buttonPlayNow;
+
+	GraphicCheckBox checkBoxScenario;
+	GraphicLabel labelScenario;
+	GraphicListBox listBoxScenario;
+	vector<string> scenarioFiles;
+    ScenarioInfo scenarioInfo;
+	vector<string> dirList;
+	string autoloadScenarioName;
+	time_t previewLoadDelayTimer;
+	bool needToLoadTextures;
+	bool enableScenarioTexturePreview;
+	Texture2D *scenarioLogoTexture;
 
 	bool needToBroadcastServerSettings;
 	time_t broadcastServerSettingsDelayTimer;
 	int lastGameSettingsReceivedCount;
+
+	bool launchingNewGame;
+	std::auto_ptr<TechTree> techTree;
 
 public:
 
@@ -201,6 +253,8 @@ public:
     virtual bool isInSpecialKeyCaptureEvent();
 
     virtual void reloadUI();
+
+    virtual bool isVideoPlaying();
 
 private:
 
@@ -221,17 +275,32 @@ private:
     int32 getNetworkPlayerStatus();
     void cleanupMapPreviewTexture();
 
-    void mouseClickAdmin(int x, int y, MouseButton mouseButton);
+    void mouseClickAdmin(int x, int y, MouseButton mouseButton,string advanceToItemStartingWith);
     string getCurrentMapFile();
     void loadGameSettings(GameSettings *gameSettings);
-    void reloadFactions(bool keepExistingSelectedItem);
+    void reloadFactions(bool keepExistingSelectedItem,string scenario);
     void PlayNow(bool saveGame);
-    bool isMasterserverAdmin();
-    void broadCastGameSettingsToMasterserver(bool forceNow);
+    bool isHeadlessAdmin();
+    void broadCastGameSettingsToHeadlessServer(bool forceNow);
     void updateResourceMultiplier(const int index);
 
     void RestoreLastGameSettings();
-    void setupUIFromGameSettings(const GameSettings *gameSettings, bool errorOnMissingData);
+    void setupUIFromGameSettings(GameSettings *gameSettings, bool errorOnMissingData);
+
+	int setupMapList(string scenario);
+	int setupTechList(string scenario, bool forceLoad=false);
+	void setupTilesetList(string scenario);
+
+	void loadScenarioInfo(string file, ScenarioInfo *scenarioInfo);
+	void initFactionPreview(const GameSettings *gameSettings);
+
+	virtual void simpleTask(BaseThread *callingThread,void *userdata);
+	string refreshTilesetModInfo(string tilesetInfo);
+	string refreshTechModInfo(string techInfo);
+	string refreshMapModInfo(string mapInfo);
+	string getMapCRC(string mapName);
+
+	void disconnectFromServer();
 };
 
 }}//end namespace

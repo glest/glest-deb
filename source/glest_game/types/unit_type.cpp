@@ -9,10 +9,13 @@
 //	License, or (at your option) any later version
 // ==============================================================
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "unit_type.h"
-
 #include <cassert>
-
 #include "util.h"
 #include "upgrade_type.h"
 #include "resource_type.h"
@@ -33,6 +36,7 @@ using namespace Shared::Util;
 
 namespace Glest{ namespace Game{
 
+auto_ptr<CommandType> UnitType::ctHarvestEmergencyReturnCommandType(new HarvestEmergencyReturnCommandType());
 // ===============================
 // 	class Level
 // ===============================
@@ -40,6 +44,32 @@ namespace Glest{ namespace Game{
 void Level::init(string name, int kills){
 	this->name= name;
 	this->kills= kills;
+}
+
+string Level::getName(bool translatedValue) const	{
+	if(translatedValue == false) return name;
+
+	Lang &lang = Lang::getInstance();
+	return lang.getTechTreeString("LevelName_" + name,name.c_str());
+}
+
+void Level::saveGame(XmlNode *rootNode) const {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *levelNode = rootNode->addChild("Level");
+
+	levelNode->addAttribute("name",name, mapTagReplacements);
+	levelNode->addAttribute("kills",intToStr(kills), mapTagReplacements);
+}
+
+const Level * Level::loadGame(const XmlNode *rootNode,const UnitType *ut) {
+	const Level *result = NULL;
+	if(rootNode->hasChild("Level") == true) {
+		const XmlNode *levelNode = rootNode->getChild("Level");
+
+		result = ut->getLevel(levelNode->getAttribute("name")->getValue());
+	}
+
+	return result;
 }
 
 // =====================================================
@@ -54,12 +84,24 @@ const char *UnitType::propertyNames[]= {"burnable", "rotated_climb"};
 
 UnitType::UnitType() : ProducibleType() {
 
+	countInVictoryConditions = ucvcNotSet;
 	meetingPointImage = NULL;
     lightColor= Vec3f(0.f);
     light= false;
     multiSelect= false;
 	armorType= NULL;
 	rotatedBuildPos=0;
+
+	field = fLand;
+	id = 0;
+	meetingPoint = false;
+	rotationAllowed = false;
+
+	countUnitDeathInStats=false;
+	countUnitProductionInStats=false;
+	countUnitKillInStats=false;
+	countKillForUnitUpgrade=false;
+
 
     for(int i=0; i<ccCount; ++i){
         firstCommandTypeOfClass[i]= NULL;
@@ -87,6 +129,7 @@ UnitType::UnitType() : ProducibleType() {
 	armor=0;
 	sight=0;
 	size=0;
+	renderSize=0;
 	height=0;
 
 	addItemToVault(&(this->maxHp),this->maxHp);
@@ -102,10 +145,15 @@ UnitType::UnitType() : ProducibleType() {
 
 UnitType::~UnitType(){
 	deleteValues(commandTypes.begin(), commandTypes.end());
+	commandTypes.clear();
 	deleteValues(skillTypes.begin(), skillTypes.end());
+	skillTypes.clear();
 	deleteValues(selectionSounds.getSounds().begin(), selectionSounds.getSounds().end());
+	selectionSounds.clearSounds();
 	deleteValues(commandSounds.getSounds().begin(), commandSounds.getSounds().end());
+	commandSounds.clearSounds();
 	delete [] cellMap;
+	cellMap=NULL;
 	//remove damageParticleSystemTypes
 	while(!damageParticleSystemTypes.empty()){
 		delete damageParticleSystemTypes.back();
@@ -117,11 +165,13 @@ void UnitType::preLoad(const string &dir) {
 	name= lastDir(dir);
 }
 
-void UnitType::load(int id,const string &dir, const TechTree *techTree,
-		const FactionType *factionType, Checksum* checksum,
-		Checksum* techtreeChecksum, std::map<string,vector<pair<string, string> > > &loadedFileList) {
+void UnitType::loaddd(int id,const string &dir, const TechTree *techTree,
+		const string &techTreePath, const FactionType *factionType,
+		Checksum* checksum, Checksum* techtreeChecksum,
+		std::map<string,vector<pair<string, string> > > &loadedFileList,
+		bool validationMode) {
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 
 	string currentPath = dir;
 	endPathWithSlash(currentPath);
@@ -133,8 +183,8 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 	try {
 		//Lang &lang= Lang::getInstance();
 
-		char szBuf[1024]="";
-		sprintf(szBuf,Lang::getInstance().get("LogScreenGameLoadingUnitType","",true).c_str(),formatString(name).c_str());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingUnitType","",true).c_str(),formatString(this->getName(true)).c_str());
 		Logger::getInstance().add(szBuf, true);
 
 		//file load
@@ -143,7 +193,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 
 		XmlTree xmlTree;
 		std::map<string,string> mapExtraTagReplacementValues;
-		mapExtraTagReplacementValues["$COMMONDATAPATH"] = techTree->getPath() + "/commondata/";
+		mapExtraTagReplacementValues["$COMMONDATAPATH"] = techTreePath + "/commondata/";
 		xmlTree.load(path, Properties::getTagReplacementValues(&mapExtraTagReplacementValues));
 		loadedFileList[path].push_back(make_pair(dir,dir));
 
@@ -151,10 +201,24 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 
 		const XmlNode *parametersNode= unitNode->getChild("parameters");
 
+		if(parametersNode->hasChild("count-in-victory-conditions") == true) {
+			bool countUnit = parametersNode->getChild("count-in-victory-conditions")->getAttribute("value")->getBoolValue();
+			if(countUnit == true) {
+				countInVictoryConditions = ucvcTrue;
+			}
+			else {
+				countInVictoryConditions = ucvcFalse;
+			}
+		}
+
 		//size
 		//checkItemInVault(&(this->size),this->size);
 		size= parametersNode->getChild("size")->getAttribute("value")->getIntValue();
 		addItemToVault(&(this->size),this->size);
+		renderSize=size;
+		if(parametersNode->hasChild("render-size")){
+			renderSize=parametersNode->getChild("render-size")->getAttribute("value")->getIntValue();
+		}
 
 		//height
 		//checkItemInVault(&(this->height),this->height);
@@ -223,10 +287,10 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 			for(int i=0; i<size; ++i){
 				const XmlNode *rowNode= cellMapNode->getChild("row", i);
 				string row= rowNode->getAttribute("value")->getRestrictedValue();
-				if(row.size()!=size){
-					throw runtime_error("Cellmap row has not the same length as unit size");
+				if((int)row.size() != size){
+					throw megaglest_runtime_error("Cellmap row has not the same length as unit size",validationMode);
 				}
-				for(int j=0; j<row.size(); ++j){
+				for(int j=0; j < (int)row.size(); ++j){
 					cellMap[i*size+j]= row[j]=='0'? false: true;
 				}
 			}
@@ -235,8 +299,9 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//levels
 		const XmlNode *levelsNode= parametersNode->getChild("levels");
 		levels.resize(levelsNode->getChildCount());
-		for(int i=0; i<levels.size(); ++i){
+		for(int i=0; i < (int)levels.size(); ++i){
 			const XmlNode *levelNode= levelsNode->getChild("level", i);
+
 			levels[i].init(
 				levelNode->getAttribute("name")->getRestrictedValue(),
 				levelNode->getAttribute("kills")->getIntValue());
@@ -244,7 +309,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 
 		//fields
 		const XmlNode *fieldsNode= parametersNode->getChild("fields");
-		for(int i=0; i<fieldsNode->getChildCount(); ++i){
+		for(int i=0; i < (int)fieldsNode->getChildCount(); ++i){
 			const XmlNode *fieldNode= fieldsNode->getChild("field", i);
 			string fieldName= fieldNode->getAttribute("value")->getRestrictedValue();
 			if(fieldName=="land"){
@@ -254,7 +319,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 				fields[fAir]= true;
 			}
 			else{
-				throw runtime_error("Not a valid field: "+fieldName+": "+ path);
+				throw megaglest_runtime_error("Not a valid field: "+fieldName+": "+ path, validationMode);
 			}
 		}
 
@@ -265,12 +330,12 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 			field = fAir;
 		}
 		else {
-			throw runtime_error("Unit has no field: " + path);
+			throw megaglest_runtime_error("Unit has no field: " + path, validationMode);
 		}
 
 		//properties
 		const XmlNode *propertiesNode= parametersNode->getChild("properties");
-		for(int i = 0; i < propertiesNode->getChildCount(); ++i) {
+		for(int i = 0; i < (int)propertiesNode->getChildCount(); ++i) {
 			const XmlNode *propertyNode= propertiesNode->getChild("property", i);
 			string propertyName= propertyNode->getAttribute("value")->getRestrictedValue();
 			bool found= false;
@@ -282,7 +347,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 				}
 			}
 			if(!found) {
-				throw runtime_error("Unknown property: " + propertyName);
+				throw megaglest_runtime_error("Unknown property: " + propertyName, validationMode);
 			}
 		}
 		//damage-particles
@@ -291,22 +356,15 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 			bool particleEnabled= particleNode->getAttribute("value")->getBoolValue();
 
 			if(particleEnabled) {
-				for(int i = 0; i < particleNode->getChildCount(); ++i) {
+				for(int i = 0; i < (int)particleNode->getChildCount(); ++i) {
 					const XmlNode *particleFileNode= particleNode->getChild("particle-file", i);
 					string path= particleFileNode->getAttribute("path")->getRestrictedValue();
 					UnitParticleSystemType *unitParticleSystemType= new UnitParticleSystemType();
-
-					//Texture2D *newTexture = Renderer::getInstance().newTexture2D(rsGame);
-					//Texture2D *newTexture = NULL;
 
 					unitParticleSystemType->load(particleFileNode, dir, currentPath + path,
 							&Renderer::getInstance(),loadedFileList, sourceXMLFile,
 							techTree->getPath());
 					loadedFileList[currentPath + path].push_back(make_pair(sourceXMLFile,particleFileNode->getAttribute("path")->getRestrictedValue()));
-
-					//if(unitParticleSystemType->hasTexture() == false) {
-						//Renderer::getInstance().endLastTexture(rsGame,true);
-					//}
 
 					if(particleFileNode->getAttribute("minHp",false) != NULL && particleFileNode->getAttribute("maxHp",false) != NULL) {
 						unitParticleSystemType->setMinmaxEnabled(true);
@@ -317,7 +375,6 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 							unitParticleSystemType->setMinmaxIsPercent(particleFileNode->getAttribute("ispercentbased")->getBoolValue());
 						}
 
-						//printf("Found customized particle trigger by HP [%d to %d]\n",unitParticleSystemType->getMinHp(),unitParticleSystemType->getMaxHp());
 					}
 
 					damageParticleSystemTypes.push_back(unitParticleSystemType);
@@ -349,7 +406,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//unit requirements
 		bool hasDup = false;
 		const XmlNode *unitRequirementsNode= parametersNode->getChild("unit-requirements");
-		for(int i=0; i<unitRequirementsNode->getChildCount(); ++i){
+		for(int i=0; i < (int)unitRequirementsNode->getChildCount(); ++i){
 			const XmlNode *unitNode= 	unitRequirementsNode->getChild("unit", i);
 			string name= unitNode->getAttribute("name")->getRestrictedValue();
 
@@ -360,7 +417,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 			sortedItems[name] = 0;
 		}
 		if(hasDup) {
-			printf("WARNING, unit type [%s] has one or more duplicate unit requirements\n",this->getName().c_str());
+			printf("WARNING, unit type [%s] has one or more duplicate unit requirements\n",this->getName(false).c_str());
 		}
 
 		for(std::map<string,int>::iterator iterMap = sortedItems.begin();
@@ -372,7 +429,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 
 		//upgrade requirements
 		const XmlNode *upgradeRequirementsNode= parametersNode->getChild("upgrade-requirements");
-		for(int i=0; i<upgradeRequirementsNode->getChildCount(); ++i){
+		for(int i=0; i < (int)upgradeRequirementsNode->getChildCount(); ++i){
 			const XmlNode *upgradeReqNode= upgradeRequirementsNode->getChild("upgrade", i);
 			string name= upgradeReqNode->getAttribute("name")->getRestrictedValue();
 
@@ -384,7 +441,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		}
 
 		if(hasDup) {
-			printf("WARNING, unit type [%s] has one or more duplicate upgrade requirements\n",this->getName().c_str());
+			printf("WARNING, unit type [%s] has one or more duplicate upgrade requirements\n",this->getName(false).c_str());
 		}
 
 		for(std::map<string,int>::iterator iterMap = sortedItems.begin();
@@ -397,7 +454,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//resource requirements
 		const XmlNode *resourceRequirementsNode= parametersNode->getChild("resource-requirements");
 		costs.resize(resourceRequirementsNode->getChildCount());
-		for(int i = 0; i < costs.size(); ++i) {
+		for(int i = 0; i < (int)costs.size(); ++i) {
 			const XmlNode *resourceNode= resourceRequirementsNode->getChild("resource", i);
 			string name= resourceNode->getAttribute("name")->getRestrictedValue();
 			int amount= resourceNode->getAttribute("amount")->getIntValue();
@@ -410,7 +467,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//if(hasDup || sortedItems.size() != costs.size()) printf("Found duplicate resource requirement, costs.size() = %d sortedItems.size() = %d\n",costs.size(),sortedItems.size());
 
 		if(hasDup) {
-			printf("WARNING, unit type [%s] has one or more duplicate resource requirements\n",this->getName().c_str());
+			printf("WARNING, unit type [%s] has one or more duplicate resource requirements\n",this->getName(false).c_str());
 		}
 
 		if(sortedItems.size() < costs.size()) {
@@ -419,8 +476,18 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		int index = 0;
 		for(std::map<string,int>::iterator iterMap = sortedItems.begin();
 				iterMap != sortedItems.end(); ++iterMap) {
-			costs[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
-			index++;
+			try {
+				costs[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
+				index++;
+			}
+			catch(megaglest_runtime_error& ex) {
+				if(validationMode == false) {
+					throw;
+				}
+				else {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\nFor UnitType: %s Cost: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what(),name.c_str(),iterMap->second);
+				}
+			}
 		}
 		sortedItems.clear();
 		hasDup = false;
@@ -428,7 +495,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//resources stored
 		const XmlNode *resourcesStoredNode= parametersNode->getChild("resources-stored");
 		storedResources.resize(resourcesStoredNode->getChildCount());
-		for(int i=0; i<storedResources.size(); ++i){
+		for(int i=0; i < (int)storedResources.size(); ++i){
 			const XmlNode *resourceNode= resourcesStoredNode->getChild("resource", i);
 			string name= resourceNode->getAttribute("name")->getRestrictedValue();
 			int amount= resourceNode->getAttribute("amount")->getIntValue();
@@ -441,7 +508,7 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		}
 
 		if(hasDup) {
-			printf("WARNING, unit type [%s] has one or more duplicate stored resources\n",this->getName().c_str());
+			printf("WARNING, unit type [%s] has one or more duplicate stored resources\n",this->getName(false).c_str());
 		}
 
 		if(sortedItems.size() < storedResources.size()) {
@@ -451,8 +518,18 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		index = 0;
 		for(std::map<string,int>::iterator iterMap = sortedItems.begin();
 				iterMap != sortedItems.end(); ++iterMap) {
-			storedResources[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
-			index++;
+			try {
+				storedResources[index].init(techTree->getResourceType(iterMap->first), iterMap->second);
+				index++;
+			}
+			catch(megaglest_runtime_error& ex) {
+				if(validationMode == false) {
+					throw;
+				}
+				else {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\nFor UnitType: %s Store: %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what(),name.c_str(),iterMap->second);
+				}
+			}
 		}
 		sortedItems.clear();
 
@@ -483,11 +560,49 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 			loadedFileList[meetingPointNode->getAttribute("image-path")->getRestrictedValue(currentPath)].push_back(make_pair(sourceXMLFile,meetingPointNode->getAttribute("image-path")->getRestrictedValue()));
 		}
 
+		//countUnitDeathInStats
+		if(parametersNode->hasChild("count-unit-death-in-stats")){
+			const XmlNode *countUnitDeathInStatsNode= parametersNode->getChild("count-unit-death-in-stats");
+			countUnitDeathInStats= countUnitDeathInStatsNode->getAttribute("value")->getBoolValue();
+		}
+		else {
+			countUnitDeathInStats=true;
+		}
+		//countUnitProductionInStats
+		if(parametersNode->hasChild("count-unit-production-in-stats")){
+			const XmlNode *countUnitProductionInStatsNode= parametersNode->getChild("count-unit-production-in-stats");
+			countUnitProductionInStats= countUnitProductionInStatsNode->getAttribute("value")->getBoolValue();
+		}
+		else {
+			countUnitProductionInStats=true;
+		}
+		//countUnitKillInStats
+		if(parametersNode->hasChild("count-unit-kill-in-stats")){
+			const XmlNode *countUnitKillInStatsNode= parametersNode->getChild("count-unit-kill-in-stats");
+			countUnitKillInStats= countUnitKillInStatsNode->getAttribute("value")->getBoolValue();
+		}
+		else {
+			countUnitKillInStats=true;
+		}
+
+		//countKillForUnitUpgrade
+		if(parametersNode->hasChild("count-kill-for-unit-upgrade")){
+			const XmlNode *countKillForUnitUpgradeNode= parametersNode->getChild("count-kill-for-unit-upgrade");
+			countKillForUnitUpgrade= countKillForUnitUpgradeNode->getAttribute("value")->getBoolValue();
+		} else {
+			countKillForUnitUpgrade=true;
+		}
+
+		if(countKillForUnitUpgrade == false){
+			// it makes no sense if we count it in stats but not for upgrades
+			countUnitKillInStats=false;
+		}
+
 		//selection sounds
 		const XmlNode *selectionSoundNode= parametersNode->getChild("selection-sounds");
 		if(selectionSoundNode->getAttribute("enabled")->getBoolValue()){
-			selectionSounds.resize(selectionSoundNode->getChildCount());
-			for(int i = 0; i < selectionSounds.getSounds().size(); ++i) {
+			selectionSounds.resize((int)selectionSoundNode->getChildCount());
+			for(int i = 0; i < (int)selectionSounds.getSounds().size(); ++i) {
 				const XmlNode *soundNode= selectionSoundNode->getChild("sound", i);
 				string path= soundNode->getAttribute("path")->getRestrictedValue(currentPath);
 				StaticSound *sound= new StaticSound();
@@ -500,8 +615,8 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 		//command sounds
 		const XmlNode *commandSoundNode= parametersNode->getChild("command-sounds");
 		if(commandSoundNode->getAttribute("enabled")->getBoolValue()) {
-			commandSounds.resize(commandSoundNode->getChildCount());
-			for(int i = 0; i < commandSoundNode->getChildCount(); ++i) {
+			commandSounds.resize((int)commandSoundNode->getChildCount());
+			for(int i = 0; i < (int)commandSoundNode->getChildCount(); ++i) {
 				const XmlNode *soundNode= commandSoundNode->getChild("sound", i);
 				string path= soundNode->getAttribute("path")->getRestrictedValue(currentPath);
 				StaticSound *sound= new StaticSound();
@@ -520,54 +635,98 @@ void UnitType::load(int id,const string &dir, const TechTree *techTree,
 
 		const XmlNode *skillsNode= unitNode->getChild("skills");
 		skillTypes.resize(skillsNode->getChildCount());
-		for(int i = 0; i < skillTypes.size(); ++i) {
+
+		snprintf(szBuf,8096,Lang::getInstance().getString("LogScreenGameLoadingUnitTypeSkills","",true).c_str(),formatString(this->getName(true)).c_str(),skillTypes.size());
+		Logger::getInstance().add(szBuf, true);
+
+		for(int i = 0; i < (int)skillTypes.size(); ++i) {
 			const XmlNode *sn= skillsNode->getChild("skill", i);
 			const XmlNode *typeNode= sn->getChild("type");
 			string classId= typeNode->getAttribute("value")->getRestrictedValue();
 			SkillType *skillType= SkillTypeFactory::getInstance().newInstance(classId);
 
-			skillType->load(sn, attackBoostsNode, dir, techTree, factionType, loadedFileList,sourceXMLFile);
-			skillTypes[i]= skillType;
+			skillTypes[i]=NULL;
+			try {
+				skillType->load(sn, attackBoostsNode, dir, techTree, factionType, loadedFileList,sourceXMLFile);
+				skillTypes[i]= skillType;
+			}
+			catch(megaglest_runtime_error& ex) {
+				if(validationMode == false) {
+					throw;
+				}
+				else {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\nFor UnitType: %s SkillType: %s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what(),name.c_str(),classId.c_str());
+				}
+			}
 		}
 
 		//commands
 		const XmlNode *commandsNode= unitNode->getChild("commands");
 		commandTypes.resize(commandsNode->getChildCount());
-		for(int i = 0; i < commandTypes.size(); ++i) {
+		for(int i = 0; i < (int)commandTypes.size(); ++i) {
 			const XmlNode *commandNode= commandsNode->getChild("command", i);
 			const XmlNode *typeNode= commandNode->getChild("type");
 			string classId= typeNode->getAttribute("value")->getRestrictedValue();
 			CommandType *commandType= CommandTypeFactory::getInstance().newInstance(classId);
-			commandType->load(i, commandNode, dir, techTree, factionType, *this,
-					loadedFileList,sourceXMLFile);
-			commandTypes[i]= commandType;
+
+			commandTypes[i]=NULL;
+			try {
+				commandType->load(i, commandNode, dir, techTree, factionType, *this,
+						loadedFileList,sourceXMLFile);
+				commandTypes[i]= commandType;
+			}
+			catch(megaglest_runtime_error& ex) {
+				if(validationMode == false) {
+					throw;
+				}
+				else {
+					SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\nFor UnitType: %s CommandType:%s\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what(),name.c_str(),classId.c_str());
+				}
+			}
 		}
 
 		computeFirstStOfClass();
 		computeFirstCtOfClass();
 
 		if(getFirstStOfClass(scStop)==NULL){
-			throw runtime_error("Every unit must have at least one stop skill: "+ path);
+			throw megaglest_runtime_error("Every unit must have at least one stop skill: "+ path,validationMode);
 		}
 		if(getFirstStOfClass(scDie)==NULL){
-			throw runtime_error("Every unit must have at least one die skill: "+ path);
+			throw megaglest_runtime_error("Every unit must have at least one die skill: "+ path,validationMode);
 		}
 
 	}
 	//Exception handling (conversions and so on);
+    catch(megaglest_runtime_error& ex) {
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,ex.what());
+		throw megaglest_runtime_error("Error loading UnitType: " + path + "\nMessage: " + ex.what(),!ex.wantStackTrace());
+    }
 	catch(const exception &e){
-		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,e.what());
-		throw runtime_error("Error loading UnitType: " + path + "\n" + e.what());
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,e.what());
+		throw megaglest_runtime_error("Error loading UnitType: " + path + "\nMessage: " + e.what());
 	}
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 }
 
 // ==================== get ====================
 
+const Level *UnitType::getLevel(string name) const {
+	const Level *result = NULL;
+	for(unsigned int i = 0; i < levels.size(); ++i) {
+		const Level &level = levels[i];
+		if(level.getName() == name) {
+			result = &level;
+			break;
+		}
+	}
+
+	return result;
+}
+
 const CommandType *UnitType::getFirstCtOfClass(CommandClass commandClass) const{
 	if(firstCommandTypeOfClass[commandClass] == NULL) {
-		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] commandClass = %d\n",__FILE__,__FUNCTION__,__LINE__,commandClass);
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d] commandClass = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,commandClass);
 
 		/*
 	    for(int j=0; j<ccCount; ++j){
@@ -579,7 +738,7 @@ const CommandType *UnitType::getFirstCtOfClass(CommandClass commandClass) const{
 	    }
 	    */
 
-		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		//if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	}
     return firstCommandTypeOfClass[commandClass];
 }
@@ -595,13 +754,13 @@ const SkillType *UnitType::getFirstStOfClass(SkillClass skillClass) const{
 	        }
 	    }
 	    */
-		//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		//SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__);
 	}
     return firstSkillTypeOfClass[skillClass];
 }
 
 const HarvestCommandType *UnitType::getFirstHarvestCommand(const ResourceType *resourceType, const Faction *faction) const {
-	for(int i = 0; i < commandTypes.size(); ++i) {
+	for(int i = 0; i < (int)commandTypes.size(); ++i) {
 		if(commandTypes[i]->getClass() == ccHarvest) {
 			const HarvestCommandType *hct = static_cast<const HarvestCommandType*>(commandTypes[i]);
 
@@ -617,18 +776,23 @@ const HarvestCommandType *UnitType::getFirstHarvestCommand(const ResourceType *r
 	return NULL;
 }
 
+const HarvestEmergencyReturnCommandType *UnitType::getFirstHarvestEmergencyReturnCommand() const {
+	const HarvestEmergencyReturnCommandType *result = dynamic_cast<const HarvestEmergencyReturnCommandType *>(ctHarvestEmergencyReturnCommandType.get());
+	return result;
+}
+
 const AttackCommandType *UnitType::getFirstAttackCommand(Field field) const{
 	//printf("$$$ Unit [%s] commandTypes.size() = %d\n",this->getName().c_str(),(int)commandTypes.size());
 
-	for(int i = 0; i < commandTypes.size(); ++i){
+	for(int i = 0; i < (int)commandTypes.size(); ++i){
 		if(commandTypes[i] == NULL) {
-			throw runtime_error("commandTypes[i] == NULL");
+			throw megaglest_runtime_error("commandTypes[i] == NULL");
 		}
 
 		//printf("$$$ Unit [%s] i = %d, commandTypes[i] [%s]\n",this->getName().c_str(),(int)i, commandTypes[i]->toString().c_str());
 		if(commandTypes[i]->getClass()== ccAttack){
 			const AttackCommandType *act= dynamic_cast<const AttackCommandType*>(commandTypes[i]);
-			if(act->getAttackSkillType()->getAttackField(field)) {
+			if(act != NULL && act->getAttackSkillType()->getAttackField(field)) {
 				//printf("## Unit [%s] i = %d, is found\n",this->getName().c_str(),(int)i);
 				return act;
 			}
@@ -641,15 +805,15 @@ const AttackCommandType *UnitType::getFirstAttackCommand(Field field) const{
 const AttackStoppedCommandType *UnitType::getFirstAttackStoppedCommand(Field field) const{
 	//printf("$$$ Unit [%s] commandTypes.size() = %d\n",this->getName().c_str(),(int)commandTypes.size());
 
-	for(int i = 0; i < commandTypes.size(); ++i){
+	for(int i = 0; i < (int)commandTypes.size(); ++i){
 		if(commandTypes[i] == NULL) {
-			throw runtime_error("commandTypes[i] == NULL");
+			throw megaglest_runtime_error("commandTypes[i] == NULL");
 		}
 
 		//printf("$$$ Unit [%s] i = %d, commandTypes[i] [%s]\n",this->getName().c_str(),(int)i, commandTypes[i]->toString().c_str());
 		if(commandTypes[i]->getClass()== ccAttackStopped){
 			const AttackStoppedCommandType *act= dynamic_cast<const AttackStoppedCommandType*>(commandTypes[i]);
-			if(act->getAttackSkillType()->getAttackField(field)) {
+			if(act != NULL && act->getAttackSkillType()->getAttackField(field)) {
 				//printf("## Unit [%s] i = %d, is found\n",this->getName().c_str(),(int)i);
 				return act;
 			}
@@ -660,7 +824,7 @@ const AttackStoppedCommandType *UnitType::getFirstAttackStoppedCommand(Field fie
 }
 
 const RepairCommandType *UnitType::getFirstRepairCommand(const UnitType *repaired) const{
-	for(int i=0; i<commandTypes.size(); ++i){
+	for(int i=0; i < (int)commandTypes.size(); ++i){
 		if(commandTypes[i]->getClass()== ccRepair){
 			const RepairCommandType *rct= static_cast<const RepairCommandType*>(commandTypes[i]);
 			if(rct->isRepairableUnitType(repaired)){
@@ -709,7 +873,7 @@ Vec2i UnitType::getFirstOccupiedCellInCellMap(Vec2i currentPos) const {
 bool UnitType::getCellMapCell(int x, int y, CardinalDir facing) const {
 	assert(cellMap);
 	if(cellMap == NULL) {
-		throw runtime_error("cellMap == NULL");
+		throw megaglest_runtime_error("cellMap == NULL");
 	}
 
 	//checkItemInVault(&(this->size),this->size);
@@ -736,7 +900,7 @@ bool UnitType::getCellMapCell(int x, int y, CardinalDir facing) const {
 }
 
 int UnitType::getStore(const ResourceType *rt) const{
-    for(int i=0; i<storedResources.size(); ++i){
+    for(int i=0; i < (int)storedResources.size(); ++i){
 		if(storedResources[i].getType()==rt){
             return storedResources[i].getAmount();
 		}
@@ -745,17 +909,17 @@ int UnitType::getStore(const ResourceType *rt) const{
 }
 
 const SkillType *UnitType::getSkillType(const string &skillName, SkillClass skillClass) const{
-	for(int i=0; i<skillTypes.size(); ++i){
+	for(int i=0; i < (int)skillTypes.size(); ++i){
 		if(skillTypes[i]->getName()==skillName){
 			if(skillTypes[i]->getClass()==skillClass){
 				return skillTypes[i];
 			}
 			else{
-				throw runtime_error("Skill \""+skillName+"\" is not of class \""+SkillType::skillClassToStr(skillClass));
+				throw megaglest_runtime_error("Skill \""+skillName+"\" is not of class \""+SkillType::skillClassToStr(skillClass));
 			}
 		}
 	}
-	throw runtime_error("No skill named \""+skillName+"\"");
+	throw megaglest_runtime_error("No skill named \""+skillName+"\"");
 }
 
 // ==================== totals ====================
@@ -770,7 +934,7 @@ int UnitType::getTotalMaxHp(const TotalUpgrade *totalUpgrade) const {
 int UnitType::getTotalMaxHpRegeneration(const TotalUpgrade *totalUpgrade) const {
 	checkItemInVault(&(this->hpRegeneration),this->hpRegeneration);
 	int result = hpRegeneration + totalUpgrade->getMaxHpRegeneration();
-	result = max(0,result);
+	//result = max(0,result);
 	return result;
 }
 
@@ -784,7 +948,7 @@ int UnitType::getTotalMaxEp(const TotalUpgrade *totalUpgrade) const {
 int UnitType::getTotalMaxEpRegeneration(const TotalUpgrade *totalUpgrade) const {
 	checkItemInVault(&(this->epRegeneration),this->epRegeneration);
 	int result = epRegeneration + totalUpgrade->getMaxEpRegeneration();
-	result = max(0,result);
+	//result = max(0,result);
 	return result;
 }
 
@@ -810,7 +974,13 @@ bool UnitType::hasSkillClass(SkillClass skillClass) const {
 
 bool UnitType::hasCommandType(const CommandType *commandType) const {
     assert(commandType!=NULL);
-    for(int i=0; i<commandTypes.size(); ++i) {
+
+	const HarvestEmergencyReturnCommandType *result = dynamic_cast<const HarvestEmergencyReturnCommandType *>(ctHarvestEmergencyReturnCommandType.get());
+	if(commandType == result) {
+		return true;
+	}
+
+    for(int i=0; i < (int)commandTypes.size(); ++i) {
         if(commandTypes[i]==commandType) {
             return true;
         }
@@ -818,13 +988,9 @@ bool UnitType::hasCommandType(const CommandType *commandType) const {
     return false;
 }
 
-bool UnitType::hasCommandClass(CommandClass commandClass) const {
-	return firstCommandTypeOfClass[commandClass]!=NULL;
-}
-
 bool UnitType::hasSkillType(const SkillType *skillType) const {
     assert(skillType!=NULL);
-    for(int i=0; i<skillTypes.size(); ++i) {
+    for(int i=0; i < (int)skillTypes.size(); ++i) {
         if(skillTypes[i]==skillType) {
             return true;
         }
@@ -842,6 +1008,7 @@ bool UnitType::isOfClass(UnitClass uc) const{
 		return hasSkillClass(scBeBuilt);
 	default:
 		assert(false);
+		break;
 	}
 	return false;
 }
@@ -851,8 +1018,8 @@ bool UnitType::isOfClass(UnitClass uc) const{
 void UnitType::computeFirstStOfClass() {
 	for(int j= 0; j < scCount; ++j) {
         firstSkillTypeOfClass[j]= NULL;
-        for(int i= 0; i < skillTypes.size(); ++i) {
-            if(skillTypes[i]->getClass()== SkillClass(j)) {
+        for(int i= 0; i < (int)skillTypes.size(); ++i) {
+            if(skillTypes[i] != NULL && skillTypes[i]->getClass()== SkillClass(j)) {
                 firstSkillTypeOfClass[j]= skillTypes[i];
                 break;
             }
@@ -863,8 +1030,8 @@ void UnitType::computeFirstStOfClass() {
 void UnitType::computeFirstCtOfClass() {
     for(int j = 0; j < ccCount; ++j) {
         firstCommandTypeOfClass[j]= NULL;
-        for(int i = 0; i < commandTypes.size(); ++i) {
-            if(commandTypes[i]->getClass() == CommandClass(j)) {
+        for(int i = 0; i < (int)commandTypes.size(); ++i) {
+            if(commandTypes[i] != NULL && commandTypes[i]->getClass() == CommandClass(j)) {
                 firstCommandTypeOfClass[j] = commandTypes[i];
                 break;
             }
@@ -873,9 +1040,14 @@ void UnitType::computeFirstCtOfClass() {
 }
 
 const CommandType* UnitType::findCommandTypeById(int id) const{
-	for(int i=0; i<getCommandTypeCount(); ++i){
-		const CommandType* commandType= getCommandType(i);
-		if(commandType->getId()==id){
+	const HarvestEmergencyReturnCommandType *result = dynamic_cast<const HarvestEmergencyReturnCommandType *>(ctHarvestEmergencyReturnCommandType.get());
+	if(result != NULL && id == result->getId()) {
+		return result;
+	}
+
+	for(int i=0; i < getCommandTypeCount(); ++i) {
+		const CommandType *commandType= getCommandType(i);
+		if(commandType->getId() == id){
 			return commandType;
 		}
 	}
@@ -883,10 +1055,10 @@ const CommandType* UnitType::findCommandTypeById(int id) const{
 }
 
 const CommandType *UnitType::getCommandType(int i) const {
-	if(i >= commandTypes.size()) {
-		char szBuf[1024]="";
-		sprintf(szBuf,"In [%s::%s Line: %d] i >= commandTypes.size(), i = %d, commandTypes.size() = %lu",__FILE__,__FUNCTION__,__LINE__,i,(unsigned long)commandTypes.size());
-		throw runtime_error(szBuf);
+	if(i >= (int)commandTypes.size()) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s Line: %d] i >= commandTypes.size(), i = %d, commandTypes.size() = " MG_SIZE_T_SPECIFIER "",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,i,commandTypes.size());
+		throw megaglest_runtime_error(szBuf);
 	}
 	return commandTypes[i];
 }
@@ -895,31 +1067,36 @@ string UnitType::getCommandTypeListDesc() const {
 	string desc = "Commands: ";
 	for(int i=0; i<getCommandTypeCount(); ++i){
 		const CommandType* commandType= getCommandType(i);
-		desc += " id = " + intToStr(commandType->getId()); + " toString: " + commandType->toString();
+		desc += " id = " + intToStr(commandType->getId()); + " toString: " + commandType->toString(false);
 	}
 	return desc;
 
 }
 
-string UnitType::getReqDesc() const{
+string UnitType::getReqDesc(bool translatedValue) const{
 	Lang &lang= Lang::getInstance();
-	string desc = "Limits: ";
+	//string desc = "Limits: ";
 	string resultTxt="";
 
 	checkItemInVault(&(this->maxUnitCount),this->maxUnitCount);
 	if(getMaxUnitCount() > 0) {
-		resultTxt += "\n" + lang.get("MaxUnitCount") + " " + intToStr(getMaxUnitCount());
+		resultTxt += "\n" + lang.getString("MaxUnitCount") + " " + intToStr(getMaxUnitCount());
 	}
 	if(resultTxt == "")
-		return ProducibleType::getReqDesc();
+		return ProducibleType::getReqDesc(translatedValue);
 	else
-		return ProducibleType::getReqDesc()+"\nLimits: "+resultTxt;
+		return ProducibleType::getReqDesc(translatedValue)+"\n" + lang.getString("Limits") + " " + resultTxt;
+}
+
+string UnitType::getName(bool translatedValue) const {
+	if(translatedValue == false) return name;
+
+	Lang &lang = Lang::getInstance();
+	return lang.getTechTreeString("UnitTypeName_" + name,name.c_str());
 }
 
 std::string UnitType::toString() const {
-	std::string result = "";
-
-	result = "Unit Name: [" + name + "] id = " + intToStr(id);
+	std::string result = "Unit Name: [" + name + "] id = " + intToStr(id);
 	result += " maxHp = " + intToStr(maxHp);
 	result += " hpRegeneration = " + intToStr(hpRegeneration);
 	result += " maxEp = " + intToStr(maxEp);
@@ -937,7 +1114,7 @@ std::string UnitType::toString() const {
 	result += " armor = " + intToStr(armor);
 
 	if(armorType != NULL) {
-		result += " armorType Name: [" + armorType->getName() + " id = " +  intToStr(armorType->getId());
+		result += " armorType Name: [" + armorType->getName(false) + " id = " +  intToStr(armorType->getId());
 	}
 
 	result += " light = " + intToStr(light);
@@ -946,11 +1123,11 @@ std::string UnitType::toString() const {
 	result += " sight = " + intToStr(sight);
 	result += " size = " + intToStr(size);
 	result += " height = " + intToStr(height);
-	result += " rotatedBuildPos = " + floatToStr(rotatedBuildPos);
+	result += " rotatedBuildPos = " + floatToStr(rotatedBuildPos,6);
 	result += " rotationAllowed = " + intToStr(rotationAllowed);
 
 	if(cellMap != NULL) {
-		result += " cellMap:";
+		result += " cellMap: [" + intToStr(size) + "]";
 		for(int i = 0; i < size; ++i) {
 			for(int j = 0; j < size; ++j){
 				result += " i = " + intToStr(i) + " j = " + intToStr(j) + " value = " + intToStr(cellMap[i*size+j]);
@@ -958,27 +1135,29 @@ std::string UnitType::toString() const {
 		}
 	}
 
-	result += " skillTypes:";
-	for(int i = 0; i < skillTypes.size(); ++i) {
-		result += " i = " + intToStr(i) + " " + skillTypes[i]->toString();
+	result += " skillTypes: [" + intToStr(skillTypes.size()) + "]";
+	for(int i = 0; i < (int)skillTypes.size(); ++i) {
+		result += " i = " + intToStr(i) + " " + skillTypes[i]->toString(false);
 	}
 
-	result += " commandTypes:";
-	for(int i = 0; i < commandTypes.size(); ++i) {
-		result += " i = " + intToStr(i) + " " + commandTypes[i]->toString();
+	result += " commandTypes: [" + intToStr(commandTypes.size()) + "]";
+	for(int i = 0; i < (int)commandTypes.size(); ++i) {
+		result += " i = " + intToStr(i) + " " + commandTypes[i]->toString(false);
 	}
 
-	result += " storedResources:";
-	for(int i = 0; i < storedResources.size(); ++i) {
-		result += " i = " + intToStr(i) + " " + storedResources[i].getDescription();
+	result += " storedResources: [" + intToStr(storedResources.size()) + "]";
+	for(int i = 0; i < (int)storedResources.size(); ++i) {
+		result += " i = " + intToStr(i) + " " + storedResources[i].getDescription(false);
 	}
 
-	result += " levels:";
-	for(int i = 0; i < levels.size(); ++i) {
+	result += " levels: [" + intToStr(levels.size()) + "]";
+	for(int i = 0; i < (int)levels.size(); ++i) {
 		result += " i = " + intToStr(i) + " " + levels[i].getName();
 	}
 
 	result += " meetingPoint = " + intToStr(meetingPoint);
+
+	result += " countInVictoryConditions = " + intToStr(countInVictoryConditions);
 
 	return result;
 }

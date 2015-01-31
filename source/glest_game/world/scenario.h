@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Martio Figueroa
+//	Copyright (C) 2001-2005 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -11,6 +11,11 @@
 
 #ifndef _GLEST_GAME_SCENARIO_H_
 #define _GLEST_GAME_SCENARIO_H_
+
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
 #include <string>
 #include <vector>
@@ -38,7 +43,35 @@ enum Difficulty {
     dInsane
 };
 
-struct ScenarioInfo {
+class ScenarioInfo {
+
+public:
+	ScenarioInfo() {
+		difficulty = 0;
+		for(unsigned int i = 0; i < (unsigned int)GameConstants::maxPlayers; ++i) {
+			factionControls[i] = ctClosed;
+			teams[i] = 0;
+			factionTypeNames[i] = "";
+			resourceMultipliers[i] = 0;
+		}
+
+	    mapName = "";
+	    tilesetName = "";
+	    techTreeName = "";
+
+		defaultUnits = false;
+		defaultResources = false;
+		defaultVictoryConditions = false;
+
+	    desc = "";
+
+	    fogOfWar = false;
+	    fogOfWar_exploredFlag = false;
+
+	    file = "";
+	    name = "";
+	    namei18n = "";
+	}
 	int difficulty;
     ControlType factionControls[GameConstants::maxPlayers];
     int teams[GameConstants::maxPlayers];
@@ -60,6 +93,7 @@ struct ScenarioInfo {
 
     string file;
     string name;
+    string namei18n;
 };
 
 // =====================================================
@@ -96,17 +130,21 @@ public:
 	Checksum load(const string &path);
 	Checksum * getChecksumValue() { return &checksumValue; }
 
-	int getScriptCount() const				{return scripts.size();}
+	int getScriptCount() const				{return (int)scripts.size();}
 	const Script* getScript(int i) const	{return &scripts[i];}
 
 	ScenarioInfo getInfo() const { return info; }
 
+	static bool isGameTutorial(string path);
 	static string getScenarioPath(const vector<string> dir, const string &scenarioName, bool getMatchingRootScenarioPathOnly=false);
 	static string getScenarioPath(const string &dir, const string &scenarioName);
 	static int getScenarioPathIndex(const vector<string> dirList, const string &scenarioName);
+	static string getScenarioDir(const vector<string> dir, const string &scenarioName);
 
-	static void loadScenarioInfo(string file, ScenarioInfo *scenarioInfo);
+	static void loadScenarioInfo(string file, ScenarioInfo *scenarioInfo,bool isTutorial);
 	static ControlType strToControllerType(const string &str);
+	static string controllerTypeToStr(const ControlType &ct);
+
 	static void loadGameSettings(const vector<string> &dirList, const ScenarioInfo *scenarioInfo, GameSettings *gameSettings, string scenarioDescription);
 
 private:

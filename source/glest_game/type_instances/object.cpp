@@ -22,6 +22,7 @@
 #include "randomgen.h"
 #include "renderer.h"
 #include "leak_dumper.h"
+#include "game.h"
 
 using namespace Shared::Util;
 
@@ -36,22 +37,31 @@ ObjectStateInterface *Object::stateCallback=NULL;
 Object::Object(ObjectType *objectType, const Vec3f &pos, const Vec2i &mapPos) : BaseColorPickEntity() {
 	RandomGen random;
 
-	random.init(static_cast<int>(pos.x*pos.z));
+	random.init(static_cast<int>(pos.x * pos.z));
 	this->lastRenderFrame = 0;
 	this->objectType= objectType;
 	resource= NULL;
+	highlight= 0.f;
+	animated= false;
 	this->mapPos = mapPos;
 	this->pos= pos + Vec3f(random.randRange(-0.6f, 0.6f), 0.0f, random.randRange(-0.6f, 0.6f));
 	rotation= random.randRange(0.f, 360.f);
 	if(objectType!=NULL){
 		variation = random.randRange(0, objectType->getModelCount()-1);
 		TilesetModelType *tmt=objectType->getTilesetModelType(variation);
-		if(tmt->getRotationAllowed()!=true){
+		if(tmt->getRotationAllowed() != true) {
 			rotation=0;
 		}
+		if(tmt->getRandomPositionEnabled() != true) {
+			this->pos = pos;
+		}
+		animated=tmt->getAnimSpeed()>0;
+	}
+	else {
+		variation=0;
 	}
 	visible=false;
-
+	animProgress=0.0f;
 }
 
 Object::~Object() {
@@ -64,12 +74,14 @@ Object::~Object() {
 		}
 		unitParticleSystems.pop_back();
 	}
+	Renderer::getInstance().removeParticleSystemsForParticleOwner(this,rsGame);
 	renderer.removeObjectFromQuadCache(this);
 	if(stateCallback) {
 		stateCallback->removingObjectEvent(this);
 	}
 	delete resource;
 	resource = NULL;
+
 }
 
 void Object::end() {
@@ -100,6 +112,7 @@ void Object::initParticlesFromTypes(const ModelParticleSystemTypes *particleType
 			particleTypes->empty() == false && unitParticleSystems.empty() == true) {
 		for(ObjectParticleSystemTypes::const_iterator it= particleTypes->begin(); it != particleTypes->end(); ++it){
 			UnitParticleSystem *ups= new UnitParticleSystem(200);
+			ups->setParticleOwner(this);
 			(*it)->setValues(ups);
 			ups->setPos(this->pos);
 			ups->setRotation(this->rotation);
@@ -111,8 +124,15 @@ void Object::initParticlesFromTypes(const ModelParticleSystemTypes *particleType
 	}
 }
 
+void Object::end(ParticleSystem *particleSystem) {
+	vector<UnitParticleSystem *>::iterator iterFind = find(unitParticleSystems.begin(),unitParticleSystems.end(),particleSystem);
+	if(iterFind != unitParticleSystems.end()) {
+		unitParticleSystems.erase(iterFind);
+	}
+}
+
 void Object::setHeight(float height) {
-	pos.y=height;
+	pos.y = height;
 
 	for(UnitParticleSystems::iterator it= unitParticleSystems.begin(); it != unitParticleSystems.end(); ++it) {
 		bool particleValid = Renderer::getInstance().validateParticleSystemStillExists((*it),rsGame);
@@ -120,6 +140,46 @@ void Object::setHeight(float height) {
 			(*it)->setPos(this->pos);
 		}
 	}
+}
+
+void Object::updateHighlight() {
+	//highlight
+	if(highlight > 0.f) {
+		//const Game *game = Renderer::getInstance().getGame();
+		//highlight -= 1.f / (Game::highlightTime * game->getWorld()->getUpdateFps(-1));
+		highlight -= 1.f / (Game::highlightTime * GameConstants::updateFps);
+	}
+}
+
+void Object::update() {
+	//if(objectType != NULL && objectType->getTilesetModelType(variation) != NULL &&
+	//		objectType->getTilesetModelType(variation)->getAnimSpeed() != 0.0) {
+	if(animated == true) {
+//		printf("#1 Object updating [%s] Speed [%d] animProgress [%f]\n",this->objectType->getTilesetModelType(variation)->getModel()->getFileName().c_str(),objectType->getTilesetModelType(variation)->getAnimSpeed(),animProgress);
+
+		if(objectType != NULL && objectType->getTilesetModelType(variation) != NULL) {
+			float heightFactor   = 1.f;
+			const float speedDivider= 100.f;
+			float speedDenominator = (speedDivider * GameConstants::updateFps);
+
+			// smooth TwoFrameanimations
+			float f=1.0f;
+			if(objectType->getTilesetModelType(variation)->getSmoothTwoFrameAnim()==true){
+				f=abs(std::sin(animProgress*2*3.16))+0.4f;
+			}
+
+			float newAnimProgress = animProgress + f*(((float)objectType->getTilesetModelType(variation)->getAnimSpeed() * heightFactor) / speedDenominator);
+
+			animProgress = newAnimProgress;
+			if(animProgress > 1.f) {
+				animProgress = 0.f;
+			}
+		}
+	}
+}
+
+void Object::resetHighlight(){
+	highlight= 1.f;
 }
 
 Model *Object::getModelPtr() const {
@@ -154,8 +214,6 @@ bool Object::getWalkable() const{
 
 void Object::setResource(const ResourceType *resourceType, const Vec2i &pos){
 	delete resource;
-	resource = NULL;
-
 	resource= new Resource();
 	resource->init(resourceType, pos);
 	initParticlesFromTypes(resourceType->getObjectParticleSystemTypes());
@@ -175,10 +233,77 @@ void Object::setVisible( bool visible)
 string Object::getUniquePickName() const {
 	string result = "";
 	if(resource != NULL) {
-		result += resource->getDescription() + " : ";
+		result += resource->getDescription(false) + " : ";
 	}
 	result += mapPos.getString();
 	return result;
+}
+
+void Object::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *objectNode = rootNode->addChild("Object");
+
+//	ObjectType *objectType;
+	if(objectType != NULL) {
+		objectNode->addAttribute("objectType",intToStr(objectType->getClass()), mapTagReplacements);
+	}
+//	vector<UnitParticleSystem*> unitParticleSystems;
+	for(unsigned int i = 0; i < unitParticleSystems.size(); ++i) {
+		UnitParticleSystem *ptr= unitParticleSystems[i];
+		if(ptr != NULL) {
+			ptr->saveGame(objectNode);
+		}
+	}
+//	Resource *resource;
+	if(resource != NULL) {
+		resource->saveGame(objectNode);
+	}
+//	Vec3f pos;
+	objectNode->addAttribute("pos",pos.getString(), mapTagReplacements);
+//	float rotation;
+	objectNode->addAttribute("rotation",floatToStr(rotation,6), mapTagReplacements);
+//	int variation;
+	objectNode->addAttribute("variation",intToStr(variation), mapTagReplacements);
+//	int lastRenderFrame;
+	objectNode->addAttribute("lastRenderFrame",intToStr(lastRenderFrame), mapTagReplacements);
+//	Vec2i mapPos;
+	objectNode->addAttribute("mapPos",mapPos.getString(), mapTagReplacements);
+//	bool visible;
+	objectNode->addAttribute("visible",intToStr(visible), mapTagReplacements);
+}
+
+void Object::loadGame(const XmlNode *rootNode,const TechTree *techTree) {
+	const XmlNode *objectNode = rootNode->getChild("Object");
+
+	//description = objectNode->getAttribute("description")->getValue();
+
+	//	ObjectType *objectType;
+//	if(objectType != NULL) {
+//		objectNode->addAttribute("objectType",intToStr(objectType->getClass()), mapTagReplacements);
+//	}
+//	//	vector<UnitParticleSystem*> unitParticleSystems;
+//	for(unsigned int i = 0; i < unitParticleSystems.size(); ++i) {
+//		UnitParticleSystem *ptr= unitParticleSystems[i];
+//		if(ptr != NULL) {
+//			ptr->saveGame(objectNode);
+//		}
+//	}
+	//	Resource *resource;
+	if(resource != NULL) {
+		resource->loadGame(objectNode,0,techTree);
+	}
+	//	Vec3f pos;
+	pos = Vec3f::strToVec3(objectNode->getAttribute("pos")->getValue());
+	//	float rotation;
+	rotation = objectNode->getAttribute("rotation")->getFloatValue();
+	//	int variation;
+	variation = objectNode->getAttribute("variation")->getIntValue();
+	//	int lastRenderFrame;
+	lastRenderFrame = objectNode->getAttribute("lastRenderFrame")->getIntValue();
+	//	Vec2i mapPos;
+	mapPos = Vec2i::strToVec2(objectNode->getAttribute("mapPos")->getValue());
+	//	bool visible;
+	visible = objectNode->getAttribute("visible")->getIntValue() != 0;
 }
 
 }}//end namespace

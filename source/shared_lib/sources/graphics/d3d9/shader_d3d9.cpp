@@ -1,3 +1,10 @@
+// ==============================================================
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//	The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 #include "shader_d3d9.h"
 
 #include <fstream>
@@ -22,6 +29,8 @@ ShaderProgramD3d9::ShaderProgramD3d9(){
 	d3dDevice= static_cast<ContextD3d9*>(gi.getCurrentContext())->getD3dDevice();
 	vertexShader= NULL;
 	pixelShader= NULL;
+	d3dVsConstantTable=NULL;
+	d3dPsConstantTable=NULL;
 }
 
 void ShaderProgramD3d9::attach(VertexShader *vs, FragmentShader *fs){
@@ -46,7 +55,7 @@ void ShaderProgramD3d9::setUniform(const string &name, int value){
 	HRESULT vsResult= d3dVsConstantTable->SetInt(d3dDevice, vsHandle, value);
 	HRESULT psResult= d3dPsConstantTable->SetInt(d3dDevice, psHandle, value);
 	if(vsResult!=D3D_OK && psResult!=D3D_OK){
-		throw runtime_error("Error setting shader uniform: "+string(name));
+		throw megaglest_runtime_error("Error setting shader uniform: "+string(name));
 	}
 }
 
@@ -56,7 +65,7 @@ void ShaderProgramD3d9::setUniform(const string &name, float value){
 	HRESULT vsResult= d3dVsConstantTable->SetFloat(d3dDevice, vsHandle, value);
 	HRESULT psResult= d3dPsConstantTable->SetFloat(d3dDevice, psHandle, value);
 	if(vsResult!=D3D_OK && psResult!=D3D_OK){
-		throw runtime_error("Error setting shader uniform: "+string(name));
+		throw megaglest_runtime_error("Error setting shader uniform: "+string(name));
 	}
 }
 
@@ -77,12 +86,12 @@ void ShaderProgramD3d9::setUniform(const string &name, const Vec4f &value){
 	HRESULT vsResult= d3dVsConstantTable->SetVector(d3dDevice, vsHandle, &v);
 	HRESULT psResult= d3dPsConstantTable->SetVector(d3dDevice, psHandle, &v);
 	if(vsResult!=D3D_OK && psResult!=D3D_OK){
-		throw runtime_error("Error setting shader uniform: "+string(name));
+		throw megaglest_runtime_error("Error setting shader uniform: "+string(name));
 	}
 }
 
 void ShaderProgramD3d9::setUniform(const string &name, const Matrix3f &value){
-	throw runtime_error("Not implemented");
+	throw megaglest_runtime_error("Not implemented");
 }
 
 void ShaderProgramD3d9::setUniform(const string &name, const Matrix4f &value){
@@ -94,7 +103,7 @@ void ShaderProgramD3d9::setUniform(const string &name, const Matrix4f &value){
 	HRESULT vsResult= d3dVsConstantTable->SetMatrix(d3dDevice, vsHandle, &m);
 	HRESULT psResult= d3dPsConstantTable->SetMatrix(d3dDevice, psHandle, &m);
 	if(vsResult!=D3D_OK && psResult!=D3D_OK){
-		throw runtime_error("Error setting shader uniform: "+string(name));
+		throw megaglest_runtime_error("Error setting shader uniform: "+string(name));
 	}
 }
 
@@ -107,7 +116,7 @@ void ShaderProgramD3d9::setUniform(const string &name, const Matrix4f &value){
 	if(result==D3D_OK)
 		d3dDevice->SetTexture(d3dDesc.RegisterIndex, d3dTexture);
 	else
-		throw runtime_error("Error setting shader uniform sampler: "+string(name));
+		throw megaglest_runtime_error("Error setting shader uniform sampler: "+string(name));
 }
 
 bool ShaderD3d9::isUniform(char *name){

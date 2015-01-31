@@ -1,7 +1,7 @@
 // ==============================================================
 //	This file is part of Glest (www.glest.org)
 //
-//	Copyright (C) 2001-2005 Marti�o Figueroa
+//	Copyright (C) 2001-2008 Martiño Figueroa
 //
 //	You can redistribute this code and/or modify it under
 //	the terms of the GNU General Public License as published
@@ -25,88 +25,29 @@ class MenuStateOptions: public MenuState{
 private:
 
 	GraphicButton buttonOk;
-	GraphicButton buttonAbort;
-	GraphicButton buttonAutoConfig;
-	GraphicButton buttonVideoInfo;
-	GraphicButton buttonKeyboardSetup; // configure the keyboard
+	GraphicButton buttonReturn;
 
 	GraphicLabel labelLang;
-	GraphicLabel labelShadows;
-	GraphicLabel labelFilter;
-	GraphicLabel labelTextures3D;
-	GraphicLabel labelLights;
-	GraphicLabel labelUnitParticles;
-	GraphicLabel labelTilesetParticles;
-	GraphicLabel labelSoundFactory;
-	GraphicLabel labelVolumeFx;
-	GraphicLabel labelVolumeAmbient;
-	GraphicLabel labelVolumeMusic;
 	GraphicListBox listBoxLang;
-	GraphicListBox listBoxShadows;
-	GraphicListBox listBoxFilter;
-	GraphicCheckBox checkBoxTextures3D;
-	GraphicListBox listBoxLights;
-	GraphicCheckBox checkBoxUnitParticles;
-	GraphicCheckBox checkBoxTilesetParticles;
-	GraphicListBox listBoxSoundFactory;
-	GraphicListBox listBoxVolumeFx;
-	GraphicListBox listBoxVolumeAmbient;
-	GraphicListBox listBoxVolumeMusic;
 	GraphicLabel labelPlayerName;
 	GraphicLabel labelPlayerNameLabel;
 	GraphicLabel *activeInputLabel;
-	GraphicLabel labelServerPort;
-	GraphicLabel labelServerPortLabel;
 
 
-	GraphicLabel labelScreenModes;
-	GraphicListBox listBoxScreenModes;
-	vector<ModeInfo> modeInfos;
-
-	GraphicLabel labelFullscreenWindowed;
-	GraphicCheckBox checkBoxFullscreenWindowed;
-
-	GraphicLabel labelVideoSection;
-	GraphicLabel labelAudioSection;
-	GraphicLabel labelMiscSection;
-	GraphicLabel labelNetworkSettings;
+	GraphicButton buttonKeyboardSetup; // configure the keyboard
+	GraphicButton buttonVideoSection;
+	GraphicButton buttonAudioSection;
+	GraphicButton buttonMiscSection;
+	GraphicButton buttonNetworkSettings;
 
 	GraphicLabel labelFontSizeAdjustment;
 	GraphicListBox listFontSizeAdjustment;
 
-	GraphicLabel labelMapPreview;
-	GraphicCheckBox checkBoxMapPreview;
 
 	GraphicMessageBox mainMessageBox;
 	int mainMessageBoxState;
 
-	GraphicLabel labelPublishServerExternalPort;
-	GraphicListBox listBoxPublishServerExternalPort;
 
-
-	GraphicLabel labelEnableFTP;
-	GraphicCheckBox checkBoxEnableFTP;
-
-	GraphicLabel labelEnableFTPServer;
-	GraphicCheckBox checkBoxEnableFTPServer;
-
-	GraphicLabel labelFTPServerPortLabel;
-	GraphicLabel labelFTPServerPort;
-
-	GraphicLabel labelFTPServerDataPortsLabel;
-	GraphicLabel labelFTPServerDataPorts;
-
-	GraphicLabel labelEnableFTPServerInternetTilesetXfer;
-	GraphicCheckBox checkBoxEnableFTPServerInternetTilesetXfer;
-
-	GraphicLabel labelEnableFTPServerInternetTechtreeXfer;
-	GraphicCheckBox checkBoxEnableFTPServerInternetTechtreeXfer;
-
-	GraphicLabel labelEnablePrivacy;
-	GraphicCheckBox checkBoxEnablePrivacy;
-
-	GraphicLabel labelEnableTextureCompression;
-	GraphicCheckBox checkBoxEnableTextureCompression;
 
 	GraphicLabel labelScreenShotType;
 	GraphicListBox listBoxScreenShotType;
@@ -117,16 +58,40 @@ private:
 	GraphicLabel labelMouseMoveScrollsWorld;
 	GraphicCheckBox checkBoxMouseMoveScrollsWorld;
 
+	GraphicLabel labelCameraMoveSpeed;
+	GraphicListBox listCameraMoveSpeed;
+
 	GraphicLabel labelVisibleHud;
 	GraphicCheckBox checkBoxVisibleHud;
+	GraphicLabel labelTimeDisplay;
+	GraphicCheckBox checkBoxTimeDisplay;
+	GraphicLabel labelChatStaysActive;
+	GraphicCheckBox checkBoxChatStaysActive;
 
-	GraphicLabel labelRainEffect;
-	GraphicCheckBox checkBoxRainEffect;
+	GraphicLabel labelLuaDisableSecuritySandbox;
+	GraphicCheckBox checkBoxLuaDisableSecuritySandbox;
+
+	GraphicMessageBox luaMessageBox;
+	int luaMessageBoxState;
 
 	map<string,string> languageList;
 
+	GraphicLabel labelCustomTranslation;
+	GraphicCheckBox checkBoxCustomTranslation;
+
+	GraphicButton buttonGetNewLanguageFiles;
+	GraphicButton buttonDeleteNewLanguageFiles;
+	GraphicLabel labelTransifexUserLabel;
+	GraphicLabel labelTransifexUser;
+	GraphicLabel labelTransifexPwdLabel;
+	GraphicLabel labelTransifexPwd;
+	GraphicLabel labelTransifexI18NLabel;
+	GraphicLabel labelTransifexI18N;
+
+	ProgramState **parentUI;
+
 public:
-	MenuStateOptions(Program *program, MainMenu *mainMenu);
+	MenuStateOptions(Program *program, MainMenu *mainMenu, ProgramState **parentUI=NULL);
 
 	void mouseClick(int x, int y, MouseButton mouseButton);
 	void mouseMove(int x, int y, const MouseState *mouseState);
@@ -142,6 +107,9 @@ private:
 	void saveConfig();
 	void setActiveInputLable(GraphicLabel* newLable);
 	void showMessageBox(const string &text, const string &header, bool toggle);
+	void showLuaMessageBox(const string &text, const string &header, bool toggle);
+
+	void setupTransifexUI();
 };
 
 }}//end namespace

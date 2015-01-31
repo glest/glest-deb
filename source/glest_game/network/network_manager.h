@@ -13,7 +13,6 @@
 #define _GLEST_GAME_NETWORKMANAGER_H_
 
 #include <cassert>
-
 #include "socket.h"
 #include "checksum.h"
 #include "server_interface.h"
@@ -37,15 +36,21 @@ public:
 	static NetworkManager &getInstance();
 
 	NetworkManager();
+	virtual ~NetworkManager();
+
 	void init(NetworkRole networkRole,bool publishEnabled=false);
 	void end();
 	void update();
 
 	bool isNetworkGame();
+	bool isNetworkGameWithConnectedClients();
+
 	GameNetworkInterface* getGameNetworkInterface(bool throwErrorOnNull=true);
 	ServerInterface* getServerInterface(bool throwErrorOnNull=true);
 	ClientInterface* getClientInterface(bool throwErrorOnNull=true);
 	NetworkRole getNetworkRole() const { return networkRole; }
+
+	void initServerInterfaces(ClientLagCallbackInterface *intf);
 };
 
 }}//end namespace

@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cassert>
 
-#include "cartographer.h"
 #include "core_data.h"
 #include "config.h"
 #include "game.h"
@@ -24,7 +23,6 @@
 #include "particle_type.h"
 #include "path_finder.h"
 #include "renderer.h"
-#include "route_planner.h"
 #include "sound.h"
 #include "sound_renderer.h"
 #include "upgrade.h"
@@ -43,7 +41,8 @@ namespace Glest{ namespace Game{
 
 // ===================== PUBLIC ========================
 
-UnitUpdater::UnitUpdater() {
+UnitUpdater::UnitUpdater() : mutexAttackWarnings(new Mutex(CODE_AT_LINE)),
+		mutexUnitRangeCellsLookupItemCache(new Mutex(CODE_AT_LINE)) {
     this->game= NULL;
 	this->gui= NULL;
 	this->gameCamera= NULL;
@@ -51,7 +50,6 @@ UnitUpdater::UnitUpdater() {
 	this->map= NULL;
 	this->console= NULL;
 	this->scriptManager= NULL;
-	this->routePlanner = NULL;
 	this->pathFinder = NULL;
 	//UnitRangeCellsLookupItemCacheTimerCount = 0;
 	attackWarnRange=0;
@@ -60,13 +58,12 @@ UnitUpdater::UnitUpdater() {
 void UnitUpdater::init(Game *game){
 
     this->game= game;
-	this->gui= game->getGui();
+	this->gui= game->getGuiPtr();
 	this->gameCamera= game->getGameCamera();
 	this->world= game->getWorld();
 	this->map= world->getMap();
 	this->console= game->getConsole();
 	this->scriptManager= game->getScriptManager();
-	this->routePlanner = NULL;
 	this->pathFinder = NULL;
 	attackWarnRange=Config::getInstance().getFloat("AttackWarnRange","50.0");
 	//UnitRangeCellsLookupItemCacheTimerCount = 0;
@@ -76,11 +73,8 @@ void UnitUpdater::init(Game *game){
 			pathFinder = new PathFinder();
 			pathFinder->init(map);
 			break;
-		case pfRoutePlanner:
-			routePlanner = world->getRoutePlanner();
-			break;
 		default:
-			throw runtime_error("detected unsupported pathfinder type!");
+			throw megaglest_runtime_error("detected unsupported pathfinder type!");
     }
 }
 
@@ -102,17 +96,28 @@ UnitUpdater::~UnitUpdater() {
 	delete pathFinder;
 	pathFinder = NULL;
 
+	MutexSafeWrapper safeMutex(mutexAttackWarnings,string(__FILE__) + "_" + intToStr(__LINE__));
 	while(attackWarnings.empty() == false) {
-			AttackWarningData* awd=attackWarnings.back();
-			attackWarnings.pop_back();
-			delete awd;
-		}
+		AttackWarningData* awd = attackWarnings.back();
+		attackWarnings.pop_back();
+		delete awd;
+	}
+
+	safeMutex.ReleaseLock();
+
+	delete mutexAttackWarnings;
+	mutexAttackWarnings = NULL;
+
+	delete mutexUnitRangeCellsLookupItemCache;
+	mutexUnitRangeCellsLookupItemCache = NULL;
 }
 
 // ==================== progress skills ====================
 
 //skill dependent actions
-void UnitUpdater::updateUnit(Unit *unit) {
+bool UnitUpdater::updateUnit(Unit *unit) {
+	bool processUnitCommand = false;
+
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
@@ -124,7 +129,7 @@ void UnitUpdater::updateUnit(Unit *unit) {
 	const SkillType *currSkill= unit->getCurrSkill();
 	if(currSkill->getSound() != NULL) {
 		float soundStartTime= currSkill->getSoundStartTime();
-		if(soundStartTime >= unit->getLastAnimProgress() && soundStartTime < unit->getAnimProgress()) {
+		if(soundStartTime >= unit->getLastAnimProgressAsFloat() && soundStartTime < unit->getAnimProgressAsFloat()) {
 			if(map->getSurfaceCell(Map::toSurfCoords(unit->getPos()))->isVisible(world->getThisTeamIndex()) ||
 				(game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true)) {
 				soundRenderer.playFx(currSkill->getSound(), unit->getCurrVector(), gameCamera->getPos());
@@ -141,8 +146,17 @@ void UnitUpdater::updateUnit(Unit *unit) {
 	//start attack particle system
 	if(unit->getCurrSkill()->getClass() == scAttack) {
 		const AttackSkillType *ast= static_cast<const AttackSkillType*>(unit->getCurrSkill());
-		float attackStartTime= ast->getAttackStartTime();
-		if(attackStartTime>=unit->getLastAnimProgress() && attackStartTime<unit->getAnimProgress()){
+
+		float attackStartTime = truncateDecimal<float>(ast->getAttackStartTime(),6);
+		float lastAnimProgress = truncateDecimal<float>(unit->getLastAnimProgressAsFloat(),6);
+		float animProgress = truncateDecimal<float>(unit->getAnimProgressAsFloat(),6);
+		bool startAttackParticleSystemNow = (attackStartTime >= lastAnimProgress && attackStartTime < animProgress);
+
+		char szBuf[8096]="";
+		snprintf(szBuf,8095,"attackStartTime = %f, lastAnimProgress = %f, animProgress = %f startAttackParticleSystemNow = %d",attackStartTime,lastAnimProgress,animProgress,startAttackParticleSystemNow);
+		unit->setNetworkCRCParticleLogInfo(szBuf);
+
+		if(startAttackParticleSystemNow == true) {
 			startAttackParticleSystem(unit);
 		}
 	}
@@ -153,10 +167,13 @@ void UnitUpdater::updateUnit(Unit *unit) {
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld [after unit->update()]\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
+	//printf("Update Unit [%d - %s] = %d\n",unit->getId(),unit->getType()->getName().c_str(),update);
+
 	//update unit
 	if(update == true) {
         //SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+		processUnitCommand = true;
 		updateUnitCommand(unit,-1);
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld [after updateUnitCommand()]\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -168,7 +185,7 @@ void UnitUpdater::updateUnit(Unit *unit) {
 			if(unit->getCurrCommand() != NULL &&
 				unit->getCurrCommand()->getCommandType()->getClass() == ccAttackStopped) {
 				reQueueHoldPosition = true;
-				holdPositionName = unit->getCurrCommand()->getCommandType()->getName();
+				holdPositionName = unit->getCurrCommand()->getCommandType()->getName(false);
 			}
 
 			unit->setCurrSkill(scStop);
@@ -181,7 +198,7 @@ void UnitUpdater::updateUnit(Unit *unit) {
 					const CommandType* ct= ut->getCommandType(i);
 					if(ct != NULL && ct->getClass() == ccAttackStopped) {
 						const AttackStoppedCommandType *act= static_cast<const AttackStoppedCommandType*>(ct);
-						if(act != NULL && act->getName() == holdPositionName) {
+						if(act != NULL && act->getName(false) == holdPositionName) {
 							if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 							//printf("Re-Queing hold pos = %d, ep = %d skillep = %d skillname [%s]\n ",unit->getFaction()->reqsOk(act),unit->getEp(),act->getAttackSkillType()->getEpCost(),act->getName().c_str());
@@ -204,6 +221,8 @@ void UnitUpdater::updateUnit(Unit *unit) {
 		else if(unit->getCommandSize() > 0) {
 			Command *command= unit->getCurrCommand();
 			if(command != NULL) {
+				const CommandType *ct = command->getCommandType();
+
 				const AttackCommandType *act= dynamic_cast<const AttackCommandType*>(command->getCommandType());
 				if( act != NULL && act->getAttackSkillType() != NULL &&
 					act->getAttackSkillType()->getSpawnUnit() != "" && act->getAttackSkillType()->getSpawnUnitCount() > 0) {
@@ -222,11 +241,8 @@ void UnitUpdater::updateUnit(Unit *unit) {
 							case pfBasic:
 								newpath = new UnitPathBasic();
 								break;
-							case pfRoutePlanner:
-								newpath = new UnitPath();
-								break;
 							default:
-								throw runtime_error("detected unsupported pathfinder type!");
+								throw megaglest_runtime_error("detected unsupported pathfinder type!");
 						}
 
 						Unit *spawned= new Unit(world->getNextUnitId(unit->getFaction()), newpath,
@@ -242,8 +258,8 @@ void UnitUpdater::updateUnit(Unit *unit) {
 						}
 						else {
 							spawned->create();
-							spawned->born();
-							world->getStats()->produce(unit->getFactionIndex());
+							spawned->born(ct);
+							world->getStats()->produce(unit->getFactionIndex(),spawned->getType()->getCountUnitProductionInStats());
 							const CommandType *ct= spawned->computeCommandType(command->getPos(),command->getUnit());
 							if(ct != NULL){
 								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -287,26 +303,51 @@ void UnitUpdater::updateUnit(Unit *unit) {
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	return processUnitCommand;
 }
 
 // ==================== progress commands ====================
 
 //VERY IMPORTANT: compute next state depending on the first order of the list
 void UnitUpdater::updateUnitCommand(Unit *unit, int frameIndex) {
-	// Clear previous cached unit data
-	if(frameIndex >= 0) {
-		clearUnitPrecache(unit);
-	}
-
+	try {
+	bool minorDebugPerformance = false;
 	Chrono chrono;
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
+	if((minorDebugPerformance == true && frameIndex > 0) || SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	//if unit has command process it
-    if(unit->anyCommand()) {
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit [%s] has command [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str(), unit->getCurrCommand()->toString().c_str());
+    bool hasCommand = (unit->anyCommand());
 
-    	CommandClass cc = unit->getCurrCommand()->getCommandType()->commandTypeClass;
-		unit->getCurrCommand()->getCommandType()->update(this, unit, frameIndex);
+    if((minorDebugPerformance && frameIndex > 0) && chrono.getMillis() >= 1) printf("UnitUpdate [%d - %s] #1-unit threaded updates on frame: %d took [%lld] msecs\n",unit->getId(),unit->getType()->getName(false).c_str(),frameIndex,(long long int)chrono.getMillis());
+
+	int64 elapsed1 = 0;
+	if(minorDebugPerformance && frameIndex > 0) elapsed1 = chrono.getMillis();
+
+    if(hasCommand == true) {
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit [%s] has command [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString(false).c_str(), unit->getCurrCommand()->toString(false).c_str());
+
+    	bool commandUsesPathFinder = (frameIndex < 0);
+    	if(frameIndex > 0) {
+			if(unit->getCurrCommand() != NULL && unit->getCurrCommand()->getCommandType() != NULL) {
+    			commandUsesPathFinder = unit->getCurrCommand()->getCommandType()->usesPathfinder();
+
+    			// Clear previous cached unit data
+    			if(commandUsesPathFinder == true) {
+    				clearUnitPrecache(unit);
+    			}
+			}
+    	}
+    	if(commandUsesPathFinder == true) {
+			if(unit->getCurrCommand() != NULL && unit->getCurrCommand()->getCommandType() != NULL) {
+    			unit->getCurrCommand()->getCommandType()->update(this, unit, frameIndex);
+			}
+    	}
+
+    	if((minorDebugPerformance && frameIndex > 0) && (chrono.getMillis() - elapsed1) >= 1) {
+    		//CommandClass cc = unit->getCurrCommand()->getCommandType()->commandTypeClass;
+    		printf("UnitUpdate [%d - %s] #2-unit threaded updates on frame: %d commandUsesPathFinder = %d took [%lld] msecs\nCommand: %s\n",unit->getId(),unit->getType()->getName(false).c_str(),frameIndex,commandUsesPathFinder,(long long int)chrono.getMillis() - elapsed1,unit->getCurrCommand()->toString(false).c_str());
+    	}
 	}
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -315,22 +356,39 @@ void UnitUpdater::updateUnitCommand(Unit *unit, int frameIndex) {
 		//if no commands stop and add stop command
 		if(unit->anyCommand() == false && unit->isOperative()) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 			if(unit->getType()->hasSkillClass(scStop)) {
 				unit->setCurrSkill(scStop);
 			}
-
 			if(unit->getType()->hasCommandClass(ccStop)) {
 				unit->giveCommand(new Command(unit->getType()->getFirstCtOfClass(ccStop)));
 			}
 		}
     }
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+    if((minorDebugPerformance && frameIndex > 0) && chrono.getMillis() >= 1) printf("UnitUpdate [%d - %s] #3-unit threaded updates on frame: %d took [%lld] msecs\n",unit->getId(),unit->getType()->getName(false).c_str(),frameIndex,(long long int)chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 // ==================== updateStop ====================
 
 void UnitUpdater::updateStop(Unit *unit, int frameIndex) {
+	try {
 	// Nothing to do
 	if(frameIndex >= 0) {
 		clearUnitPrecache(unit);
@@ -341,18 +399,25 @@ void UnitUpdater::updateStop(Unit *unit, int frameIndex) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
     const StopCommandType *sct = static_cast<const StopCommandType*>(command->getCommandType());
     Unit *sighted=NULL;
+
 
     unit->setCurrSkill(sct->getStopSkillType());
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
+
 	//we can attack any unit => attack it
    	if(unit->getType()->hasSkillClass(scAttack)) {
+
    		int cmdTypeCount = unit->getType()->getCommandTypeCount();
 
 		for(int i = 0; i < cmdTypeCount; ++i) {
+
 			const CommandType *ct= unit->getType()->getCommandType(i);
 
 			//look for an attack skill
@@ -364,23 +429,23 @@ void UnitUpdater::updateStop(Unit *unit, int frameIndex) {
 				ast= static_cast<const AttackStoppedCommandType*>(ct)->getAttackSkillType();
 			}
 
+
 			//use it to attack
 			if(ast != NULL) {
-				if(attackableOnSight(unit, &sighted, ast)) {
+				if(attackableOnSight(unit, &sighted, ast, (frameIndex >= 0))) {
 				    //SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 					unit->giveCommand(new Command(ct, sighted->getPos()));
 					break;
 				}
 			}
 		}
-
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 	}
 	//see any unit and cant attack it => run
 	else if(unit->getType()->hasCommandClass(ccMove)) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
-		if(attackerOnSight(unit, &sighted)) {
+		if(attackerOnSight(unit, &sighted, (frameIndex >= 0))) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 			Vec2i escapePos = unit->getPos() * 2 - sighted->getPos();
 			//SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -391,40 +456,60 @@ void UnitUpdater::updateStop(Unit *unit, int frameIndex) {
 	}
 
    	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-}
 
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+}
 
 // ==================== updateMove ====================
 void UnitUpdater::updateMove(Unit *unit, int frameIndex) {
+	try {
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
     Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
     const MoveCommandType *mct= static_cast<const MoveCommandType*>(command->getCommandType());
+
 
 	Vec2i pos= command->getUnit()!=NULL? command->getUnit()->getCenteredPos(): command->getPos();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-		char szBuf[4096]="";
-		sprintf(szBuf,"[updateMove] pos [%s] unit [%d - %s] cmd [%s]",pos.getString().c_str(),unit->getId(),unit->getFullName().c_str(),command->toString().c_str());
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateMove] pos [%s] unit [%d - %s] cmd [%s]",pos.getString().c_str(),unit->getId(),unit->getFullName(false).c_str(),command->toString(false).c_str());
 		unit->logSynchData(__FILE__,__LINE__,szBuf);
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
 
 	TravelState tsValue = tsImpossible;
 	switch(this->game->getGameSettings()->getPathFinderType()) {
 		case pfBasic:
 			tsValue = pathFinder->findPath(unit, pos, NULL, frameIndex);
 			break;
-		case pfRoutePlanner:
-			tsValue = routePlanner->findPath(unit, pos);
-			break;
 		default:
-			throw runtime_error("detected unsupported pathfinder type!");
+			throw megaglest_runtime_error("detected unsupported pathfinder type!");
     }
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
 
 	if(frameIndex < 0) {
 		switch (tsValue) {
@@ -441,20 +526,74 @@ void UnitUpdater::updateMove(Unit *unit, int frameIndex) {
 
 		default:
 			unit->finishCommand();
+			break;
 		}
 	}
+
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateMove] tsValue [%d]",tsValue);
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 
 // ==================== updateAttack ====================
 
 void UnitUpdater::updateAttack(Unit *unit, int frameIndex) {
+	try {
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateAttack]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"[updateAttack]");
+			unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+		}
+
+		return;
+	}
     const AttackCommandType *act= static_cast<const AttackCommandType*>(command->getCommandType());
+	if(act == NULL) {
+
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"[updateAttack]");
+			unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+		}
+
+		return;
+	}
 	Unit *target= NULL;
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -463,132 +602,189 @@ void UnitUpdater::updateAttack(Unit *unit, int frameIndex) {
 
 		if(frameIndex < 0) {
 			unit->finishCommand(); // all queued "ground attacks" are skipped if somthing else is queued after them.
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"[updateAttack]");
+				unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+			}
 		}
 		return;
 	}
 
 	//if found
-    if(attackableOnRange(unit, &target, act->getAttackSkillType())) {
-    	if(frameIndex < 0) {
-			if(unit->getEp() >= act->getAttackSkillType()->getEpCost()) {
-				unit->setCurrSkill(act->getAttackSkillType());
-				unit->setTarget(target);
-			}
-			else {
-				unit->setCurrSkill(scStop);
-			}
-    	}
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-    }
-    else {
-		//compute target pos
-		Vec2i pos;
-		if(command->getUnit() != NULL) {
-			pos= command->getUnit()->getCenteredPos();
-		}
-		else if(attackableOnSight(unit, &target, act->getAttackSkillType())) {
-			pos= target->getPos();
+	//if(frameIndex < 0) {
+	{
+		if(attackableOnRange(unit, &target, act->getAttackSkillType(),(frameIndex >= 0))) {
+    		if(frameIndex < 0) {
+				if(unit->getEp() >= act->getAttackSkillType()->getEpCost()) {
+					unit->setCurrSkill(act->getAttackSkillType());
+					unit->setTarget(target);
+				}
+				else {
+					unit->setCurrSkill(scStop);
+				}
+
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateAttack]");
+					unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+				}
+    		}
+    		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 		}
 		else {
-			pos= command->getPos();
-		}
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-			char szBuf[4096]="";
-			sprintf(szBuf,"[updateAttack] pos [%s] unit->getPos() [%s]",
-					pos.getString().c_str(),unit->getPos().getString().c_str());
-			unit->logSynchData(__FILE__,__LINE__,szBuf);
-		}
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-		TravelState tsValue = tsImpossible;
-		switch(this->game->getGameSettings()->getPathFinderType()) {
-			case pfBasic:
-				tsValue = pathFinder->findPath(unit, pos, NULL, frameIndex);
-				break;
-			case pfRoutePlanner:
-				tsValue = routePlanner->findPath(unit, pos);
-				break;
-			default:
-				throw runtime_error("detected unsupported pathfinder type!");
-	    }
-
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-		if(frameIndex < 0) {
-			if(command->getUnit() != NULL && !command->getUnit()->isAlive() && unit->getCommandSize() > 1) {
-				// don't run over to dead body if there is still something to do in the queue
-				unit->finishCommand();
+			//compute target pos
+			Vec2i pos;
+			if(command->getUnit() != NULL) {
+				pos= command->getUnit()->getCenteredPos();
+			}
+			else if(attackableOnSight(unit, &target, act->getAttackSkillType(), (frameIndex >= 0))) {
+				pos= target->getPos();
 			}
 			else {
-				//if unit arrives destPos order has ended
-				switch (tsValue) {
-					case tsMoving:
-						unit->setCurrSkill(act->getMoveSkillType());
-						break;
-					case tsBlocked:
-						if(unit->getPath()->isBlocked()) {
-							unit->finishCommand();
-						}
+				pos= command->getPos();
+			}
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+				char szBuf[8096]="";
+				snprintf(szBuf,8096,"[updateAttack] pos [%s] unit->getPos() [%s]",pos.getString().c_str(),unit->getPos().getString().c_str());
+				unit->logSynchData(__FILE__,__LINE__,szBuf);
+			}
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+			TravelState tsValue = tsImpossible;
+			//if(frameIndex < 0) {
+			{
+				//printf("In [%s::%s Line: %d] START pathfind for attacker [%d - %s]\n",__FILE__,__FUNCTION__,__LINE__,unit->getId(), unit->getType()->getName().c_str());
+				//fflush(stdout);
+				switch(this->game->getGameSettings()->getPathFinderType()) {
+					case pfBasic:
+						tsValue = pathFinder->findPath(unit, pos, NULL, frameIndex);
 						break;
 					default:
-						unit->finishCommand();
-					}
-/*
-					case tsMoving:
-						unit->setCurrSkill(act->getMoveSkillType());
+						throw megaglest_runtime_error("detected unsupported pathfinder type!");
+				}
+				//printf("In [%s::%s Line: %d] END pathfind for attacker [%d - %s]\n",__FILE__,__FUNCTION__,__LINE__,unit->getId(), unit->getType()->getName().c_str());
+				//fflush(stdout);
+			}
 
-						{
-							std::pair<bool,Unit *> beingAttacked = unitBeingAttacked(unit);
-							if(beingAttacked.first == true) {
-								Unit *enemy = beingAttacked.second;
-								const AttackCommandType *act_forenemy = unit->getType()->getFirstAttackCommand(enemy->getCurrField());
-								if(act_forenemy != NULL) {
-									if(unit->getEp() >= act_forenemy->getAttackSkillType()->getEpCost()) {
-										unit->setCurrSkill(act_forenemy->getAttackSkillType());
-										unit->setTarget(enemy);
-									}
-									//aiInterface->giveCommand(i, act_forenemy, beingAttacked.second->getPos());
-								}
-								else {
-									const AttackStoppedCommandType *asct_forenemy = unit->getType()->getFirstAttackStoppedCommand(enemy->getCurrField());
-									if(asct_forenemy != NULL) {
-										//aiInterface->giveCommand(i, asct_forenemy, beingAttacked.second->getCenteredPos());
-										if(unit->getEp() >= asct_forenemy->getAttackSkillType()->getEpCost()) {
-											unit->setCurrSkill(asct_forenemy->getAttackSkillType());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+			if(frameIndex < 0) {
+				if(command->getUnit() != NULL && !command->getUnit()->isAlive() && unit->getCommandSize() > 1) {
+					// don't run over to dead body if there is still something to do in the queue
+					unit->finishCommand();
+
+					if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"[updateAttack]");
+						unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+					}
+				}
+				else {
+					//if unit arrives destPos order has ended
+					switch (tsValue) {
+						case tsMoving:
+							unit->setCurrSkill(act->getMoveSkillType());
+							break;
+						case tsBlocked:
+							if(unit->getPath()->isBlocked()) {
+								unit->finishCommand();
+							}
+							break;
+						default:
+							unit->finishCommand();
+							break;
+						}
+	/*
+						case tsMoving:
+							unit->setCurrSkill(act->getMoveSkillType());
+
+							{
+								std::pair<bool,Unit *> beingAttacked = unitBeingAttacked(unit);
+								if(beingAttacked.first == true) {
+									Unit *enemy = beingAttacked.second;
+									const AttackCommandType *act_forenemy = unit->getType()->getFirstAttackCommand(enemy->getCurrField());
+									if(act_forenemy != NULL) {
+										if(unit->getEp() >= act_forenemy->getAttackSkillType()->getEpCost()) {
+											unit->setCurrSkill(act_forenemy->getAttackSkillType());
 											unit->setTarget(enemy);
+										}
+										//aiInterface->giveCommand(i, act_forenemy, beingAttacked.second->getPos());
+									}
+									else {
+										const AttackStoppedCommandType *asct_forenemy = unit->getType()->getFirstAttackStoppedCommand(enemy->getCurrField());
+										if(asct_forenemy != NULL) {
+											//aiInterface->giveCommand(i, asct_forenemy, beingAttacked.second->getCenteredPos());
+											if(unit->getEp() >= asct_forenemy->getAttackSkillType()->getEpCost()) {
+												unit->setCurrSkill(asct_forenemy->getAttackSkillType());
+												unit->setTarget(enemy);
+											}
 										}
 									}
 								}
 							}
-						}
 
-						break;
+							break;
 
-					case tsBlocked:
-						if(unit->getPath()->isBlocked()){
+						case tsBlocked:
+							if(unit->getPath()->isBlocked()){
+								unit->finishCommand();
+							}
+							break;
+						default:
 							unit->finishCommand();
-						}
-						break;
-					default:
-						unit->finishCommand();
+					}
+	*/
+
+					if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+						char szBuf[8096]="";
+						snprintf(szBuf,8096,"[updateAttack]");
+						unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+					}
+
 				}
-*/
 			}
+
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 		}
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
     }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Loc [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 
 // ==================== updateAttackStopped ====================
 
 void UnitUpdater::updateAttackStopped(Unit *unit, int frameIndex) {
+	try {
+
 	// Nothing to do
 	if(frameIndex >= 0) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex >= 0) {
+			char szBuf[8096]="";
+			snprintf(szBuf,8096,"[updateAttackStopped]");
+			unit->logSynchDataThreaded(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+		}
 		clearUnitPrecache(unit);
 		return;
 	}
@@ -597,31 +793,79 @@ void UnitUpdater::updateAttackStopped(Unit *unit, int frameIndex) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
     const AttackStoppedCommandType *asct= static_cast<const AttackStoppedCommandType*>(command->getCommandType());
     Unit *enemy=NULL;
 
-    if(unit->getCommandSize() > 1)
-    {
+
+    if(unit->getCommandSize() > 1) {
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+    		char szBuf[8096]="";
+    		snprintf(szBuf,8096,"[updateAttackStopped]");
+    		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+    	}
+
     	unit->finishCommand(); // attackStopped is skipped if somthing else is queued after this.
     	return;
     }
 
+
     float distToUnit=-1;
     std::pair<bool,Unit *> result = make_pair(false,(Unit *)NULL);
     unitBeingAttacked(result, unit, asct->getAttackSkillType(), &distToUnit);
+
+
 	if(result.first == true) {
         unit->setCurrSkill(asct->getAttackSkillType());
 		unit->setTarget(result.second);
+
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+    		char szBuf[8096]="";
+    		snprintf(szBuf,8096,"[updateAttackStopped]");
+    		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+    	}
 	}
-	else if(attackableOnRange(unit, &enemy, asct->getAttackSkillType())) {
+	else if(attackableOnRange(unit, &enemy, asct->getAttackSkillType(),(frameIndex >= 0))) {
         unit->setCurrSkill(asct->getAttackSkillType());
 		unit->setTarget(enemy);
+
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+    		char szBuf[8096]="";
+    		snprintf(szBuf,8096,"[updateAttackStopped]");
+    		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+    	}
     }
     else {
         unit->setCurrSkill(asct->getStopSkillType());
+
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+    		char szBuf[8096]="";
+    		snprintf(szBuf,8096,"[updateAttackStopped]");
+    		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+    	}
     }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 void UnitUpdater::unitBeingAttacked(std::pair<bool,Unit *> &result, const Unit *unit, const AttackSkillType *ast, float *currentDistToUnit) {
@@ -663,7 +907,7 @@ std::pair<bool,Unit *> UnitUpdater::unitBeingAttacked(const Unit *unit) {
 	std::pair<bool,Unit *> result = make_pair(false,(Unit *)NULL);
 
 	float distToUnit = -1;
-	for(unsigned int i = 0; i < unit->getType()->getSkillTypeCount(); ++i) {
+	for(unsigned int i = 0; i < (unsigned int)unit->getType()->getSkillTypeCount(); ++i) {
 		const SkillType *st = unit->getType()->getSkillType(i);
 		const AttackSkillType *ast = dynamic_cast<const AttackSkillType *>(st);
 		unitBeingAttacked(result, unit, ast, &distToUnit);
@@ -678,18 +922,27 @@ std::pair<bool,Unit *> UnitUpdater::unitBeingAttacked(const Unit *unit) {
 // ==================== updateBuild ====================
 
 void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
+	try {
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateBuild]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit [%s] will build using command [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str(), unit->getCurrCommand()->toString().c_str());
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit [%s] will build using command [%s]\n",__FILE__,__FUNCTION__,__LINE__,unit->toString(false).c_str(), unit->getCurrCommand()->toString(false).c_str());
 
 	Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
     const BuildCommandType *bct= static_cast<const BuildCommandType*>(command->getCommandType());
 
-	//std::pair<float,Vec2i> distance = map->getUnitDistanceToPos(unit,command->getPos(),command->getUnitType());
-	//unit->setCurrentUnitTitle("Distance: " + floatToStr(distance.first) + " build pos: " + distance.second.getString() + " current pos: " + unit->getPos().getString());
-
-	if(unit->getCurrSkill()->getClass() != scBuild) {
+	if(unit->getCurrSkill() != NULL && unit->getCurrSkill()->getClass() != scBuild) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
         //if not building
@@ -701,25 +954,27 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 		switch(this->game->getGameSettings()->getPathFinderType()) {
 			case pfBasic:
 				{
-				//Vec2i buildPos = (command->getPos()-Vec2i(1));
 				Vec2i buildPos = map->findBestBuildApproach(unit, command->getPos(), ut);
-				//Vec2i buildPos = (command->getPos() + Vec2i(ut->getSize() / 2));
 
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-					char szBuf[4096]="";
-					sprintf(szBuf,"[updateBuild] unit->getPos() [%s] command->getPos() [%s] buildPos [%s]",
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateBuild] unit->getPos() [%s] command->getPos() [%s] buildPos [%s]",
 							unit->getPos().getString().c_str(),command->getPos().getString().c_str(),buildPos.getString().c_str());
 					unit->logSynchData(__FILE__,__LINE__,szBuf);
 				}
 
 				tsValue = pathFinder->findPath(unit, buildPos, NULL, frameIndex);
+
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateBuild] tsValue: %d",tsValue);
+					unit->logSynchData(__FILE__,__LINE__,szBuf);
+				}
+
 				}
 				break;
-			case pfRoutePlanner:
-				tsValue = routePlanner->findPathToBuildSite(unit, ut, command->getPos(), command->getFacing());
-				break;
 			default:
-				throw runtime_error("detected unsupported pathfinder type!");
+				throw megaglest_runtime_error("detected unsupported pathfinder type!");
 	    }
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] tsValue = %d\n",__FILE__,__FUNCTION__,__LINE__,tsValue);
@@ -739,7 +994,7 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 				//if arrived destination
 				assert(ut);
 				if(ut == NULL) {
-					throw runtime_error("ut == NULL");
+					throw megaglest_runtime_error("ut == NULL");
 				}
 
 				bool canOccupyCell = false;
@@ -748,11 +1003,8 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 						if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] tsArrived about to call map->isFreeCells() for command->getPos() = %s, ut->getSize() = %d\n",__FILE__,__FUNCTION__,__LINE__,command->getPos().getString().c_str(),ut->getSize());
 						canOccupyCell = map->isFreeCells(command->getPos(), ut->getSize(), fLand);
 						break;
-					case pfRoutePlanner:
-						canOccupyCell = map->canOccupy(command->getPos(), ut->getField(), ut, command->getFacing());
-						break;
 					default:
-						throw runtime_error("detected unsupported pathfinder type!");
+						throw megaglest_runtime_error("detected unsupported pathfinder type!");
 				}
 
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] canOccupyCell = %d\n",__FILE__,__FUNCTION__,__LINE__,canOccupyCell);
@@ -766,11 +1018,8 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 						case pfBasic:
 							newpath = new UnitPathBasic();
 							break;
-						case pfRoutePlanner:
-							newpath = new UnitPath();
-							break;
 						default:
-							throw runtime_error("detected unsupported pathfinder type!");
+							throw megaglest_runtime_error("detected unsupported pathfinder type!");
 					}
 
 					Vec2i buildPos = command->getPos();
@@ -781,13 +1030,15 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 					builtUnit->create();
 
 					if(builtUnitType->hasSkillClass(scBeBuilt) == false) {
-						throw runtime_error("Unit [" + builtUnitType->getName() + "] has no be_built skill, producer was [" + intToStr(unit->getId()) + " - " + unit->getType()->getName() + "].");
+						throw megaglest_runtime_error("Unit [" + builtUnitType->getName(false) + "] has no be_built skill, producer was [" + intToStr(unit->getId()) + " - " + unit->getType()->getName(false) + "].");
 					}
 
 					builtUnit->setCurrSkill(scBeBuilt);
 
 					unit->setCurrSkill(bct->getBuildSkillType());
 					unit->setTarget(builtUnit);
+
+
 					map->prepareTerrain(builtUnit);
 
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
@@ -795,14 +1046,12 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 					switch(this->game->getGameSettings()->getPathFinderType()) {
 						case pfBasic:
 							break;
-						case pfRoutePlanner:
-							world->getCartographer()->updateMapMetrics(builtUnit->getPos(), builtUnit->getType()->getSight());
-							break;
 						default:
-							throw runtime_error("detected unsupported pathfinder type!");
+							throw megaglest_runtime_error("detected unsupported pathfinder type!");
 					}
 
 					command->setUnit(builtUnit);
+
 
 					//play start sound
 					if(unit->getFactionIndex() == world->getThisFactionIndex() ||
@@ -813,7 +1062,7 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 							gameCamera->getPos());
 					}
 
-					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,builtUnit->toString().c_str());
+					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit created for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,builtUnit->toString(false).c_str());
 				}
 				else {
 					//if there are no free cells
@@ -841,7 +1090,7 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
     }
     else {
-    	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] tsArrived unit = %s\n",__FILE__,__FUNCTION__,__LINE__,unit->toString().c_str());
+    	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] tsArrived unit = %s\n",__FILE__,__FUNCTION__,__LINE__,unit->toString(false).c_str());
 
     	if(frameIndex < 0) {
 			//if building
@@ -851,7 +1100,7 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 			}
 
 			if(builtUnit != NULL) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] builtUnit = %s\n",__FILE__,__FUNCTION__,__LINE__,builtUnit->toString().c_str());
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] builtUnit = %s\n",__FILE__,__FUNCTION__,__LINE__,builtUnit->toString(false).c_str());
 			}
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] builtUnit = [%p]\n",__FILE__,__FUNCTION__,__LINE__,builtUnit);
@@ -859,10 +1108,23 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 			//if unit is killed while building then u==NULL;
 			if(builtUnit != NULL && builtUnit != command->getUnit()) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] builtUnit is not the command's unit!\n",__FILE__,__FUNCTION__,__LINE__);
+
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateBuild]");
+					unit->logSynchData(__FILE__,__LINE__,szBuf);
+				}
+
 				unit->setCurrSkill(scStop);
 			}
 			else if(builtUnit == NULL || builtUnit->isBuilt()) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] builtUnit is NULL or ALREADY built\n",__FILE__,__FUNCTION__,__LINE__);
+
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateBuild]");
+					unit->logSynchData(__FILE__,__LINE__,szBuf);
+				}
 
 				unit->finishCommand();
 				unit->setCurrSkill(scStop);
@@ -871,11 +1133,18 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
 			else if(builtUnit == NULL || builtUnit->repair()) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateBuild]");
+					unit->logSynchData(__FILE__,__LINE__,szBuf);
+				}
+
+				const CommandType *ct = (command != NULL ? command->getCommandType() : NULL);
 				//building finished
 				unit->finishCommand();
 				unit->setCurrSkill(scStop);
 
-				builtUnit->born();
+				builtUnit->born(ct);
 				scriptManager->onUnitCreated(builtUnit);
 				if(unit->getFactionIndex() == world->getThisFactionIndex() ||
 					(game->getWorld()->showWorldForPlayer(game->getWorld()->getThisTeamIndex()) == true)) {
@@ -890,247 +1159,394 @@ void UnitUpdater::updateBuild(Unit *unit, int frameIndex) {
     }
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
-
 // ==================== updateHarvest ====================
+void UnitUpdater::updateHarvestEmergencyReturn(Unit *unit, int frameIndex) {
+	try {
+
+	if(frameIndex >= 0) {
+		return;
+	}
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateHarvestEmergencyReturn]");
+		unit->logSynchDataThreaded(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
+	//printf("\n#1 updateHarvestEmergencyReturn\n");
+	Command *command= unit->getCurrCommand();
+	if(command != NULL) {
+		//printf("\n#2 updateHarvestEmergencyReturn\n");
+
+		//const HarvestCommandType *hct= dynamic_cast<const HarvestCommandType*>((command != NULL ? command->getCommandType() : NULL));
+		//if(hct != NULL) {
+		{
+			//printf("\n#3 updateHarvestEmergencyReturn\n");
+
+			const Vec2i unitTargetPos = command->getPos();
+			Cell *cell= map->getCell(unitTargetPos);
+			if(cell != NULL && cell->getUnit(unit->getCurrField()) != NULL) {
+				//printf("\n#4 updateHarvestEmergencyReturn\n");
+
+				Unit *targetUnit = cell->getUnit(unit->getCurrField());
+				if(targetUnit != NULL) {
+					//printf("\n#5 updateHarvestEmergencyReturn\n");
+					// Check if we can return whatever resources we have
+					if(targetUnit->getFactionIndex() == unit->getFactionIndex() &&
+						targetUnit->isOperative() == true && unit->getLoadType() != NULL &&
+						targetUnit->getType() != NULL && targetUnit->getType()->getStore(unit->getLoadType()) > 0) {
+						//printf("\n#6 updateHarvestEmergencyReturn\n");
+
+						const HarvestCommandType *previousHarvestCmd = unit->getType()->getFirstHarvestCommand(unit->getLoadType(),unit->getFaction());
+						if(previousHarvestCmd != NULL) {
+							//printf("\n\n#1a return harvested resources\n\n");
+							NetworkCommand networkCommand(this->world,nctGiveCommand, unit->getId(), previousHarvestCmd->getId(), unit->getLastHarvestedResourcePos(),
+															-1, Unit::invalidId, -1, false, cst_None, -1, -1);
+
+							if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+							Command* new_command= this->game->getCommander()->buildCommand(&networkCommand);
+							new_command->setStateType(cst_EmergencyReturnResource);
+							new_command->setStateValue(1);
+							std::pair<CommandResult,string> cr= unit->checkCommand(new_command);
+							if(cr.first == crSuccess) {
+								//printf("\n\n#1b return harvested resources\n\n");
+
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+								unit->replaceCurrCommand(new_command);
+
+								unit->setCurrSkill(previousHarvestCmd->getStopLoadedSkillType()); // make sure we use the right harvest animation
+							}
+							else {
+								//printf("\n\n#1c return harvested resources\n\n");
+
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+								delete new_command;
+
+								unit->setCurrSkill(scStop);
+								unit->finishCommand();
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
+}
 
 void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
+	try {
+
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateHarvest]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	Command *command= unit->getCurrCommand();
-    const HarvestCommandType *hct= static_cast<const HarvestCommandType*>(command->getCommandType());
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
+    const HarvestCommandType *hct= dynamic_cast<const HarvestCommandType*>(command->getCommandType());
+    if(hct == NULL) {
+    	throw megaglest_runtime_error("hct == NULL");
+    }
 	Vec2i targetPos(-1);
 
-	TravelState tsValue = tsImpossible;
+	//TravelState tsValue = tsImpossible;
 	//UnitPathInterface *path= unit->getPath();
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+	//printf("In UpdateHarvest [%d - %s] unit->getCurrSkill()->getClass() = %d\n",unit->getId(),unit->getType()->getName().c_str(),unit->getCurrSkill()->getClass());
 
-	if(unit->getCurrSkill()->getClass() != scHarvest) {
+	Resource *harvestResource = NULL;
+	SurfaceCell *sc = map->getSurfaceCell(Map::toSurfCoords(command->getPos()));
+	if(sc != NULL) {
+		harvestResource = sc->getResource();
+	}
+
+	if(unit->getCurrSkill() != NULL && unit->getCurrSkill()->getClass() != scHarvest) {
+		bool forceReturnToStore = (command != NULL &&
+							command->getStateType() == cst_EmergencyReturnResource && command->getStateValue() == 1);
+
 		//if not working
-		if(unit->getLoadCount() == 0) {
+		if(unit->getLoadCount() == 0 ||
+			(forceReturnToStore == false && unit->getLoadType() != NULL &&
+			 harvestResource != NULL && (unit->getLoadCount() < hct->getMaxLoad()) &&
+			 harvestResource->getType() != NULL && unit->getLoadType() == harvestResource->getType())) {
 			//if not loaded go for resources
-			Resource *r = map->getSurfaceCell(Map::toSurfCoords(command->getPos()))->getResource();
-			if(r != NULL && hct->canHarvest(r->getType())) {
-				//if can harvest dest. pos
-				bool canHarvestDestPos = false;
-
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-	    		switch(this->game->getGameSettings()->getPathFinderType()) {
-	    			case pfBasic:
-	    				{
-	    					const bool newHarvestPath = false;
-	    					bool isNearResource = false;
-	    					Vec2i clickPos = command->getOriginalPos();
-	    					if(newHarvestPath == true) {
-	    						isNearResource = map->isResourceNear(unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit, false,&clickPos);
-	    					}
-	    					else {
-	    						isNearResource = map->isResourceNear(unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit);
-	    					}
-	    					if(isNearResource == true) {
-	    						if((unit->getPos().dist(command->getPos()) < harvestDistance || unit->getPos().dist(targetPos) < harvestDistance) && isNearResource == true) {
-	    							canHarvestDestPos = true;
-	    						}
-	    					}
-	    					else if(newHarvestPath == true) {
-	    						if(clickPos != command->getOriginalPos()) {
-	    							//printf("%%----------- unit [%s - %d] CHANGING RESOURCE POS from [%s] to [%s]\n",unit->getFullName().c_str(),unit->getId(),command->getOriginalPos().getString().c_str(),clickPos.getString().c_str());
-
-	    							command->setPos(clickPos);
-	    						}
-	    					}
-	    				}
-	    				break;
-	    			case pfRoutePlanner:
-	    				canHarvestDestPos = map->isResourceNear(unit->getPos(), unit->getType()->getSize(), r->getType(), targetPos);
-	    				break;
-	    			default:
-	    				throw runtime_error("detected unsupported pathfinder type!");
-	    	    }
-
-	    		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-				if (canHarvestDestPos == true ) {
-					if(frameIndex < 0) {
-						unit->setLastHarvestResourceTarget(NULL);
-					}
-
-					canHarvestDestPos = (map->getSurfaceCell(Map::toSurfCoords(targetPos)) != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource() != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()->getType() != NULL);
-
-					if(canHarvestDestPos == true) {
-						if(frameIndex < 0) {
-							//if it finds resources it starts harvesting
-							unit->setCurrSkill(hct->getHarvestSkillType());
-							unit->setTargetPos(targetPos);
-							command->setPos(targetPos);
-							unit->setLoadCount(0);
-							unit->getFaction()->addResourceTargetToCache(targetPos);
-
-							switch(this->game->getGameSettings()->getPathFinderType()) {
-								case pfBasic:
-									unit->setLoadType(r->getType());
-									break;
-								case pfRoutePlanner:
-									unit->setLoadType(r->getType());
-									break;
-								default:
-									throw runtime_error("detected unsupported pathfinder type!");
-							}
-						}
-						if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-					}
-				}
-				if(canHarvestDestPos == false) {
-					if(frameIndex < 0) {
-						unit->setLastHarvestResourceTarget(&targetPos);
-					}
+			SurfaceCell *sc = map->getSurfaceCell(Map::toSurfCoords(command->getPos()));
+			if(sc != NULL) {
+				Resource *r = sc->getResource();
+				if(r != NULL && hct != NULL && hct->canHarvest(r->getType())) {
+					//if can harvest dest. pos
+					bool canHarvestDestPos = false;
 
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
-					if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-						char szBuf[4096]="";
-						sprintf(szBuf,"[updateHarvest] unit->getPos() [%s] command->getPos() [%s]",
-								unit->getPos().getString().c_str(),command->getPos().getString().c_str());
-						unit->logSynchData(__FILE__,__LINE__,szBuf);
-					}
+	    			switch(this->game->getGameSettings()->getPathFinderType()) {
+	    				case pfBasic:
+	    					{
+	    						const bool newHarvestPath = false;
+	    						bool isNearResource = false;
+	    						Vec2i clickPos = command->getOriginalPos();
+	    						if(newHarvestPath == true) {
+	    							isNearResource = map->isResourceNear(frameIndex,unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit, false,&clickPos);
+	    						}
+	    						else {
+	    							isNearResource = map->isResourceNear(frameIndex,unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit);
+	    						}
+	    						if(isNearResource == true) {
+	    							if((unit->getPos().dist(command->getPos()) < harvestDistance || unit->getPos().dist(targetPos) < harvestDistance) && isNearResource == true) {
+	    								canHarvestDestPos = true;
+	    							}
+	    						}
+	    						else if(newHarvestPath == true) {
+	    							if(clickPos != command->getOriginalPos()) {
+	    								//printf("%%----------- unit [%s - %d] CHANGING RESOURCE POS from [%s] to [%s]\n",unit->getFullName().c_str(),unit->getId(),command->getOriginalPos().getString().c_str(),clickPos.getString().c_str());
 
-					//if not continue walking
-					bool wasStuck = false;
-					TravelState tsValue = tsImpossible;
-		    		switch(this->game->getGameSettings()->getPathFinderType()) {
-		    			case pfBasic:
-							tsValue = pathFinder->findPath(unit, command->getPos(), &wasStuck, frameIndex);
-							if (tsValue == tsMoving && frameIndex < 0) {
-								unit->setCurrSkill(hct->getMoveSkillType());
-							}
-		    				break;
-		    			case pfRoutePlanner:
-							tsValue = routePlanner->findPathToResource(unit, command->getPos(), r->getType());
-							if (tsValue == tsMoving && frameIndex < 0) {
-								unit->setCurrSkill(hct->getMoveSkillType());
-							}
-		    				break;
-		    			default:
-		    				throw runtime_error("detected unsupported pathfinder type!");
-		    	    }
+										if(frameIndex < 0) {
+											if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+												char szBuf[8096]="";
+												snprintf(szBuf,8096,"[updateHarvest] clickPos [%s]",clickPos.getString().c_str());
+												unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+											}
 
-		    		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-		    		// If the unit is blocked or Even worse 'stuck' then try to
-		    		// find the same resource type elsewhere, but close by
-		    		if((wasStuck == true || tsValue == tsBlocked) && unit->isAlive() == true) {
-		    			switch(this->game->getGameSettings()->getPathFinderType()) {
-							case pfBasic:
-								{
-									bool isNearResource = map->isResourceNear(unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit,true);
-									if(isNearResource == true) {
-										if((unit->getPos().dist(command->getPos()) < harvestDistance || unit->getPos().dist(targetPos) < harvestDistance) && isNearResource == true) {
-											canHarvestDestPos = true;
+	    									command->setPos(clickPos);
 										}
-									}
-								}
-								break;
-							case pfRoutePlanner:
-								canHarvestDestPos = map->isResourceNear(unit->getPos(), unit->getType()->getSize(), r->getType(), targetPos);
-								break;
-							default:
-								throw runtime_error("detected unsupported pathfinder type!");
-						}
+	    							}
+	    						}
+	    					}
+	    					break;
+	    				default:
+	    					throw megaglest_runtime_error("detected unsupported pathfinder type!");
+	    			}
 
-						if (canHarvestDestPos == true) {
-							if(frameIndex < 0) {
-								unit->setLastHarvestResourceTarget(NULL);
+	    			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+					if (canHarvestDestPos == true ) {
+						if(frameIndex < 0) {
+							if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+								char szBuf[8096]="";
+								snprintf(szBuf,8096,"[updateHarvest]");
+								unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
 							}
 
-							canHarvestDestPos = (map->getSurfaceCell(Map::toSurfCoords(targetPos)) != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource() != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()->getType() != NULL);
-							if(canHarvestDestPos == true) {
-								if(frameIndex < 0) {
-									//if it finds resources it starts harvesting
-									unit->setCurrSkill(hct->getHarvestSkillType());
-									unit->setTargetPos(targetPos);
-									command->setPos(targetPos);
+							unit->setLastHarvestResourceTarget(NULL);
+						}
+
+						canHarvestDestPos = (map->getSurfaceCell(Map::toSurfCoords(targetPos)) != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource() != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()->getType() != NULL);
+
+						if(canHarvestDestPos == true) {
+							if(frameIndex < 0) {
+								//if it finds resources it starts harvesting
+								unit->setCurrSkill(hct->getHarvestSkillType());
+								unit->setTargetPos(targetPos);
+								command->setPos(targetPos);
+
+								if(unit->getLoadType() == NULL || harvestResource == NULL ||
+								   harvestResource->getType() == NULL || unit->getLoadType() != harvestResource->getType()) {
 									unit->setLoadCount(0);
-									unit->getFaction()->addResourceTargetToCache(targetPos);
-
-									switch(this->game->getGameSettings()->getPathFinderType()) {
-										case pfBasic:
-											unit->setLoadType(r->getType());
-											break;
-										case pfRoutePlanner:
-											unit->setLoadType(r->getType());
-											break;
-										default:
-											throw runtime_error("detected unsupported pathfinder type!");
-									}
-								}
-							}
-
-							if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-						}
-
-						if(canHarvestDestPos == false) {
-							if(frameIndex < 0) {
-								unit->setLastHarvestResourceTarget(&targetPos);
-							}
-
-							if(targetPos.x >= 0) {
-								//if not continue walking
-
-								if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-									char szBuf[4096]="";
-									sprintf(szBuf,"[updateHarvest #2] unit->getPos() [%s] command->getPos() [%s] targetPos [%s]",
-											unit->getPos().getString().c_str(),command->getPos().getString().c_str(),targetPos.getString().c_str());
-									unit->logSynchData(__FILE__,__LINE__,szBuf);
 								}
 
-								wasStuck = false;
-								TravelState tsValue = tsImpossible;
+								unit->getFaction()->addResourceTargetToCache(targetPos);
+
 								switch(this->game->getGameSettings()->getPathFinderType()) {
 									case pfBasic:
-										tsValue = pathFinder->findPath(unit, targetPos, &wasStuck, frameIndex);
-										if (tsValue == tsMoving && frameIndex < 0) {
-											unit->setCurrSkill(hct->getMoveSkillType());
-											command->setPos(targetPos);
-										}
-										break;
-									case pfRoutePlanner:
-										tsValue = routePlanner->findPathToResource(unit, targetPos, r->getType());
-										if (tsValue == tsMoving && frameIndex < 0) {
-											unit->setCurrSkill(hct->getMoveSkillType());
-											command->setPos(targetPos);
-										}
+										unit->setLoadType(r->getType());
 										break;
 									default:
-										throw runtime_error("detected unsupported pathfinder type!");
+										throw megaglest_runtime_error("detected unsupported pathfinder type!");
+								}
+
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+									char szBuf[8096]="";
+									snprintf(szBuf,8096,"[updateHarvest] targetPos [%s]",targetPos.getString().c_str());
+									unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
 								}
 							}
-
 							if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-
-				    		if(wasStuck == true && frameIndex < 0) {
-								//if can't harvest, search for another resource
-								unit->setCurrSkill(scStop);
-								if(searchForResource(unit, hct) == false) {
-									unit->finishCommand();
-								}
-				    		}
 						}
-		    		}
-				}
-			}
-			else {
-				if(frameIndex < 0) {
-					//if can't harvest, search for another resource
-					unit->setCurrSkill(scStop);
-					if(searchForResource(unit, hct) == false) {
-						unit->finishCommand();
+					}
+					if(canHarvestDestPos == false) {
+						if(frameIndex < 0) {
+							if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+								char szBuf[8096]="";
+								snprintf(szBuf,8096,"[updateHarvest] targetPos [%s]",targetPos.getString().c_str());
+								unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+							}
+
+							unit->setLastHarvestResourceTarget(&targetPos);
+						}
+
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+						if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+							char szBuf[8096]="";
+							snprintf(szBuf,8096,"[updateHarvest] unit->getPos() [%s] command->getPos() [%s]",
+									unit->getPos().getString().c_str(),command->getPos().getString().c_str());
+							unit->logSynchData(__FILE__,__LINE__,szBuf);
+						}
+
+						//if not continue walking
+						bool wasStuck = false;
+						TravelState tsValue = tsImpossible;
+		    			switch(this->game->getGameSettings()->getPathFinderType()) {
+		    				case pfBasic:
+								tsValue = pathFinder->findPath(unit, command->getPos(), &wasStuck, frameIndex);
+								if (tsValue == tsMoving && frameIndex < 0) {
+									unit->setCurrSkill(hct->getMoveSkillType());
+								}
+		    					break;
+		    				default:
+		    					throw megaglest_runtime_error("detected unsupported pathfinder type!");
+		    			}
+
+		    			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+		    			// If the unit is blocked or Even worse 'stuck' then try to
+		    			// find the same resource type elsewhere, but close by
+		    			if((wasStuck == true || tsValue == tsBlocked) && unit->isAlive() == true) {
+		    				switch(this->game->getGameSettings()->getPathFinderType()) {
+								case pfBasic:
+									{
+										bool isNearResource = map->isResourceNear(frameIndex,unit->getPos(), r->getType(), targetPos,unit->getType()->getSize(),unit,true);
+										if(isNearResource == true) {
+											if((unit->getPos().dist(command->getPos()) < harvestDistance || unit->getPos().dist(targetPos) < harvestDistance) && isNearResource == true) {
+												canHarvestDestPos = true;
+											}
+										}
+									}
+									break;
+								default:
+									throw megaglest_runtime_error("detected unsupported pathfinder type!");
+							}
+
+							if (canHarvestDestPos == true) {
+								if(frameIndex < 0) {
+									unit->setLastHarvestResourceTarget(NULL);
+								}
+
+								canHarvestDestPos = (map->getSurfaceCell(Map::toSurfCoords(targetPos)) != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource() != NULL && map->getSurfaceCell(Map::toSurfCoords(targetPos))->getResource()->getType() != NULL);
+								if(canHarvestDestPos == true) {
+									if(frameIndex < 0) {
+										//if it finds resources it starts harvesting
+										unit->setCurrSkill(hct->getHarvestSkillType());
+										unit->setTargetPos(targetPos);
+										command->setPos(targetPos);
+
+										if(unit->getLoadType() == NULL || harvestResource == NULL ||
+										   harvestResource->getType() == NULL || unit->getLoadType() != harvestResource->getType()) {
+											unit->setLoadCount(0);
+										}
+										unit->getFaction()->addResourceTargetToCache(targetPos);
+
+										switch(this->game->getGameSettings()->getPathFinderType()) {
+											case pfBasic:
+												unit->setLoadType(r->getType());
+												break;
+											default:
+												throw megaglest_runtime_error("detected unsupported pathfinder type!");
+										}
+									}
+								}
+
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+							}
+
+							if(canHarvestDestPos == false) {
+								if(frameIndex < 0) {
+									unit->setLastHarvestResourceTarget(&targetPos);
+								}
+
+								if(targetPos.x >= 0) {
+									//if not continue walking
+
+									if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+										char szBuf[8096]="";
+										snprintf(szBuf,8096,"[updateHarvest #2] unit->getPos() [%s] command->getPos() [%s] targetPos [%s]",
+												unit->getPos().getString().c_str(),command->getPos().getString().c_str(),targetPos.getString().c_str());
+										unit->logSynchData(__FILE__,__LINE__,szBuf);
+									}
+
+									wasStuck = false;
+									TravelState tsValue = tsImpossible;
+									switch(this->game->getGameSettings()->getPathFinderType()) {
+										case pfBasic:
+											tsValue = pathFinder->findPath(unit, targetPos, &wasStuck, frameIndex);
+											if (tsValue == tsMoving && frameIndex < 0) {
+												unit->setCurrSkill(hct->getMoveSkillType());
+												command->setPos(targetPos);
+											}
+											break;
+										default:
+											throw megaglest_runtime_error("detected unsupported pathfinder type!");
+									}
+								}
+
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+				    			if(wasStuck == true && frameIndex < 0) {
+									//if can't harvest, search for another resource
+									unit->setCurrSkill(scStop);
+									if(searchForResource(unit, hct) == false) {
+										unit->finishCommand();
+									}
+				    			}
+							}
+		    			}
 					}
 				}
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+				else {
+					if(frameIndex < 0) {
+						//if can't harvest, search for another resource
+						unit->setCurrSkill(scStop);
+						if(searchForResource(unit, hct) == false) {
+							unit->finishCommand();
+						}
+					}
+					if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+				}
 			}
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -1142,8 +1558,8 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 			Unit *store= world->nearestStore(unit->getPos(), unit->getFaction()->getIndex(), unit->getLoadType());
 			if(store != NULL) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-					char szBuf[4096]="";
-					sprintf(szBuf,"[updateHarvest #3] unit->getPos() [%s] store->getCenteredPos() [%s]",
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateHarvest #3] unit->getPos() [%s] store->getCenteredPos() [%s]",
 							unit->getPos().getString().c_str(),store->getCenteredPos().getString().c_str());
 					unit->logSynchData(__FILE__,__LINE__,szBuf);
 				}
@@ -1153,11 +1569,8 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 	    			case pfBasic:
 	    				tsValue = pathFinder->findPath(unit, store->getCenteredPos(), NULL, frameIndex);
 	    				break;
-	    			case pfRoutePlanner:
-	    				tsValue = routePlanner->findPathToStore(unit, store);
-	    				break;
 	    			default:
-	    				throw runtime_error("detected unsupported pathfinder type!");
+	    				throw megaglest_runtime_error("detected unsupported pathfinder type!");
 	    	    }
 
 	    		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -1189,7 +1602,6 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 
 					//world->changePosCells(unit,unit->getPos()+unit->getDest());
 					if(map->isNextTo(unit, store)) {
-
 						//update resources
 						int resourceAmount= unit->getLoadCount();
 						if(unit->getFaction()->getCpuControl())
@@ -1199,6 +1611,7 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 						}
 						unit->getFaction()->incResourceAmount(unit->getLoadType(), resourceAmount);
 						world->getStats()->harvest(unit->getFactionIndex(), resourceAmount);
+
 						scriptManager->onResourceHarvested();
 
 						//if next to a store unload resources
@@ -1264,9 +1677,10 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 				}
 				else {
-
 					// if there is a resource, continue working, until loaded
 					unit->update2();
+
+					unit->setLastHarvestedResourcePos(unitTargetPos);
 
 					if (unit->getProgress2() >= hct->getHitsPerUnit()) {
 						if (unit->getLoadCount() < hct->getMaxLoad()) {
@@ -1274,19 +1688,16 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 							unit->setLoadCount(unit->getLoadCount() + 1);
 
 							//if resource exausted, then delete it and stop
-							if (r->decAmount(1)) {
-								const ResourceType *rt = r->getType();
+							if (sc->decAmount(1)) {
+								//const ResourceType *rt = r->getType();
 								sc->deleteResource();
 								world->removeResourceTargetFromCache(unitTargetPos);
 
 								switch(this->game->getGameSettings()->getPathFinderType()) {
 									case pfBasic:
 										break;
-									case pfRoutePlanner:
-										world->getCartographer()->onResourceDepleted(Map::toSurfCoords(unit->getTargetPos()), rt);
-										break;
 									default:
-										throw runtime_error("detected unsupported pathfinder type!");
+										throw megaglest_runtime_error("detected unsupported pathfinder type!");
 								}
 
 								//printf("\n\n#6\n\n");
@@ -1313,6 +1724,23 @@ void UnitUpdater::updateHarvest(Unit *unit, int frameIndex) {
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 void UnitUpdater::SwapActiveCommand(Unit *unitSrc, Unit *unitDest) {
@@ -1399,7 +1827,7 @@ Unit * UnitUpdater::findPeerUnitBuilder(Unit *unit) {
 								}
 							}
 							else {
-								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] **peer NOT building**, peerUnit = [%s]\n",__FILE__,__FUNCTION__,__LINE__,peerUnit->toString().c_str());
+								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] **peer NOT building**, peerUnit = [%s]\n",__FILE__,__FUNCTION__,__LINE__,peerUnit->toString(false).c_str());
 
 							    if(firstLinkedPeerRepairer == NULL) {
                                     const RepairCommandType *prct = dynamic_cast<const RepairCommandType*>(peerCommand->getCommandType());
@@ -1425,7 +1853,7 @@ Unit * UnitUpdater::findPeerUnitBuilder(Unit *unit) {
 		}
     }
 
-    if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] returning foundUnitBuilder = [%s]\n",__FILE__,__FUNCTION__,__LINE__,(foundUnitBuilder != NULL ? foundUnitBuilder->toString().c_str() : "null"));
+    if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] returning foundUnitBuilder = [%s]\n",__FILE__,__FUNCTION__,__LINE__,(foundUnitBuilder != NULL ? foundUnitBuilder->toString(false).c_str() : "null"));
 
     return foundUnitBuilder;
 }
@@ -1433,10 +1861,17 @@ Unit * UnitUpdater::findPeerUnitBuilder(Unit *unit) {
 // ==================== updateRepair ====================
 
 void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
+	try {
+
 	// Nothing to do
 	if(frameIndex >= 0) {
 		clearUnitPrecache(unit);
 		return;
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateRepair]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
 	}
 
 	Chrono chrono;
@@ -1445,21 +1880,25 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit = %p\n",__FILE__,__FUNCTION__,__LINE__,unit);
 
 	//if(unit != NULL) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit doing the repair [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,unit->getFullName().c_str(),unit->getId());
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit doing the repair [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,unit->getFullName(false).c_str(),unit->getId());
 	//}
-
     Command *command= unit->getCurrCommand();
+    if(command == NULL) {
+    	throw megaglest_runtime_error("command == NULL");
+    }
+
     const RepairCommandType *rct= static_cast<const RepairCommandType*>(command->getCommandType());
+    const CommandType *ct = (command != NULL ? command->getCommandType() : NULL);
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] rct = %p\n",__FILE__,__FUNCTION__,__LINE__,rct);
 
-	Unit *repaired = map->getCell(command->getPos())->getUnitWithEmptyCellMap(fLand);
-	if(repaired == NULL) {
+	Unit *repaired = (command != NULL ? map->getCell(command->getPos())->getUnitWithEmptyCellMap(fLand) : NULL);
+	if(repaired == NULL && command != NULL) {
 		repaired = map->getCell(command->getPos())->getUnit(fLand);
 	}
 
 	if(repaired != NULL) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit to repair [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,repaired->getFullName().c_str(),repaired->getId());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit to repair [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,repaired->getFullName(false).c_str(),repaired->getId());
 	}
 
 	if(chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -1468,7 +1907,7 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 	Unit *peerUnitBuilder = findPeerUnitBuilder(unit);
 
 	if(peerUnitBuilder != NULL) {
-		SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit peer [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,peerUnitBuilder->getFullName().c_str(),peerUnitBuilder->getId());
+		SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit peer [%s] - %d\n",__FILE__,__FUNCTION__,__LINE__,peerUnitBuilder->getFullName(false).c_str(),peerUnitBuilder->getId());
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
@@ -1479,7 +1918,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 		if(peerUnitBuilder->getCurrCommand()->getUnit() != NULL) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] peerbuilder's unitid = %d\n",__FILE__,__FUNCTION__,__LINE__,peerUnitBuilder->getCurrCommand()->getUnit()->getId());
-
 			repaired = peerUnitBuilder->getCurrCommand()->getUnit();
 		}
 	}
@@ -1496,13 +1934,11 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 			if(peerUnitBuilder->getCurrCommand()->getUnit() != NULL) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] peerbuilder's unitid = %d\n",__FILE__,__FUNCTION__,__LINE__,peerUnitBuilder->getCurrCommand()->getUnit()->getId());
-
 				repaired = peerUnitBuilder->getCurrCommand()->getUnit();
 				nextToRepaired = repaired != NULL && map->isNextTo(unit, repaired);
 			}
 			else {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 				Vec2i buildPos = map->findBestBuildApproach(unit, command->getPos(), peerUnitBuilder->getCurrCommand()->getUnitType());
 
 				//nextToRepaired= (unit->getPos() == (command->getPos()-Vec2i(1)));
@@ -1512,7 +1948,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 				if(nextToRepaired == true) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 					Command *peerCommand = peerUnitBuilder->getCurrCommand();
 					const RepairCommandType *rct = dynamic_cast<const RepairCommandType*>(peerCommand->getCommandType());
 					// If the peer is also scheduled to do a repair we CANNOT swap their commands or
@@ -1529,8 +1964,8 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 						if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 						Command* command= this->game->getCommander()->buildCommand(&networkCommand);
-						CommandResult cr= unit->checkCommand(command);
-						if(cr == crSuccess) {
+						std::pair<CommandResult,string> cr= unit->checkCommand(command);
+						if(cr.first == crSuccess) {
 							if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 							unit->replaceCurrCommand(command);
 						}
@@ -1558,21 +1993,22 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 					return;
 				}
 			}
-
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 		}
 	}
 	else {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit to repair[%s]\n",__FILE__,__FUNCTION__,__LINE__,repaired->getFullName().c_str());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] unit to repair[%s]\n",__FILE__,__FUNCTION__,__LINE__,repaired->getFullName(false).c_str());
 	}
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] repaired = %p, nextToRepaired = %d, unit->getCurrSkill()->getClass() = %d\n",__FILE__,__FUNCTION__,__LINE__,repaired,nextToRepaired,unit->getCurrSkill()->getClass());
 
 	//UnitPathInterface *path= unit->getPath();
-
 	if(unit->getCurrSkill()->getClass() != scRepair ||
 		(nextToRepaired == false && peerUnitBuilder == NULL)) {
 
+		if(command == NULL) {
+			throw megaglest_runtime_error("command == NULL");
+		}
 		Vec2i repairPos = command->getPos();
 		bool startRepairing = (repaired != NULL && rct->isRepairableUnitType(repaired->getType()) && repaired->isDamaged());
 
@@ -1602,7 +2038,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 			if(nextToRepaired == true) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 				unit->setTarget(repaired);
 				unit->setCurrSkill(rct->getRepairSkillType());
 			}
@@ -1610,8 +2045,8 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-					char szBuf[4096]="";
-					sprintf(szBuf,"[updateRepair] unit->getPos() [%s] command->getPos()() [%s] repairPos [%s]",unit->getPos().getString().c_str(),command->getPos().getString().c_str(),repairPos.getString().c_str());
+					char szBuf[8096]="";
+					snprintf(szBuf,8096,"[updateRepair] unit->getPos() [%s] command->getPos()() [%s] repairPos [%s]",unit->getPos().getString().c_str(),command->getPos().getString().c_str(),repairPos.getString().c_str());
 					unit->logSynchData(__FILE__,__LINE__,szBuf);
 				}
 
@@ -1621,7 +2056,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 				// the unit we cannot repair it
 				if(rct->getMoveSkillType() == NULL) {
 					//printf("CANCEL REPAIR NOT NEXT TO REPAIR UNIT\n");
-
 					//Vec2i repairPos = command->getPos();
 					//bool startRepairing = (repaired != NULL && rct->isRepairableUnitType(repaired->getType()) && repaired->isDamaged());
 					//bool nextToRepaired = repaired != NULL && map->isNextTo(unit, repaired);
@@ -1640,18 +2074,8 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 							ts = pathFinder->findPath(unit, repairPos, NULL, frameIndex);
 							break;
-						case pfRoutePlanner:
-							if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-							if (repaired && !repaired->getType()->isMobile()) {
-								ts = routePlanner->findPathToBuildSite(unit, repaired->getType(), repaired->getPos(), repaired->getModelFacing());
-							}
-							else {
-								ts = routePlanner->findPath(unit, repairPos);
-							}
-							break;
 						default:
-							throw runtime_error("detected unsupported pathfinder type!");
+							throw megaglest_runtime_error("detected unsupported pathfinder type!");
 					}
 
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] ts = %d\n",__FILE__,__FUNCTION__,__LINE__,ts);
@@ -1665,13 +2089,11 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 						break;
 					case tsBlocked:
 						if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] tsBlocked\n",__FILE__,__FUNCTION__,__LINE__);
-
 						if(unit->getPath()->isBlocked()) {
 							if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] about to call [scStop]\n",__FILE__,__FUNCTION__,__LINE__);
 
 							if(unit->getRetryCurrCommandCount() > 0) {
 								if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] will retry command, unit->getRetryCurrCommandCount() = %d\n",__FILE__,__FUNCTION__,__LINE__,unit->getRetryCurrCommandCount());
-
 								unit->setRetryCurrCommandCount(0);
 								unit->getPath()->clear();
 								updateUnitCommand(unit,-1);
@@ -1698,12 +2120,10 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
     }
     else {
     	if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 		bool cancelRepair = false;
     	//if repairing
 		if(repaired != NULL) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 			// Check if we can still repair the unit (may have morphed, etc)
 			bool canStillRepair = rct->isRepairableUnitType(repaired->getType());
 			if(canStillRepair == true) {
@@ -1716,7 +2136,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 //					const UnitType *rUnit = rct->getRepair(i);
 //					printf("Can repair unittype [%s]\n",rUnit->getName().c_str());
 //				}
-
 				unit->setCurrSkill(scStop);
 				unit->finishCommand();
 				cancelRepair = true;
@@ -1724,7 +2143,6 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 		}
 		else if(peerUnitBuilder != NULL) {
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
 			unit->setTargetPos(command->getPos());
 		}
 
@@ -1737,29 +2155,56 @@ void UnitUpdater::updateRepair(Unit *unit, int frameIndex) {
 
 			if(repaired != NULL && repaired->isBuilt() == false) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
-
-				repaired->born();
+				repaired->born(ct);
 				scriptManager->onUnitCreated(repaired);
 			}
-
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 		}
     }
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 // ==================== updateProduce ====================
 
 void UnitUpdater::updateProduce(Unit *unit, int frameIndex) {
+	try {
+
 	// Nothing to do
 	if(frameIndex >= 0) {
 		clearUnitPrecache(unit);
 		return;
 	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateProduce]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
+	}
+
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
     Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
     const ProduceCommandType *pct= static_cast<const ProduceCommandType*>(command->getCommandType());
     Unit *produced;
 
@@ -1768,11 +2213,13 @@ void UnitUpdater::updateProduce(Unit *unit, int frameIndex) {
         unit->setCurrSkill(pct->getProduceSkillType());
     }
     else {
+    	const CommandType *ct = (command != NULL ? command->getCommandType() : NULL);
+
 		unit->update2();
 
 		if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
-        if(unit->getProgress2()>pct->getProduced()->getProductionTime()){
+        if(unit->getProgress2() > pct->getProduced()->getProductionTime()){
             unit->finishCommand();
             unit->setCurrSkill(scStop);
 
@@ -1781,31 +2228,28 @@ void UnitUpdater::updateProduce(Unit *unit, int frameIndex) {
 				case pfBasic:
 					newpath = new UnitPathBasic();
 					break;
-				case pfRoutePlanner:
-					newpath = new UnitPath();
-					break;
 				default:
-					throw runtime_error("detected unsupported pathfinder type!");
+					throw megaglest_runtime_error("detected unsupported pathfinder type!");
 		    }
 
 			produced= new Unit(world->getNextUnitId(unit->getFaction()), newpath, Vec2i(0), pct->getProducedUnit(), unit->getFaction(), world->getMap(), CardinalDir::NORTH);
 
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] about to place unit for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,produced->toString().c_str());
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] about to place unit for unit [%s]\n",__FILE__,__FUNCTION__,__LINE__,produced->toString(false).c_str());
 
 			if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 
 			//place unit creates the unit
 			if(!world->placeUnit(unit->getCenteredPos(), 10, produced)) {
 				if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d] COULD NOT PLACE UNIT for unitID [%d]\n",__FILE__,__FUNCTION__,__LINE__,produced->getId());
-
 				delete produced;
 			}
 			else{
 				produced->create();
-				produced->born();
-				world->getStats()->produce(unit->getFactionIndex());
+				produced->born(ct);
+
+				world->getStats()->produce(unit->getFactionIndex(),produced->getType()->getCountUnitProductionInStats());
 				const CommandType *ct= produced->computeCommandType(unit->getMeetingPos());
-				if(ct!=NULL){
+				if(ct != NULL) {
 					if(SystemFlags::getSystemSettingType(SystemFlags::debugUnitCommands).enabled) SystemFlags::OutputDebug(SystemFlags::debugUnitCommands,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 					produced->giveCommand(new Command(ct, unit->getMeetingPos()));
 				}
@@ -1817,32 +2261,60 @@ void UnitUpdater::updateProduce(Unit *unit, int frameIndex) {
     }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 
 // ==================== updateUpgrade ====================
 
 void UnitUpdater::updateUpgrade(Unit *unit, int frameIndex) {
+	try {
+
 	// Nothing to do
 	if(frameIndex >= 0) {
 		clearUnitPrecache(unit);
 		return;
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateUpgrade]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
 	}
 
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
     Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
     const UpgradeCommandType *uct= static_cast<const UpgradeCommandType*>(command->getCommandType());
 
-	if(unit->getCurrSkill()->getClass()!=scUpgrade){
+	if(unit->getCurrSkill()->getClass() != scUpgrade) {
 		//if not producing
 		unit->setCurrSkill(uct->getUpgradeSkillType());
     }
-	else{
+	else {
 		//if producing
 		unit->update2();
-        if(unit->getProgress2()>uct->getProduced()->getProductionTime()){
+        if(unit->getProgress2() > uct->getProduced()->getProductionTime()){
             unit->finishCommand();
             unit->setCurrSkill(scStop);
 			unit->getFaction()->finishUpgrade(uct->getProducedUpgrade());
@@ -1850,27 +2322,57 @@ void UnitUpdater::updateUpgrade(Unit *unit, int frameIndex) {
     }
 
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 // ==================== updateMorph ====================
 
 void UnitUpdater::updateMorph(Unit *unit, int frameIndex) {
+	try {
+
 	// Nothing to do
 	if(frameIndex >= 0) {
 		clearUnitPrecache(unit);
 		return;
+	}
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"[updateMorph]");
+		unit->logSynchData(extractFileFromDirectoryPath(__FILE__).c_str(),__LINE__,szBuf);
 	}
 
 	Chrono chrono;
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
 
 	Command *command= unit->getCurrCommand();
+	if(command == NULL) {
+		throw megaglest_runtime_error("command == NULL");
+	}
+
     const MorphCommandType *mct= static_cast<const MorphCommandType*>(command->getCommandType());
 
     if(unit->getCurrSkill()->getClass()!=scMorph){
 		//if not morphing, check space
 		if(map->isFreeCellsOrHasUnit(unit->getPos(), mct->getMorphUnit()->getSize(), mct->getMorphUnit()->getField(), unit, mct->getMorphUnit())){
 			unit->setCurrSkill(mct->getMorphSkillType());
+			// block space for morphing units ( block space before and after morph ! )
+			map->putUnitCells(unit, unit->getPos());
 		}
 		else{
 			if(unit->getFactionIndex()==world->getThisFactionIndex()){
@@ -1881,19 +2383,15 @@ void UnitUpdater::updateMorph(Unit *unit, int frameIndex) {
     }
     else{
 		unit->update2();
-        if(unit->getProgress2()>mct->getProduced()->getProductionTime()){
-			int oldSize = 0;
-			bool needMapUpdate = false;
+        if(unit->getProgress2() > mct->getProduced()->getProductionTime()){
+			//int oldSize = 0;
+			//bool needMapUpdate = false;
 
     		switch(this->game->getGameSettings()->getPathFinderType()) {
     			case pfBasic:
     				break;
-    			case pfRoutePlanner:
-    				oldSize = unit->getType()->getSize();
-    				needMapUpdate = unit->getType()->isMobile() != mct->getMorphUnit()->isMobile();
-    				break;
     			default:
-    				throw runtime_error("detected unsupported pathfinder type!");
+    				throw megaglest_runtime_error("detected unsupported pathfinder type!");
     	    }
 
 			//finish the command
@@ -1905,14 +2403,8 @@ void UnitUpdater::updateMorph(Unit *unit, int frameIndex) {
 	    		switch(this->game->getGameSettings()->getPathFinderType()) {
 	    			case pfBasic:
 	    				break;
-	    			case pfRoutePlanner:
-						if (needMapUpdate) {
-							int size = max(oldSize, unit->getType()->getSize());
-							world->getCartographer()->updateMapMetrics(unit->getPos(), size);
-						}
-	    				break;
 	    			default:
-	    				throw runtime_error("detected unsupported pathfinder type!");
+	    				throw megaglest_runtime_error("detected unsupported pathfinder type!");
 	    	    }
 
 				scriptManager->onUnitCreated(unit);
@@ -1929,61 +2421,29 @@ void UnitUpdater::updateMorph(Unit *unit, int frameIndex) {
     }
 
     if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
 }
 
 
 // ==================== updateMove ====================
 void UnitUpdater::updateSwitchTeam(Unit *unit, int frameIndex) {
-//	Chrono chrono;
-//	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled) chrono.start();
-//
-//    Command *command= unit->getCurrCommand();
-//    const MoveCommandType *mct= static_cast<const MoveCommandType*>(command->getCommandType());
-//
-//	Vec2i pos= command->getUnit()!=NULL? command->getUnit()->getCenteredPos(): command->getPos();
-//
-//	if(SystemFlags::getSystemSettingType(SystemFlags::debugWorldSynch).enabled == true && frameIndex < 0) {
-//		char szBuf[4096]="";
-//		sprintf(szBuf,"[updateMove] pos [%s] unit [%d - %s] cmd [%s]",pos.getString().c_str(),unit->getId(),unit->getFullName().c_str(),command->toString().c_str());
-//		unit->logSynchData(__FILE__,__LINE__,szBuf);
-//	}
-//
-//	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-//
-//	TravelState tsValue = tsImpossible;
-//	switch(this->game->getGameSettings()->getPathFinderType()) {
-//		case pfBasic:
-//			tsValue = pathFinder->findPath(unit, pos, NULL, frameIndex);
-//			break;
-//		case pfRoutePlanner:
-//			tsValue = routePlanner->findPath(unit, pos);
-//			break;
-//		default:
-//			throw runtime_error("detected unsupported pathfinder type!");
-//    }
-//
-//	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s Line: %d] took msecs: %lld\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
-//
-//	if(frameIndex < 0) {
-//		switch (tsValue) {
-//		case tsMoving:
-//			unit->setCurrSkill(mct->getMoveSkillType());
-//			break;
-//
-//		case tsBlocked:
-//			unit->setCurrSkill(scStop);
-//			if(unit->getPath()->isBlocked()){
-//				unit->finishCommand();
-//			}
-//			break;
-//
-//		default:
-//			unit->finishCommand();
-//		}
-//	}
-//	if(SystemFlags::getSystemSettingType(SystemFlags::debugPerformance).enabled && chrono.getMillis() > 0) SystemFlags::OutputDebug(SystemFlags::debugPerformance,"In [%s::%s] Line: %d took msecs: %lld --------------------------- [END OF METHOD] ---------------------------\n",__FILE__,__FUNCTION__,__LINE__,chrono.getMillis());
 }
-
 
 // ==================== updateAttack ====================
 
@@ -1992,30 +2452,42 @@ void UnitUpdater::updateSwitchTeam(Unit *unit, int frameIndex) {
 // ==================== attack ====================
 
 void UnitUpdater::hit(Unit *attacker){
-	hit(attacker, static_cast<const AttackSkillType*>(attacker->getCurrSkill()), attacker->getTargetPos(), attacker->getTargetField());
+	hit(attacker, dynamic_cast<const AttackSkillType*>(attacker->getCurrSkill()), attacker->getTargetPos(), attacker->getTargetField());
 }
 
 void UnitUpdater::hit(Unit *attacker, const AttackSkillType* ast, const Vec2i &targetPos, Field targetField){
 	//hit attack positions
-	if(ast->getSplash()){
+	if(ast != NULL && ast->getSplash()) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8095,"Unit hitting [UnitUpdater::hit] hasSplash = %d radius = %d damageall = %d",ast->getSplash(),ast->getSplashRadius(),ast->getSplashDamageAll());
+		attacker->addNetworkCRCDecHp(szBuf);
+
 		PosCircularIterator pci(map, targetPos, ast->getSplashRadius());
 		while(pci.next()) {
 			Unit *attacked= map->getCell(pci.getPos())->getUnit(targetField);
 			if(attacked != NULL) {
-				if(ast->getSplashDamageAll()
-					|| attacker->isAlly(attacked) == false
-					|| ( targetPos.x==pci.getPos().x && targetPos.y==pci.getPos().y )) {
+				if(ast->getSplashDamageAll() ||
+						attacker->isAlly(attacked) == false ||
+						( targetPos.x == pci.getPos().x && targetPos.y == pci.getPos().y )) {
+
 					attacker->setLastAttackedUnitId(attacked->getId());
 					scriptManager->onUnitAttacking(attacker);
 
-					damage(attacker, ast, attacked, pci.getPos().dist(attacker->getTargetPos()));
+					float distance = pci.getPos().dist(targetPos);
+					distance = truncateDecimal<float>(distance,6);
+					damage(attacker, ast, attacked, distance);
 			  	}
 			}
 		}
 	}
-	else{
+	else {
 		Unit *attacked= map->getCell(targetPos)->getUnit(targetField);
-		if(attacked!=NULL){
+
+		char szBuf[8096]="";
+		snprintf(szBuf,8095,"Unit hitting [UnitUpdater::hit 2] attacked = %d",(attacked != NULL ? attacked->getId() : -1));
+		attacker->addNetworkCRCDecHp(szBuf);
+
+		if(attacked != NULL) {
 			damage(attacker, ast, attacked, 0.f);
 		}
 	}
@@ -2023,10 +2495,13 @@ void UnitUpdater::hit(Unit *attacker, const AttackSkillType* ast, const Vec2i &t
 
 void UnitUpdater::damage(Unit *attacker, const AttackSkillType* ast, Unit *attacked, float distance) {
 	if(attacker == NULL) {
-		throw runtime_error("attacker == NULL");
+		throw megaglest_runtime_error("attacker == NULL");
 	}
 	if(ast == NULL) {
-		throw runtime_error("ast == NULL");
+		throw megaglest_runtime_error("ast == NULL");
+	}
+	if(attacked == NULL) {
+		throw megaglest_runtime_error("attacked == NULL");
 	}
 
 	//get vars
@@ -2034,34 +2509,39 @@ void UnitUpdater::damage(Unit *attacker, const AttackSkillType* ast, Unit *attac
 	int var					= ast->getAttackVar();
 	int armor				= attacked->getType()->getTotalArmor(attacked->getTotalUpgrade());
 	float damageMultiplier	= world->getTechTree()->getDamageMultiplier(ast->getAttackType(), attacked->getType()->getArmorType());
+	damageMultiplier = truncateDecimal<float>(damageMultiplier,6);
 
 	//compute damage
-	damage += random.randRange(-var, var);
+	//damage += random.randRange(-var, var);
+	damage += attacker->getRandom()->randRange(-var, var, extractFileFromDirectoryPath(__FILE__) + intToStr(__LINE__));
 	damage /= distance+1;
 	damage -= armor;
 	damage *= damageMultiplier;
+	damage = truncateDecimal<float>(damage,6);
 
 	if(damage < 1) {
 		damage= 1;
 	}
+	int damageVal = static_cast<int>(damage);
 
 	attacked->setLastAttackerUnitId(attacker->getId());
 
+	char szBuf[8096]="";
+	snprintf(szBuf,8095,"Unit hitting [UnitUpdater::damage] damageVal = %d",damageVal);
+	attacker->addNetworkCRCDecHp(szBuf);
+
 	//damage the unit
-	if(attacked->decHp(static_cast<int>(damage))) {
-		world->getStats()->kill(attacker->getFactionIndex(), attacked->getFactionIndex(), attacker->getTeam() != attacked->getTeam());
-		attacker->incKills(attacked->getTeam());
+	if(attacked->decHp(damageVal)) {
+		world->getStats()->kill(attacker->getFactionIndex(), attacked->getFactionIndex(), attacker->getTeam() != attacked->getTeam(),attacked->getType()->getCountUnitDeathInStats(),attacked->getType()->getCountUnitKillInStats());
+		if(attacked->getType()->getCountKillForUnitUpgrade() == true){
+			attacker->incKills(attacked->getTeam());
+		}
 
 		switch(this->game->getGameSettings()->getPathFinderType()) {
 			case pfBasic:
 				break;
-			case pfRoutePlanner:
-				if (!attacked->getType()->isMobile()) {
-					world->getCartographer()->updateMapMetrics(attacked->getPos(), attacked->getType()->getSize());
-				}
-				break;
 			default:
-				throw runtime_error("detected unsupported pathfinder type!");
+				throw megaglest_runtime_error("detected unsupported pathfinder type!");
 	    }
 
 		attacked->setCauseOfDeath(ucodAttacked);
@@ -2080,9 +2560,11 @@ void UnitUpdater::startAttackParticleSystem(Unit *unit){
 	Renderer &renderer= Renderer::getInstance();
 
 	ProjectileParticleSystem *psProj = 0;
-	SplashParticleSystem *psSplash;
 
-	const AttackSkillType *ast= static_cast<const AttackSkillType*>(unit->getCurrSkill());
+	const AttackSkillType *ast= dynamic_cast<const AttackSkillType*>(unit->getCurrSkill());
+	if(ast == NULL) {
+		throw megaglest_runtime_error("Start attack particle ast == NULL!");
+	}
 	ParticleSystemTypeProjectile *pstProj= ast->getProjParticleType();
 	ParticleSystemTypeSplash *pstSplash= ast->getSplashParticleType();
 
@@ -2098,8 +2580,8 @@ void UnitUpdater::startAttackParticleSystem(Unit *unit){
 	}
 
 	//projectile
-	if(pstProj!=NULL){
-		psProj= pstProj->create();
+	if(pstProj != NULL) {
+		psProj= pstProj->create(unit);
 		psProj->setPath(startPos, endPos);
 		psProj->setObserver(new ParticleDamager(unit, this, gameCamera));
 		psProj->setVisible(visible);
@@ -2107,14 +2589,19 @@ void UnitUpdater::startAttackParticleSystem(Unit *unit){
 			psProj->setFactionColor(unit->getFaction()->getTexture()->getPixmapConst()->getPixel3f(0,0));
 		}
 		renderer.manageParticleSystem(psProj, rsGame);
+		unit->addAttackParticleSystem(psProj);
 	}
-	else{
+	else {
+		char szBuf[8096]="";
+		snprintf(szBuf,8095,"Unit hitting [startAttackParticleSystem] no proj");
+		unit->addNetworkCRCDecHp(szBuf);
+
 		hit(unit);
 	}
 
 	//splash
-	if(pstSplash!=NULL){
-		psSplash= pstSplash->create();
+	if(pstSplash != NULL) {
+		SplashParticleSystem *psSplash= pstSplash->create(unit);
 		psSplash->setPos(endPos);
 		psSplash->setVisible(visible);
 		if(unit->getFaction()->getTexture()) {
@@ -2124,6 +2611,7 @@ void UnitUpdater::startAttackParticleSystem(Unit *unit){
 		if(pstProj!=NULL){
 			psProj->link(psSplash);
 		}
+		unit->addAttackParticleSystem(psSplash);
 	}
 }
 
@@ -2157,49 +2645,43 @@ bool UnitUpdater::searchForResource(Unit *unit, const HarvestCommandType *hct) {
     return false;
 }
 
-bool UnitUpdater::attackerOnSight(const Unit *unit, Unit **rangedPtr){
+bool UnitUpdater::attackerOnSight(Unit *unit, Unit **rangedPtr, bool evalMode){
 	int range= unit->getType()->getSight();
-	return unitOnRange(unit, range, rangedPtr, NULL);
+	return unitOnRange(unit, range, rangedPtr, NULL,evalMode);
 }
 
-bool UnitUpdater::attackableOnSight(const Unit *unit, Unit **rangedPtr, const AttackSkillType *ast){
+bool UnitUpdater::attackableOnSight(Unit *unit, Unit **rangedPtr, const AttackSkillType *ast, bool evalMode) {
 	int range= unit->getType()->getSight();
-	return unitOnRange(unit, range, rangedPtr, ast);
+	return unitOnRange(unit, range, rangedPtr, ast, evalMode);
 }
 
-bool UnitUpdater::attackableOnRange(const Unit *unit, Unit **rangedPtr, const AttackSkillType *ast){
+bool UnitUpdater::attackableOnRange(Unit *unit, Unit **rangedPtr, const AttackSkillType *ast,bool evalMode) {
 	int range= ast->getTotalAttackRange(unit->getTotalUpgrade());
-	return unitOnRange(unit, range, rangedPtr, ast);
+	return unitOnRange(unit, range, rangedPtr, ast, evalMode);
 }
 
 bool UnitUpdater::findCachedCellsEnemies(Vec2i center, int range, int size, vector<Unit*> &enemies,
 										 const AttackSkillType *ast, const Unit *unit,
 										 const Unit *commandTarget) {
 	bool result = false;
-	//return result;
+	MutexSafeWrapper safeMutex(mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
+	std::map<Vec2i, std::map<int, std::map<int, UnitRangeCellsLookupItem > > >::iterator iterFind = UnitRangeCellsLookupItemCache.find(center);
 
-	//if(game->isMasterserverMode() == false) {
-	{
-		MutexSafeWrapper safeMutex(&mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
-		std::map<Vec2i, std::map<int, std::map<int, UnitRangeCellsLookupItem > > >::iterator iterFind = UnitRangeCellsLookupItemCache.find(center);
+	if(iterFind != UnitRangeCellsLookupItemCache.end()) {
+		std::map<int, std::map<int, UnitRangeCellsLookupItem > >::iterator iterFind3 = iterFind->second.find(size);
+		if(iterFind3 != iterFind->second.end()) {
+			std::map<int, UnitRangeCellsLookupItem>::iterator iterFind4 = iterFind3->second.find(range);
+			if(iterFind4 != iterFind3->second.end()) {
+				result = true;
 
-		if(iterFind != UnitRangeCellsLookupItemCache.end()) {
-			std::map<int, std::map<int, UnitRangeCellsLookupItem > >::iterator iterFind3 = iterFind->second.find(size);
-			if(iterFind3 != iterFind->second.end()) {
-				std::map<int, UnitRangeCellsLookupItem>::iterator iterFind4 = iterFind3->second.find(range);
-				if(iterFind4 != iterFind3->second.end()) {
-					result = true;
+				std::vector<Cell *> &cellList = iterFind4->second.rangeCellList;
+				for(int idx = 0; idx < (int)cellList.size(); ++idx) {
+					Cell *cell = cellList[idx];
 
-					std::vector<Cell *> &cellList = iterFind4->second.rangeCellList;
-					for(int idx = 0; idx < cellList.size(); ++idx) {
-						Cell *cell = cellList[idx];
-
-						findEnemiesForCell(ast,cell,unit,commandTarget,enemies);
-					}
+					findEnemiesForCell(ast,cell,unit,commandTarget,enemies);
 				}
 			}
 		}
-		safeMutex.ReleaseLock();
 	}
 
 	return result;
@@ -2261,19 +2743,22 @@ void UnitUpdater::findEnemiesForCell(const Vec2i pos, int size, int sightRange, 
 }
 
 //if the unit has any enemy on range
-bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
-							  const AttackSkillType *ast) {
-    vector<Unit*> enemies;
+bool UnitUpdater::unitOnRange(Unit *unit, int range, Unit **rangedPtr,
+							  const AttackSkillType *ast,bool evalMode) {
 	bool result=false;
+
+	try {
+	vector<Unit*> enemies;
+    enemies.reserve(100);
+
 	//we check command target
 	const Unit *commandTarget = NULL;
-	if(unit->anyCommand()) {
+	if(unit->anyCommand() && unit->getCurrCommand() != NULL) {
 		commandTarget = static_cast<const Unit*>(unit->getCurrCommand()->getUnit());
 	}
 	if(commandTarget != NULL && commandTarget->isDead()) {
 		commandTarget = NULL;
 	}
-
 	//aux vars
 	int size 			= unit->getType()->getSize();
 	Vec2i center 		= unit->getPos();
@@ -2282,6 +2767,7 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 	//bool foundInCache = true;
 	if(findCachedCellsEnemies(center,range,size,enemies,ast,
 							  unit,commandTarget) == false) {
+
 		//foundInCache = false;
 		//nearby cells
 		UnitRangeCellsLookupItem cacheItem;
@@ -2289,7 +2775,7 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 			for(int j = center.y - range; j < center.y + range + size; ++j) {
 				//cells inside map and in range
 #ifdef USE_STREFLOP
-				if(map->isInside(i, j) && streflop::floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
+				if(map->isInside(i, j) && streflop::floor(static_cast<streflop::Simple>(floatCenter.dist(Vec2f((float)i, (float)j)))) <= (range+1)){
 #else
 				if(map->isInside(i, j) && floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
 #endif
@@ -2301,68 +2787,85 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 			}
 		}
 
+
 		// Ok update our caches with the latest info
 		if(cacheItem.rangeCellList.empty() == false) {
-			MutexSafeWrapper safeMutex(&mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
+			MutexSafeWrapper safeMutex(mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
 
-			//cacheItem.UnitRangeCellsLookupItemCacheTimerCountIndex = UnitRangeCellsLookupItemCacheTimerCount++;
 			UnitRangeCellsLookupItemCache[center][size][range] = cacheItem;
 		}
 	}
 
 	//attack enemies that can attack first
-	float distToUnit=-1;
-	Unit* enemySeen = NULL;
-    for(int i = 0; i< enemies.size(); ++i) {
+	float distToUnit= -1;
+	Unit* enemySeen= NULL;
+
+	float distToStandingUnit= -1;
+	Unit* attackingEnemySeen= NULL;
+	ControlType controlType= unit->getFaction()->getControlType();
+	bool isUltra= controlType == ctCpuUltra || controlType == ctNetworkCpuUltra;
+	bool isMega= controlType == ctCpuMega || controlType == ctNetworkCpuMega;
+
+
+	string randomInfoData = "enemies.size() = " + intToStr(enemies.size());
+
+	//printf("unit %d has control:%d\n",unit->getId(),controlType);
+    for(int i = 0; i< (int)enemies.size(); ++i) {
     	Unit *enemy = enemies[i];
 
-    	if(enemy->isAlive() == true) {
+
+    	if(enemy != NULL && enemy->isAlive() == true) {
+
     		// Here we default to first enemy if no attackers found
     		if(enemySeen == NULL) {
                 *rangedPtr 	= enemy;
     			enemySeen 	= enemy;
                 result		= true;
     		}
+
+    		//randomInfoData += " i = " + intToStr(i) + " alive = true result = " + intToStr(result);
+
     		// Attackers get first priority
     		if(enemy->getType()->hasSkillClass(scAttack) == true) {
+
+    			float currentDist = unit->getCenteredPos().dist(enemy->getCenteredPos());
+
+    			//randomInfoData += " currentDist = " + floatToStr(currentDist);
+
     			// Select closest attacking unit
-    			if(distToUnit < 0 || unit->getCenteredPos().dist(enemy->getCenteredPos()) < distToUnit) {
-    				distToUnit = unit->getCenteredPos().dist(enemy->getCenteredPos());
+    			if(distToUnit < 0 ||  currentDist< distToUnit) {
+    				distToUnit = currentDist;
 					*rangedPtr	= enemies[i];
 					enemySeen	= enemies[i];
 					result		= true;
     			}
-    			//break;
+
+    			if(isUltra || isMega) {
+
+        			if(distToStandingUnit < 0 || currentDist< distToStandingUnit) {
+        			    if(enemies[i]->getCurrSkill()!=NULL && enemies[i]->getCurrSkill()->getClass()==scAttack) {
+        			    	distToStandingUnit = currentDist;
+        			    	attackingEnemySeen=enemies[i];
+        			    }
+        			}
+    			}
     		}
     	}
     }
 
+    if(evalMode == false && (isUltra || isMega)) {
 
-/*
-		if(enemies[i]->getType()->hasSkillClass(scAttack) &&
-			enemies[i]->isAlive() == true ) {
-            *rangedPtr= enemies[i];
-			enemySeen=enemies[i];
-            result=true;
-            break;
-        }
+    	unit->getRandom()->addLastCaller(randomInfoData);
+
+    	if( attackingEnemySeen!=NULL && unit->getRandom()->randRange(0,2,extractFileFromDirectoryPath(__FILE__) + intToStr(__LINE__)) != 2 ) {
+    		*rangedPtr 	= attackingEnemySeen;
+    		enemySeen 	= attackingEnemySeen;
+    		//printf("Da hat er wen gefunden:%s\n",enemySeen->getType()->getName(false).c_str());
+    	}
     }
 
-/*
-    if(result == false) {
-		//any enemy
-		for(int i= 0; i < enemies.size(); ++i) {
-			if(enemies[i]->isAlive() == true) {
-				*rangedPtr= enemies[i];
-				enemySeen= enemies[i];
-				result= true;
-				break;
-			}
-		}
-	}
-*/
-
 	if(result == true) {
+
 		//const Unit* teamUnit	= NULL;
 		const Unit* enemyUnit	= NULL;
 		bool onlyEnemyUnits		= true;
@@ -2378,15 +2881,18 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 			onlyEnemyUnits	= false;
 		}
 
-		if(onlyEnemyUnits == false &&
+		if(evalMode == false && onlyEnemyUnits == false &&
 			enemyUnit->getTeam() != world->getThisTeamIndex()) {
+
 			Vec2f enemyFloatCenter	= enemyUnit->getFloatCenteredPos();
 			// find nearest Attack and cleanup old dates
 			AttackWarningData *nearest	= NULL;
 			float currentDistance		= 0.f;
 			float nearestDistance		= 0.f;
 
-			for(int i = attackWarnings.size() - 1; i >= 0; --i) {
+
+			MutexSafeWrapper safeMutex(mutexAttackWarnings,string(__FILE__) + "_" + intToStr(__LINE__));
+			for(int i = (int)attackWarnings.size() - 1; i >= 0; --i) {
 				if(world->getFrameCount() - attackWarnings[i]->lastFrameCount > 200) { //after 200 frames attack break we warn again
 					AttackWarningData *toDelete =attackWarnings[i];
 					attackWarnings.erase(attackWarnings.begin()+i);
@@ -2394,7 +2900,7 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 				}
 				else {
 #ifdef USE_STREFLOP
-					currentDistance = streflop::floor(enemyFloatCenter.dist(attackWarnings[i]->attackPosition)); // no need for streflops here!
+					currentDistance = streflop::floor(static_cast<streflop::Simple>(enemyFloatCenter.dist(attackWarnings[i]->attackPosition))); // no need for streflops here!
 #else
 					currentDistance = floor(enemyFloatCenter.dist(attackWarnings[i]->attackPosition)); // no need for streflops here!
 #endif
@@ -2413,6 +2919,7 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 	    	}
 
 	    	if(nearest != NULL) {
+
 	    		// does it fit?
 	    		if(nearestDistance < attackWarnRange) {
 	    			// update entry with current values
@@ -2432,23 +2939,52 @@ bool UnitUpdater::unitOnRange(const Unit *unit, int range, Unit **rangedPtr,
 	    		awd->lastFrameCount=world->getFrameCount();
 	    		awd->attackPosition.x=enemyFloatCenter.x;
 	    		awd->attackPosition.y=enemyFloatCenter.y;
+
+				MutexSafeWrapper safeMutex(mutexAttackWarnings,string(__FILE__) + "_" + intToStr(__LINE__));
 	    		attackWarnings.push_back(awd);
-	    		SoundRenderer::getInstance().playFx(CoreData::getInstance().getAttentionSound());
-	    		world->addAttackEffects(enemyUnit);
+
+	    		if(world->getAttackWarningsEnabled() == true) {
+
+	    			SoundRenderer::getInstance().playFx(CoreData::getInstance().getAttentionSound());
+	    			world->addAttackEffects(enemyUnit);
+	    		}
 	    	}
 		}
 	}
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
+	}
+
     return result;
 }
 
 
 //if the unit has any enemy on range
 vector<Unit*> UnitUpdater::enemyUnitsOnRange(const Unit *unit,const AttackSkillType *ast) {
+	vector<Unit*> enemies;
+	enemies.reserve(100);
+
+	try {
+
+
 	int range = unit->getType()->getSight();
 	if(ast != NULL) {
+
 		range = ast->getTotalAttackRange(unit->getTotalUpgrade());
 	}
-	vector<Unit*> enemies;
 	//we check command target
 	const Unit *commandTarget = NULL;
 //	if(unit->anyCommand()) {
@@ -2460,12 +2996,13 @@ vector<Unit*> UnitUpdater::enemyUnitsOnRange(const Unit *unit,const AttackSkillT
 
 	//aux vars
 	int size 			= unit->getType()->getSize();
-	Vec2i center 		= unit->getPos();
+	Vec2i center 		= unit->getPosNotThreadSafe();
 	Vec2f floatCenter	= unit->getFloatCenteredPos();
 
 	//bool foundInCache = true;
 	if(findCachedCellsEnemies(center,range,size,enemies,ast,
 							  unit,commandTarget) == false) {
+
 		//foundInCache = false;
 		//nearby cells
 		UnitRangeCellsLookupItem cacheItem;
@@ -2473,7 +3010,7 @@ vector<Unit*> UnitUpdater::enemyUnitsOnRange(const Unit *unit,const AttackSkillT
 			for(int j = center.y - range; j < center.y + range + size; ++j) {
 				//cells inside map and in range
 #ifdef USE_STREFLOP
-				if(map->isInside(i, j) && streflop::floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
+				if(map->isInside(i, j) && streflop::floor(static_cast<streflop::Simple>(floatCenter.dist(Vec2f((float)i, (float)j)))) <= (range+1)){
 #else
 				if(map->isInside(i, j) && floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
 #endif
@@ -2487,11 +3024,26 @@ vector<Unit*> UnitUpdater::enemyUnitsOnRange(const Unit *unit,const AttackSkillT
 
 		// Ok update our caches with the latest info
 		if(cacheItem.rangeCellList.empty() == false) {
-			MutexSafeWrapper safeMutex(&mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
+			MutexSafeWrapper safeMutex(mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
 
-			//cacheItem.UnitRangeCellsLookupItemCacheTimerCountIndex = UnitRangeCellsLookupItemCacheTimerCount++;
 			UnitRangeCellsLookupItemCache[center][size][range] = cacheItem;
 		}
+	}
+
+	}
+	catch(const exception &ex) {
+		//setRunningStatus(false);
+
+		SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] Error [%s]\n",__FILE__,__FUNCTION__,__LINE__,ex.what());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+		throw megaglest_runtime_error(ex.what());
+	}
+	catch(...) {
+		char szBuf[8096]="";
+		snprintf(szBuf,8096,"In [%s::%s %d] UNKNOWN error\n",__FILE__,__FUNCTION__,__LINE__);
+		SystemFlags::OutputDebug(SystemFlags::debugError,szBuf);
+		throw megaglest_runtime_error(szBuf);
 	}
 
 	return enemies;
@@ -2500,14 +3052,16 @@ vector<Unit*> UnitUpdater::enemyUnitsOnRange(const Unit *unit,const AttackSkillT
 
 void UnitUpdater::findUnitsForCell(Cell *cell, const Unit *unit,vector<Unit*> &units) {
 	//all fields
-	for(int k = 0; k < fieldCount; k++) {
-		Field f= static_cast<Field>(k);
+	if(cell != NULL) {
+		for(int k = 0; k < fieldCount; k++) {
+			Field f= static_cast<Field>(k);
 
-		//check field
-		Unit *cellUnit = cell->getUnit(f);
+			//check field
+			Unit *cellUnit = cell->getUnit(f);
 
-		if(cellUnit != NULL && cellUnit->isAlive()) {
-			units.push_back(cellUnit);
+			if(cellUnit != NULL && cellUnit->isAlive()) {
+				units.push_back(cellUnit);
+			}
 		}
 	}
 }
@@ -2518,16 +3072,16 @@ vector<Unit*> UnitUpdater::findUnitsInRange(const Unit *unit, int radius) {
 
 	//aux vars
 	int size 			= unit->getType()->getSize();
-	Vec2i center 		= unit->getPos();
+	Vec2i center 		= unit->getPosNotThreadSafe();
 	Vec2f floatCenter	= unit->getFloatCenteredPos();
 
 	//nearby cells
-	UnitRangeCellsLookupItem cacheItem;
+	//UnitRangeCellsLookupItem cacheItem;
 	for(int i = center.x - range; i < center.x + range + size; ++i) {
 		for(int j = center.y - range; j < center.y + range + size; ++j) {
 			//cells inside map and in range
 #ifdef USE_STREFLOP
-			if(map->isInside(i, j) && streflop::floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
+			if(map->isInside(i, j) && streflop::floor(static_cast<streflop::Simple>(floatCenter.dist(Vec2f((float)i, (float)j)))) <= (range+1)){
 #else
 			if(map->isInside(i, j) && floor(floatCenter.dist(Vec2f((float)i, (float)j))) <= (range+1)){
 #endif
@@ -2548,8 +3102,7 @@ string UnitUpdater::getUnitRangeCellsLookupItemCacheStats() {
 	int rangeCount = 0;
 	int rangeCountCellCount = 0;
 
-	Mutex mutexUnitRangeCellsLookupItemCache;
-	//std::map<Vec2i, std::map<int, std::map<int, UnitRangeCellsLookupItem > > > UnitRangeCellsLookupItemCache;
+	MutexSafeWrapper safeMutex(mutexUnitRangeCellsLookupItemCache,string(__FILE__) + "_" + intToStr(__LINE__));
 	for(std::map<Vec2i, std::map<int, std::map<int, UnitRangeCellsLookupItem > > >::iterator iterMap1 = UnitRangeCellsLookupItemCache.begin();
 		iterMap1 != UnitRangeCellsLookupItemCache.end(); ++iterMap1) {
 		posCount++;
@@ -2562,7 +3115,7 @@ string UnitUpdater::getUnitRangeCellsLookupItemCacheStats() {
 				iterMap3 != iterMap2->second.end(); ++iterMap3) {
 				rangeCount++;
 
-				rangeCountCellCount += iterMap3->second.rangeCellList.size();
+				rangeCountCellCount += (int)iterMap3->second.rangeCellList.size();
 			}
 		}
 	}
@@ -2570,10 +3123,46 @@ string UnitUpdater::getUnitRangeCellsLookupItemCacheStats() {
 	uint64 totalBytes = rangeCountCellCount * sizeof(Cell *);
 	totalBytes /= 1000;
 
-	char szBuf[1024]="";
-	sprintf(szBuf,"pos [%d] size [%d] range [%d][%d] total KB: %s",posCount,sizeCount,rangeCount,rangeCountCellCount,formatNumber(totalBytes).c_str());
+	char szBuf[8096]="";
+	snprintf(szBuf,8096,"pos [%d] size [%d] range [%d][%d] total KB: %s",posCount,sizeCount,rangeCount,rangeCountCellCount,formatNumber(totalBytes).c_str());
 	result = szBuf;
 	return result;
+}
+
+void UnitUpdater::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *unitupdaterNode = rootNode->addChild("UnitUpdater");
+
+//	const GameCamera *gameCamera;
+//	Gui *gui;
+//	Map *map;
+//	World *world;
+//	Console *console;
+//	ScriptManager *scriptManager;
+//	PathFinder *pathFinder;
+	pathFinder->saveGame(unitupdaterNode);
+//	Game *game;
+//	RandomGen random;
+	//unitupdaterNode->addAttribute("random",intToStr(random.getLastNumber()), mapTagReplacements);
+//	float attackWarnRange;
+	unitupdaterNode->addAttribute("attackWarnRange",floatToStr(attackWarnRange,6), mapTagReplacements);
+//	AttackWarnings attackWarnings;
+//
+}
+
+void UnitUpdater::clearCaches() {
+	 if(pathFinder != NULL) {
+		 pathFinder->clearCaches();
+	 }
+}
+
+void UnitUpdater::loadGame(const XmlNode *rootNode) {
+	const XmlNode *unitupdaterNode = rootNode->getChild("UnitUpdater");
+
+	pathFinder->loadGame(unitupdaterNode);
+	//random.setLastNumber(unitupdaterNode->getAttribute("random")->getIntValue());
+//	float attackWarnRange;
+	attackWarnRange = unitupdaterNode->getAttribute("attackWarnRange")->getFloatValue();
 }
 // =====================================================
 //	class ParticleDamager
@@ -2592,7 +3181,17 @@ void ParticleDamager::update(ParticleSystem *particleSystem) {
 	Unit *attacker= attackerRef.getUnit();
 
 	if(attacker != NULL) {
+		//string auditBeforeHit = particleSystem->toString();
+
+		char szBuf[8096]="";
+		snprintf(szBuf,8095,"Unit hitting [ParticleDamager::update] [%s] targetField = %d",targetPos.getString().c_str(),targetField);
+		attacker->addNetworkCRCDecHp(szBuf);
+
 		unitUpdater->hit(attacker, ast, targetPos, targetField);
+
+		//char szBuf[8096]="";
+		//snprintf(szBuf,8095,"ParticleDamager::update attacker particleSystem before: %s\nafter: %s",auditBeforeHit.c_str(),particleSystem->toString().c_str());
+		//attacker->setNetworkCRCParticleObserverLogInfo(szBuf);
 
 		//play sound
 		StaticSound *projSound= ast->getProjSound();
@@ -2602,6 +3201,47 @@ void ParticleDamager::update(ParticleSystem *particleSystem) {
 	}
 	particleSystem->setObserver(NULL);
 	delete this;
+}
+
+void ParticleDamager::saveGame(XmlNode *rootNode) {
+	std::map<string,string> mapTagReplacements;
+	XmlNode *particleDamagerNode = rootNode->addChild("ParticleDamager");
+
+//	UnitReference attackerRef;
+	attackerRef.saveGame(particleDamagerNode);
+
+//	const AttackSkillType* ast;
+	particleDamagerNode->addAttribute("astName",ast->getName(), mapTagReplacements);
+	particleDamagerNode->addAttribute("astClass",intToStr(ast->getClass()), mapTagReplacements);
+//	UnitUpdater *unitUpdater;
+//	const GameCamera *gameCamera;
+//	Vec2i targetPos;
+	particleDamagerNode->addAttribute("targetPos",targetPos.getString(), mapTagReplacements);
+//	Field targetField;
+	particleDamagerNode->addAttribute("targetField",intToStr(targetField), mapTagReplacements);
+}
+
+void ParticleDamager::loadGame(const XmlNode *rootNode, void *genericData) {
+	const XmlNode *particleDamagerNode = rootNode->getChild("ParticleDamager");
+
+	std::pair<Game *,Unit *> *pairData = (std::pair<Game *,Unit *>*)genericData;
+	//UnitType *ut, Game *game
+	attackerRef.loadGame(particleDamagerNode,pairData->first->getWorld());
+
+	//random.setLastNumber(particleSystemNode->getAttribute("random")->getIntValue());
+
+	//	const AttackSkillType* ast;
+	string astName = particleDamagerNode->getAttribute("astName")->getValue();
+	SkillClass astClass = static_cast<SkillClass>(particleDamagerNode->getAttribute("astClass")->getIntValue());
+	ast = dynamic_cast<const AttackSkillType*>(pairData->second->getType()->getSkillType(astName,astClass));
+	//	UnitUpdater *unitUpdater;
+	unitUpdater = pairData->first->getWorld()->getUnitUpdater();
+	//	const GameCamera *gameCamera;
+	gameCamera = pairData->first->getGameCamera();
+	//	Vec2i targetPos;
+	targetPos = Vec2i::strToVec2(particleDamagerNode->getAttribute("targetPos")->getValue());
+	//	Field targetField;
+	targetField = static_cast<Field>(particleDamagerNode->getAttribute("targetField")->getIntValue());
 }
 
 }}//end namespace

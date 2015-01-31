@@ -12,6 +12,11 @@
 #ifndef _GLEST_GAME_SELECTION_
 #define _GLEST_GAME_SELECTION_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "unit.h"
 #include <vector>
 #include "leak_dumper.h"
@@ -21,6 +26,14 @@ using std::vector;
 namespace Glest{ namespace Game{
 
 class Gui;
+class World;
+
+class HighlightSpecialUnitInfo {
+public:
+	float radius;
+	float thickness;
+	Vec4f color;
+};
 
 // =====================================================
 // 	class Selection 
@@ -53,10 +66,10 @@ public:
 	void init(Gui *gui, int factionIndex, int teamIndex);
 	virtual ~Selection();
 
-	void select(Unit *unit);
+	bool select(Unit *unit);
 	void select(const UnitContainer &units);
-	void unSelect(int unitIndex);
 	void unSelect(const UnitContainer &units);
+	void unSelect(int unitIndex);
 	void clear();
 	
 	bool isEmpty() const				{return selectedUnits.empty();}
@@ -68,17 +81,24 @@ public:
 	bool isCommandable() const;
 	bool isCancelable() const;
 	bool isMeetable() const;
-	int getCount() const				{return selectedUnits.size();}
+	int getCount() const				{return (int)selectedUnits.size();}
 	const Unit *getUnit(int i) const	{return selectedUnits[i];}
+	Unit *getUnitPtr(int i) 			{return selectedUnits[i];}
 	const Unit *getFrontUnit() const	{return selectedUnits.front();}
 	Vec3f getRefPos() const;
 	bool hasUnit(const Unit* unit) const;
 	
-	void assignGroup(int groupIndex);
+	void assignGroup(int groupIndex,const UnitContainer *pUnits=NULL);
+	void addUnitToGroup(int groupIndex,Unit *unit);
+	void removeUnitFromGroup(int groupIndex,int UnitId);
 	void recallGroup(int groupIndex);
 
+	vector<Unit*> getUnitsForGroup(int groupIndex);
 
 	virtual void unitEvent(UnitObserver::Event event, const Unit *unit);
+
+	virtual void saveGame(XmlNode *rootNode) const;
+	void loadGame(const XmlNode *rootNode, World *world);
 };
 
 }}//end namespace

@@ -14,12 +14,12 @@
 #include <exception>
 #include <cassert>
 
-#include "types.h"
+#include "data_types.h"
 #include "conversion.h"
 #include "platform_util.h"
 #include <fstream>
 #include "util.h"
-
+#include "network_protocol.h"
 #include "leak_dumper.h"
 
 using namespace Shared::Platform;
@@ -38,39 +38,113 @@ bool NetworkInterface::allowGameDataSynchCheck  = false;
 bool NetworkInterface::allowDownloadDataSynch   = false;
 DisplayMessageFunction NetworkInterface::pCB_DisplayMessage = NULL;
 
-void NetworkInterface::sendMessage(const NetworkMessage* networkMessage){
+Vec3f MarkedCell::static_system_marker_color(MAGENTA.x,MAGENTA.y,MAGENTA.z);
+
+NetworkInterface::NetworkInterface() {
+	networkAccessMutex = new Mutex(CODE_AT_LINE);
+
+	networkGameDataSynchCheckOkMap=false;
+	networkGameDataSynchCheckOkTile=false;
+	networkGameDataSynchCheckOkTech=false;
+	receivedDataSynchCheck=false;
+
+	networkPlayerFactionCRCMutex = new Mutex(CODE_AT_LINE);
+	for(unsigned int index = 0; index < (unsigned int)GameConstants::maxPlayers; ++index) {
+		networkPlayerFactionCRC[index] = 0;
+	}
+}
+
+void NetworkInterface::init() {
+	networkAccessMutex = NULL;
+
+	networkGameDataSynchCheckOkMap=false;
+	networkGameDataSynchCheckOkTile=false;
+	networkGameDataSynchCheckOkTech=false;
+	receivedDataSynchCheck=false;
+
+	gameSettings = GameSettings();
+
+	networkPlayerFactionCRCMutex = NULL;
+	for(unsigned int index = 0; index < (unsigned int)GameConstants::maxPlayers; ++index) {
+		networkPlayerFactionCRC[index] = 0;
+	}
+}
+
+NetworkInterface::~NetworkInterface() {
+	delete networkAccessMutex;
+	networkAccessMutex = NULL;
+
+	delete networkPlayerFactionCRCMutex;
+	networkPlayerFactionCRCMutex = NULL;
+}
+
+uint32 NetworkInterface::getNetworkPlayerFactionCRC(int index) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkPlayerFactionCRCMutex,mutexOwnerId);
+
+	return networkPlayerFactionCRC[index];
+}
+void NetworkInterface::setNetworkPlayerFactionCRC(int index, uint32 crc) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkPlayerFactionCRCMutex,mutexOwnerId);
+
+	networkPlayerFactionCRC[index]=crc;
+}
+
+void NetworkInterface::addChatInfo(const ChatMsgInfo &msg) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	chatTextList.push_back(msg);
+}
+
+void NetworkInterface::addMarkedCell(const MarkedCell &msg) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	markedCellList.push_back(msg);
+}
+void NetworkInterface::addUnMarkedCell(const UnMarkedCell &msg) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	unmarkedCellList.push_back(msg);
+}
+
+void NetworkInterface::sendMessage(NetworkMessage* networkMessage){
 	Socket* socket= getSocket(false);
 
 	networkMessage->send(socket);
 }
 
-NetworkMessageType NetworkInterface::getNextMessageType()
+NetworkMessageType NetworkInterface::getNextMessageType(int waitMilliseconds)
 {
 	Socket* socket= getSocket(false);
 	int8 messageType= nmtInvalid;
 
     if(socket != NULL &&
-        socket->hasDataToRead() == true) {
+        ((waitMilliseconds <= 0 && socket->hasDataToRead() == true) ||
+         (waitMilliseconds > 0 && socket->hasDataToReadWithWait(waitMilliseconds) == true))) {
         //peek message type
-			int dataSize = socket->getDataToRead();
-			if(dataSize >= sizeof(messageType)) {
-				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] socket->getDataToRead() dataSize = %d\n",__FILE__,__FUNCTION__,__LINE__,dataSize);
+		int dataSize = socket->getDataToRead();
+		if(dataSize >= (int)sizeof(messageType)) {
+				if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] socket->getDataToRead() dataSize = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,dataSize);
 
 			int iPeek = socket->peek(&messageType, sizeof(messageType));
 
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] socket->getDataToRead() iPeek = %d, messageType = %d [size = %d]\n",__FILE__,__FUNCTION__,__LINE__,iPeek,messageType,sizeof(messageType));
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] socket->getDataToRead() iPeek = %d, messageType = %d [size = %d]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,iPeek,messageType,sizeof(messageType));
     	}
 		else {
-			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] PEEK WARNING, socket->getDataToRead() messageType = %d [size = %d], dataSize = %d\n",__FILE__,__FUNCTION__,__LINE__,messageType,sizeof(messageType),dataSize);
+			if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] PEEK WARNING, socket->getDataToRead() messageType = %d [size = %d], dataSize = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,messageType,sizeof(messageType),dataSize);
 		}
 
         //sanity check new message type
         if(messageType < 0 || messageType >= nmtCount) {
         	if(getConnectHasHandshaked() == true) {
-        		throw runtime_error("Invalid message type: " + intToStr(messageType));
+        		throw megaglest_runtime_error("Invalid message type: " + intToStr(messageType));
         	}
         	else {
-        		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] Invalid message type = %d (no packet handshake yet so ignored)\n",__FILE__,__FUNCTION__,__LINE__,messageType);
+        		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] Invalid message type = %d (no packet handshake yet so ignored)\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,messageType);
         	}
         }
     }
@@ -80,7 +154,7 @@ NetworkMessageType NetworkInterface::getNextMessageType()
 
 bool NetworkInterface::receiveMessage(NetworkMessage* networkMessage){
 
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s]\n",__FILE__,__FUNCTION__);
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__);
 
 	Socket* socket= getSocket(false);
 
@@ -92,11 +166,38 @@ bool NetworkInterface::isConnected(){
 	return result;
 }
 
-void NetworkInterface::DisplayErrorMessage(string sErr, bool closeSocket) {
-	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sErr [%s]\n",__FILE__,__FUNCTION__,__LINE__,sErr.c_str());
+void NetworkInterface::setLastPingInfo(const NetworkMessagePing &ping) {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
 
-    if(closeSocket == true && getSocket() != NULL)
-    {
+	this->lastPingInfo = ping;
+}
+
+void NetworkInterface::setLastPingInfoToNow() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	this->lastPingInfo.setPingReceivedLocalTime(time(NULL));
+}
+
+NetworkMessagePing NetworkInterface::getLastPingInfo() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	return lastPingInfo;
+}
+double NetworkInterface::getLastPingLag() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	return difftime((long int)time(NULL),lastPingInfo.getPingReceivedLocalTime());
+}
+
+void NetworkInterface::DisplayErrorMessage(string sErr, bool closeSocket) {
+	if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] sErr [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,sErr.c_str());
+	SystemFlags::OutputDebug(SystemFlags::debugError,"In [%s::%s Line: %d] sErr [%s]\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,sErr.c_str());
+
+    if(closeSocket == true && getSocket() != NULL) {
         close();
     }
 
@@ -104,12 +205,16 @@ void NetworkInterface::DisplayErrorMessage(string sErr, bool closeSocket) {
         pCB_DisplayMessage(sErr.c_str(), false);
     }
     else {
-        throw runtime_error(sErr);
+        throw megaglest_runtime_error(sErr);
     }
 }
 
 std::vector<ChatMsgInfo> NetworkInterface::getChatTextList(bool clearList) {
 	std::vector<ChatMsgInfo> result;
+
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
 	if(chatTextList.empty() == false) {
 		result = chatTextList;
 
@@ -121,10 +226,105 @@ std::vector<ChatMsgInfo> NetworkInterface::getChatTextList(bool clearList) {
 }
 
 void NetworkInterface::clearChatInfo() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
 	if(chatTextList.empty() == false) {
-		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] chatTextList.size() = %d\n",__FILE__,__FUNCTION__,__LINE__,chatTextList.size());
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] chatTextList.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,chatTextList.size());
 		chatTextList.clear();
 	}
+}
+
+std::vector<MarkedCell> NetworkInterface::getMarkedCellList(bool clearList) {
+	std::vector<MarkedCell> result;
+
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(markedCellList.empty() == false) {
+		result = markedCellList;
+
+		if(clearList == true) {
+			markedCellList.clear();
+		}
+	}
+	return result;
+}
+
+void NetworkInterface::clearMarkedCellList() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(markedCellList.empty() == false) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] markedCellList.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,markedCellList.size());
+		markedCellList.clear();
+	}
+}
+
+std::vector<UnMarkedCell> NetworkInterface::getUnMarkedCellList(bool clearList) {
+	std::vector<UnMarkedCell> result;
+
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(unmarkedCellList.empty() == false) {
+		result = unmarkedCellList;
+
+		if(clearList == true) {
+			unmarkedCellList.clear();
+		}
+	}
+	return result;
+}
+
+void NetworkInterface::clearUnMarkedCellList() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(unmarkedCellList.empty() == false) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] unmarkedCellList.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,unmarkedCellList.size());
+		unmarkedCellList.clear();
+	}
+}
+
+std::vector<MarkedCell> NetworkInterface::getHighlightedCellList(bool clearList) {
+	std::vector<MarkedCell> result;
+
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(highlightedCellList.empty() == false) {
+		result = highlightedCellList;
+
+		if(clearList == true) {
+			highlightedCellList.clear();
+		}
+	}
+	return result;
+}
+
+void NetworkInterface::clearHighlightedCellList() {
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	if(highlightedCellList.empty() == false) {
+		if(SystemFlags::getSystemSettingType(SystemFlags::debugNetwork).enabled) SystemFlags::OutputDebug(SystemFlags::debugNetwork,"In [%s::%s Line: %d] markedCellList.size() = %d\n",extractFileFromDirectoryPath(__FILE__).c_str(),__FUNCTION__,__LINE__,markedCellList.size());
+		highlightedCellList.clear();
+	}
+}
+
+void NetworkInterface::setHighlightedCell(const MarkedCell &msg){
+	static string mutexOwnerId = string(__FILE__) + string("_") + intToStr(__LINE__);
+	MutexSafeWrapper safeMutex(networkAccessMutex,mutexOwnerId);
+
+	for(int idx = 0; idx < (int)highlightedCellList.size(); idx++) {
+		MarkedCell mc = highlightedCellList[idx];
+		if(mc.getFactionIndex()==msg.getFactionIndex()){
+			highlightedCellList.erase(highlightedCellList.begin()+ idx);
+			break;
+		}
+	}
+	highlightedCellList.push_back(msg);
 }
 
 std::string NetworkInterface::getIpAddress() {
@@ -156,17 +356,15 @@ GameNetworkInterface::GameNetworkInterface(){
 
 void GameNetworkInterface::requestCommand(const NetworkCommand *networkCommand, bool insertAtStart) {
 	assert(networkCommand != NULL);
-	//Mutex *mutex = getServerSynchAccessor();
+	Mutex *mutex = getServerSynchAccessor();
 
     if(insertAtStart == false) {
-    	//if(mutex != NULL) mutex->p();
+    	MutexSafeWrapper safeMutex(mutex,string(__FILE__) + "_" + intToStr(__LINE__));
         requestedCommands.push_back(*networkCommand);
-        //if(mutex != NULL) mutex->v();
     }
     else {
-    	//if(mutex != NULL) mutex->p();
+    	MutexSafeWrapper safeMutex(mutex,string(__FILE__) + "_" + intToStr(__LINE__));
         requestedCommands.insert(requestedCommands.begin(),*networkCommand);
-        //if(mutex != NULL) mutex->v();
     }
 }
 
@@ -177,9 +375,7 @@ void GameNetworkInterface::requestCommand(const NetworkCommand *networkCommand, 
 const int32 SEND_FILE = 0x20;
 const int32 ACK       = 0x47;
 
-FileTransferSocketThread::FileTransferSocketThread(FileTransferInfo fileInfo)
-{
-    this->info = fileInfo;
+FileTransferSocketThread::FileTransferSocketThread(FileTransferInfo fileInfo) : info(fileInfo) {
     this->info.serverPort += 100;
 }
 
@@ -188,7 +384,6 @@ void FileTransferSocketThread::execute()
     if(info.hostType == eServer)
     {
         ServerSocket serverSocket;
-        //serverSocket.setBlock(false);
         serverSocket.bind(this->info.serverPort);
         serverSocket.listen(1);
         Socket *clientSocket = serverSocket.accept();
@@ -265,7 +460,6 @@ void FileTransferSocketThread::execute()
     {
         Ip ip(this->info.serverIP);
         ClientSocket clientSocket;
-        //clientSocket.setBlock(false);
         clientSocket.connect(this->info.serverIP, this->info.serverPort);
 
         if(clientSocket.isConnected() == true)
@@ -334,7 +528,7 @@ void FileTransferSocketThread::execute()
 
                     Checksum checksum;
                     checksum.addFile(file.fileName);
-                    int32 crc = checksum.getSum();
+                    uint32 crc = checksum.getSum();
                     if(file.filecrc != crc)
                     {
                         //int ii = 0;

@@ -1,5 +1,4 @@
 // ==============================================================
-//	This file is part of Glest (www.glest.org)
 //
 //	Copyright (C) 2001-2008 Martiño Figueroa
 //
@@ -31,7 +30,7 @@ const float SoundRenderer::audibleDist= 50.f;
 // 	class SoundRenderer
 // =====================================================
 
-SoundRenderer::SoundRenderer() {
+SoundRenderer::SoundRenderer() : mutex(new Mutex(CODE_AT_LINE)) {
 	if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 
     soundPlayer = NULL;
@@ -58,7 +57,7 @@ bool SoundRenderer::init(Window *window) {
 
     MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
 	if(runThreadSafe == true) {
-	    safeMutex.setMutex(&mutex);
+	    safeMutex.setMutex(mutex);
 	}
 
 	soundPlayer= si.newSoundPlayer();
@@ -84,7 +83,7 @@ void SoundRenderer::cleanup() {
 
     MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
 	if(runThreadSafe == true) {
-	    safeMutex.setMutex(&mutex);
+	    safeMutex.setMutex(mutex);
 	}
 	delete soundPlayer;
 	soundPlayer = NULL;
@@ -112,6 +111,9 @@ SoundRenderer::~SoundRenderer() {
 
     cleanup();
 
+    delete mutex;
+    mutex = NULL;
+
     if(SystemFlags::getSystemSettingType(SystemFlags::debugSystem).enabled) SystemFlags::OutputDebug(SystemFlags::debugSystem,"In [%s::%s %d]\n",__FILE__,__FUNCTION__,__LINE__);
 }
 
@@ -121,10 +123,10 @@ SoundRenderer &SoundRenderer::getInstance() {
 }
 
 void SoundRenderer::update() {
-    if(soundPlayer != NULL) {
+    if(wasInitOk() == true && soundPlayer != NULL) {
         MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
     	if(runThreadSafe == true) {
-    	    safeMutex.setMutex(&mutex);
+    	    safeMutex.setMutex(mutex);
     	}
 		if(soundPlayer) {
 			soundPlayer->updateStreams();
@@ -141,7 +143,7 @@ void SoundRenderer::playMusic(StrSound *strSound) {
 		if(soundPlayer != NULL) {
 	        MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
             if(runThreadSafe == true) {
-                safeMutex.setMutex(&mutex);
+                safeMutex.setMutex(mutex);
             }
 
 			if(soundPlayer) {
@@ -161,7 +163,7 @@ void SoundRenderer::stopMusic(StrSound *strSound) {
     if(soundPlayer != NULL) {
         MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
     	if(runThreadSafe == true) {
-    	    safeMutex.setMutex(&mutex);
+    	    safeMutex.setMutex(mutex);
     	}
 
 		if(soundPlayer) {
@@ -183,18 +185,14 @@ void SoundRenderer::playFx(StaticSound *staticSound, Vec3f soundPos, Vec3f camPo
 
 		if(d < audibleDist){
 			float vol= (1.f-d/audibleDist)*fxVolume;
-#ifdef USE_STREFLOP
-			float correctedVol= streflop::log10(streflop::log10(vol*9+1)*9+1);
-#else
-			float correctedVol= log10(log10(vol*9+1)*9+1);
-#endif
+			float correctedVol= std::log10(std::log10(vol*9+1)*9+1);
 
 			staticSound->setVolume(correctedVol);
 
 			if(soundPlayer != NULL) {
 		        MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
                 if(runThreadSafe == true) {
-                    safeMutex.setMutex(&mutex);
+                    safeMutex.setMutex(mutex);
                 }
 
 				if(soundPlayer) {
@@ -211,7 +209,7 @@ void SoundRenderer::playFx(StaticSound *staticSound) {
 		if(soundPlayer != NULL) {
 	        MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
             if(runThreadSafe == true) {
-                safeMutex.setMutex(&mutex);
+                safeMutex.setMutex(mutex);
             }
 
 			if(soundPlayer) {
@@ -229,7 +227,7 @@ void SoundRenderer::playAmbient(StrSound *strSound) {
 		if(soundPlayer != NULL) {
 	        MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
             if(runThreadSafe == true) {
-                safeMutex.setMutex(&mutex);
+                safeMutex.setMutex(mutex);
             }
 
 			if(soundPlayer) {
@@ -243,7 +241,7 @@ void SoundRenderer::stopAmbient(StrSound *strSound) {
     if(soundPlayer != NULL) {
         MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
     	if(runThreadSafe == true) {
-    	    safeMutex.setMutex(&mutex);
+    	    safeMutex.setMutex(mutex);
     	}
 
 		if(soundPlayer) {
@@ -258,7 +256,7 @@ void SoundRenderer::stopAllSounds(int64 fadeOff) {
     if(soundPlayer != NULL) {
         MutexSafeWrapper safeMutex(NULL,string(__FILE__) + "_" + intToStr(__LINE__));
     	if(runThreadSafe == true) {
-    	    safeMutex.setMutex(&mutex);
+    	    safeMutex.setMutex(mutex);
     	}
 
 		if(soundPlayer) {

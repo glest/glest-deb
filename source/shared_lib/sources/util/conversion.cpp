@@ -18,6 +18,8 @@
 #include <sstream>
 #include <iostream>
 #include <locale>
+#include "platform_util.h"
+#include <limits>
 #include "leak_dumper.h"
 
 using namespace std;
@@ -33,7 +35,7 @@ bool strToBool(const string &s) {
 	if(s=="1" || s=="true") {
 		return true;
 	}
-	throw runtime_error("Error converting string to bool, expected 0 or 1, found: [" + s + "]");
+	throw megaglest_runtime_error("Error converting string to bool, expected 0 or 1, found: [" + s + "]");
 }
 
 int strToInt(const string &s){
@@ -42,7 +44,19 @@ int strToInt(const string &s){
 	int intValue= strtol(s.c_str(), &endChar, 10);
 
 	if(*endChar!='\0'){
-		throw runtime_error("Error converting from string to int, found: [" + s + "]");
+		throw megaglest_runtime_error("Error converting from string to int, found: [" + s + "]");
+	}
+
+	return intValue;
+}
+
+uint32 strToUInt(const string &s){
+	char *endChar;
+	setlocale(LC_NUMERIC, "C");
+	uint32 intValue= strtoul(s.c_str(), &endChar, 10);
+
+	if(*endChar!='\0'){
+		throw megaglest_runtime_error("Error converting from string to uint, found: [" + s + "]");
 	}
 
 	return intValue;
@@ -56,7 +70,7 @@ float strToFloat(const string &s){
 	float floatValue= static_cast<float>(strtod(s.c_str(), &endChar));
 
 	if(*endChar!='\0'){
-		throw runtime_error("Error converting from string to float, found: [" + s + "]");
+		throw megaglest_runtime_error("Error converting from string to float, found: [" + s + "]");
 	}
 
 	return floatValue;
@@ -87,6 +101,18 @@ bool strToInt(const string &s, int *i) {
 	return true;
 }
 
+bool strToUInt(const string &s, uint32 *i) {
+	char *endChar;
+
+	setlocale(LC_NUMERIC, "C");
+	*i= strtoul(s.c_str(), &endChar, 10);
+
+	if(*endChar!='\0'){
+		return false;
+	}
+	return true;
+}
+
 bool strToFloat(const string &s, float *f) {
 	char *endChar;
 	setlocale(LC_NUMERIC, "C");
@@ -107,9 +133,27 @@ string boolToStr(bool b) {
 	}
 }
 
-string intToStr(int64 i) {
+string intToStr(const int64 value) {
 	char str[strSize]="";
-	snprintf(str, strSize-1, "%lld", (long long int)i);
+//	static int MAX_INT_VALUE = std::numeric_limits<int>::max();
+//	if(value <= MAX_INT_VALUE) {
+//		snprintf(str, strSize-1, "%d", (int)value);
+//	}
+//	else {
+		snprintf(str, strSize-1, "%lld", (long long int)value);
+//	}
+	return (str[0] != '\0' ? str : "");
+}
+
+string uIntToStr(const uint64 value) {
+	char str[strSize]="";
+//	static unsigned int MAX_UNSIGNED_INT_VALUE = std::numeric_limits<unsigned int>::max();
+//	if(value <= MAX_UNSIGNED_INT_VALUE) {
+//		snprintf(str, strSize-1, "%u", (int)value);
+//	}
+//	else {
+		snprintf(str, strSize-1, "%llu", (long long unsigned int)value);
+//	}
 	return (str[0] != '\0' ? str : "");
 }
 
@@ -136,7 +180,10 @@ string doubleToStr(double d,int precsion) {
 }
 
 bool IsNumeric(const char *p, bool  allowNegative) {
-	if(p != NULL && strcmp(p,"-") == 0) {
+	if(p == NULL) {
+		return false;
+	}
+	if(strcmp(p,"-") == 0) {
 		return false;
 	}
     int index = 0;
@@ -166,6 +213,33 @@ string formatNumber(uint64 f) {
 	out.imbue(myloc);
 	out << f;
 	return out.str();
+}
+
+string getTimeDuationString(int frames, int updateFps) {
+	int framesleft = frames;
+	int hours = (int)((int) frames / (float)updateFps / 3600.0f);
+	framesleft = framesleft - hours * 3600 * updateFps;
+	int minutes = (int)((int) framesleft / (float)updateFps / 60.0f);
+	framesleft = framesleft - minutes * 60 * updateFps;
+	int seconds = (int)((int) framesleft / (float)updateFps);
+	//framesleft=framesleft-seconds*GameConstants::updateFps;
+
+	string hourstr = intToStr(hours);
+	if(hours < 10) {
+		hourstr = "0" + hourstr;
+	}
+
+	string minutestr = intToStr(minutes);
+	if(minutes < 10) {
+		minutestr = "0" + minutestr;
+	}
+
+	string secondstr = intToStr(seconds);
+	if(seconds < 10) {
+		secondstr = "0" + secondstr;
+	}
+
+	return hourstr + ":" + minutestr + ":" + secondstr;
 }
 
 }}//end namespace

@@ -28,7 +28,7 @@
 
 #include <string>
 #include "font.h"
-#include "types.h"
+#include "data_types.h"
 #include <SDL.h>
 #include "leak_dumper.h"
 
@@ -48,14 +48,28 @@ protected:
 	SDL_Surface *screen;
 
 public:
+	// Example values:
+	// DEFAULT_CHARSET (English) = 1
+	// GB2312_CHARSET (Chinese)  = 134
+	#ifdef WIN32
+	static DWORD charSet;
+	#else
+	static int charSet;
+	#endif
+
+public:
 	PlatformContextGl();
 	virtual ~PlatformContextGl();
 
-	virtual void init(int colorBits, int depthBits, int stencilBits,bool hardware_acceleration, bool fullscreen_anti_aliasing);
+	virtual void init(int colorBits, int depthBits, int stencilBits,
+			bool hardware_acceleration, bool fullscreen_anti_aliasing,
+			float gammaValue);
 	virtual void end();
 
 	virtual void makeCurrent();
 	virtual void swapBuffers();
+
+	SDL_Surface * getScreen() { return screen; }
 
 	DeviceContextHandle getHandle() const	{ return 0; }
 };
@@ -63,15 +77,6 @@ public:
 // =====================================================
 //	Global Fcs
 // =====================================================
-
-// Example values:
-// DEFAULT_CHARSET (English) = 1
-// GB2312_CHARSET (Chinese)  = 134
-#ifdef WIN32
-static DWORD charSet = DEFAULT_CHARSET;
-#else
-static int charSet = 1;
-#endif
 
 #if defined(__APPLE__)
 void createGlFontBitmaps(uint32 &base, const string &type, int size, int width, int charCount, FontMetrics &metrics);

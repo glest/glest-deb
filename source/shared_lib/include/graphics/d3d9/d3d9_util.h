@@ -1,3 +1,10 @@
+// ==============================================================
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//	The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 #ifndef _SHARED_D3D9_D3D9UTIL_H_
 #define _SHARED_D3D9_D3D9UTIL_H_
 
@@ -17,7 +24,7 @@ string d3dErrorToStr(HRESULT result);
 
 inline void checkResult(HRESULT result, const string &functionCall){
 	if(result!=D3D_OK){
-		throw runtime_error("Direct3D Error\nCode: " + d3dErrorToStr(result) + "\nFunction: " + functionCall);
+		throw megaglest_runtime_error("Direct3D Error\nCode: " + d3dErrorToStr(result) + "\nFunction: " + functionCall);
 	}
 }
 

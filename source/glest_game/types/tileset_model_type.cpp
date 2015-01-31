@@ -18,6 +18,16 @@ namespace Glest{ namespace Game{
 // 	class TilesetModelType
 // =====================================================
 
+TilesetModelType::TilesetModelType() {
+	model = NULL;
+	height = 0;
+	rotationAllowed = false;
+	smoothTwoFrameAnim = false;
+	randomPositionEnabled = false;
+
+	animSpeed = 0;
+}
+
 TilesetModelType::~TilesetModelType(){
 		while(!(particleTypes.empty())){
 			delete particleTypes.back();

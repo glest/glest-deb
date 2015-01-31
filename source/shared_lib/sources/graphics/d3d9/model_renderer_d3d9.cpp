@@ -1,3 +1,10 @@
+// ==============================================================
+//	This file is part of MegaGlest Shared Library (www.megaglest.org)
+//
+//	Copyright (C) 2012 Mark Vejvoda, Titus Tscharntke
+//	The Megaglest Team, under GNU GPL v3.0
+// ==============================================================
+
 #include "model_renderer_d3d9.h"
 
 #include <cassert>

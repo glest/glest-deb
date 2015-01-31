@@ -26,9 +26,13 @@ const char  *GAME_ARGS[] = {
 	"--help",
 
 	"--autostart-lastgame",
+	"--load-saved-game",
+	"--auto-test",
+	"--connect",
 	"--connecthost",
 	"--starthost",
 	"--headless-server-mode",
+	"--headless-server-status",
 	"--use-ports",
 
 	"--load-scenario",
@@ -38,13 +42,27 @@ const char  *GAME_ARGS[] = {
 	"--opengl-info",
 	"--sdl-info",
 	"--lua-info",
+	"--lua-debug",
 	"--curl-info",
+	"--xerces-info",
+
 	"--validate-techtrees",
 	"--validate-factions",
 	"--validate-scenario",
+	"--validate-tileset",
+
+	"--translate-techtrees",
+
+	"--list-maps",
+	"--list-techtrees",
+	"--list-scenarios",
+	"--list-tilesets",
+	"--list-tutorials",
+
 	"--data-path",
 	"--ini-path",
 	"--log-path",
+	"--font-path",
 	"--show-ini-settings",
 	"--convert-models",
 	"--use-language",
@@ -56,6 +74,7 @@ const char  *GAME_ARGS[] = {
 	"--disable-backtrace",
 	"--disable-sigsegv-handler",
 	"--disable-vbo",
+	"--disable-vertex-interpolation",
 	"--disable-sound",
 	"--enable-legacyfonts",
 	"--force-ftglfonts",
@@ -64,9 +83,22 @@ const char  *GAME_ARGS[] = {
 	"--colorbits",
 	"--depthbits",
 	"--fullscreen",
+	"--set-gamma",
 
 	"--use-font",
 	"--font-basesize",
+
+	"--disable-videos",
+
+	"--disable-opengl-checks",
+	"--disable-streflop-checks",
+	"--debug-network-packets",
+	"--debug-network-packet-sizes",
+	"--debug-network-packet-stats",
+	"--enable-new-protocol",
+
+	"--create-data-archives",
+
 	"--verbose"
 
 };
@@ -75,9 +107,13 @@ enum GAME_ARG_TYPE {
 	GAME_ARG_HELP = 0,
 
 	GAME_ARG_AUTOSTART_LASTGAME,
+	GAME_ARG_AUTOSTART_LAST_SAVED_GAME,
+	GAME_ARG_AUTO_TEST,
+	GAME_ARG_CONNECT,
 	GAME_ARG_CLIENT,
 	GAME_ARG_SERVER,
 	GAME_ARG_MASTERSERVER_MODE,
+	GAME_ARG_MASTERSERVER_STATUS,
 	GAME_ARG_USE_PORTS,
 
 	GAME_ARG_LOADSCENARIO,
@@ -87,13 +123,27 @@ enum GAME_ARG_TYPE {
 	GAME_ARG_OPENGL_INFO,
 	GAME_ARG_SDL_INFO,
 	GAME_ARG_LUA_INFO,
+	GAME_ARG_LUA_DEBUG,
 	GAME_ARG_CURL_INFO,
+	GAME_ARG_XERCES_INFO,
+
 	GAME_ARG_VALIDATE_TECHTREES,
 	GAME_ARG_VALIDATE_FACTIONS,
 	GAME_ARG_VALIDATE_SCENARIO,
+	GAME_ARG_VALIDATE_TILESET,
+
+	GAME_ARG_TRANSLATE_TECHTREES,
+
+	GAME_ARG_LIST_MAPS,
+	GAME_ARG_LIST_TECHTRESS,
+	GAME_ARG_LIST_SCENARIOS,
+	GAME_ARG_LIST_TILESETS,
+	GAME_ARG_LIST_TUTORIALS,
+
 	GAME_ARG_DATA_PATH,
 	GAME_ARG_INI_PATH,
 	GAME_ARG_LOG_PATH,
+	GAME_ARG_FONT_PATH,
 	GAME_ARG_SHOW_INI_SETTINGS,
 	GAME_ARG_CONVERT_MODELS,
 	GAME_ARG_USE_LANGUAGE,
@@ -107,6 +157,7 @@ enum GAME_ARG_TYPE {
 	GAME_ARG_DISABLE_BACKTRACE,
 	GAME_ARG_DISABLE_SIGSEGV_HANDLER,
 	GAME_ARG_DISABLE_VBO,
+	GAME_ARG_DISABLE_VERTEX_INTERPOLATION,
 	GAME_ARG_DISABLE_SOUND,
 	GAME_ARG_ENABLE_LEGACYFONTS,
 	GAME_ARG_FORCE_FTGLFONTS,
@@ -115,10 +166,26 @@ enum GAME_ARG_TYPE {
 	GAME_ARG_USE_COLORBITS,
 	GAME_ARG_USE_DEPTHBITS,
 	GAME_ARG_USE_FULLSCREEN,
+	GAME_ARG_SET_GAMMA,
 
 	GAME_ARG_USE_FONT,
 	GAME_ARG_FONT_BASESIZE,
-	GAME_ARG_VERBOSE_MODE
+
+	GAME_ARG_DISABLE_VIDEOS,
+
+	GAME_ARG_DISABLE_OPENGL_CAPS_CHECK,
+	GAME_ARG_DISABLE_STREFLOP_CAPS_CHECK,
+
+	GAME_ARG_DEBUG_NETWORK_PACKETS,
+	GAME_ARG_DEBUG_NETWORK_PACKET_SIZES,
+	GAME_ARG_DEBUG_NETWORK_PACKET_STATS,
+	GAME_ARG_ENABLE_NEW_PROTOCOL,
+
+	GAME_ARG_CREATE_DATA_ARCHIVES,
+
+	GAME_ARG_VERBOSE_MODE,
+
+	GAME_ARG_END
 };
 
 void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
@@ -131,9 +198,31 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("Commandline Parameter:\t\tDescription:");
 	printf("\n----------------------\t\t------------");
 	printf("\n%s\t\t\t\tdisplays this help text.",GAME_ARGS[GAME_ARG_HELP]);
+
 	printf("\n%s\t\tAutomatically starts a game with the last game",GAME_ARGS[GAME_ARG_AUTOSTART_LASTGAME]);
 	printf("\n\t\t\t\tsettings you played.");
+
+	printf("\n%s=x\t\tLoads the last saved game.",GAME_ARGS[GAME_ARG_AUTOSTART_LAST_SAVED_GAME]);
+	printf("\n                     \t\tWhere x is an optional name of the saved game file to load.");
+	printf("\n                     \t\tIf x is not specified we load the last game that was saved.");
+
+	printf("\n%s=x,y,z\t\t\tRun in auto test mode.",GAME_ARGS[GAME_ARG_AUTO_TEST]);
+	printf("\n                     \t\tWhere x is an optional maximum # seconds to play.");
+	printf("\n                     \t\tIf x is not specified the default is 1200 seconds (20 minutes).");
+	printf("\n                     \t\tWhere y is an optional game settings file to play.");
+	printf("\n                     \t\tIf y is not specified (or is empty) then auto test cycles through playing scenarios.");
+	printf("\n                     \t\tWhere z is the word exit indicating the game should exit after the game is finished or the time runs out.");
+	printf("\n                     \t\tIf z is not specified (or is empty) then auto test continues to cycle.");
+
+	printf("\n%s=x:y\t\t\tAuto connect to host server at IP or hostname x using port y",GAME_ARGS[GAME_ARG_CONNECT]);
+	printf("\n                     \t\tShortcut version of using %s and %s.",GAME_ARGS[GAME_ARG_CLIENT],GAME_ARGS[GAME_ARG_USE_PORTS]);
+	printf("\n                     \t\t*NOTE: to automatically connect to the first LAN");
+	printf("\n                     \t\t       host you may use: %s=auto-connect",GAME_ARGS[GAME_ARG_CONNECT]);
+
 	printf("\n%s=x\t\t\tAuto connect to host server at IP or hostname x",GAME_ARGS[GAME_ARG_CLIENT]);
+	printf("\n                     \t\t*NOTE: to automatically connect to the first LAN");
+	printf("\n                     \t\t       host you may use: %s=auto-connect",GAME_ARGS[GAME_ARG_CLIENT]);
+
 	printf("\n%s\t\t\tAuto create a host server.",GAME_ARGS[GAME_ARG_SERVER]);
 
 	printf("\n%s=x,x\tRun as a headless server.",GAME_ARGS[GAME_ARG_MASTERSERVER_MODE]);
@@ -143,14 +232,20 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t               has no more connected players.");
 	printf("\n                     \t\tvps  - which does NOT read commands from the");
 	printf("\n                     \t               local console (for some vps's).");
+	printf("\n                     \t\tlan  - which does not broadcast the hosting server");
+	printf("\n                     \t               to the masterserver (for local LAN games).");
 
-	printf("\n%s=x,y\t\t\tForce hosted games to listen internally on port",GAME_ARGS[GAME_ARG_USE_PORTS]);
-	printf("\n\t\t\t\tx, externally on port y.");
+	printf("\n%s\tCheck the current status of a headless server.",GAME_ARGS[GAME_ARG_MASTERSERVER_STATUS]);
+
+	printf("\n%s=x,y,z\t\t\tForce hosted games to listen internally on port",GAME_ARGS[GAME_ARG_USE_PORTS]);
+	printf("\n\t\t\t\tx, externally on port y and game status on port z.");
 	printf("\n                     \t\tWhere x is the internal port # on the local");
 	printf("\n                     \t\t        machine to listen for connects");
 	printf("\n                     \t\t      y is the external port # on the");
 	printf("\n                     \t\t        router/proxy to forward connection");
 	printf("\n                     \t\t        from to the internal port #");
+	printf("\n                     \t\t      z is the game status port # on the");
+	printf("\n                     \t\t        local machine to listen for status requests");
 	printf("\n                     \t\t*NOTE: If enabled the FTP Server port #'s will");
 	printf("\n                     \t\t       be set to x+1 to x+9");
 
@@ -163,8 +258,11 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n%s\t\t\tdisplays your video driver's OpenGL info.",GAME_ARGS[GAME_ARG_OPENGL_INFO]);
 	printf("\n%s\t\t\tdisplays your SDL version information.",GAME_ARGS[GAME_ARG_SDL_INFO]);
 	printf("\n%s\t\t\tdisplays your LUA version information.",GAME_ARGS[GAME_ARG_LUA_INFO]);
+	printf("\n%s\t\t\tdisplays LUA debug information.",GAME_ARGS[GAME_ARG_LUA_DEBUG]);
 	printf("\n%s\t\t\tdisplays your CURL version information.",GAME_ARGS[GAME_ARG_CURL_INFO]);
-	printf("\n%s=x=purgeunused=purgeduplicates=svndelete=hideduplicates",GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]);
+	printf("\n%s\t\t\tdisplays your XERCES version information.",GAME_ARGS[GAME_ARG_XERCES_INFO]);
+
+	printf("\n%s=x=purgeunused=purgeduplicates=gitdelete=hideduplicates",GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]);
 	printf("\n                     \t\tdisplay a report detailing any known problems");
 	printf("\n                     \t\trelated to your selected techtrees game data.");
 	printf("\n                     \t\tWhere x is a comma-delimited list of techtrees");
@@ -176,9 +274,9 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tWhere purgeduplicates is an optional parameter");
 	printf("\n                     \t\t      telling the validation to merge");
 	printf("\n                     \t\t      duplicate files in the techtree.");
-	printf("\n                     \t\tWhere svndelete is an optional parameter");
+	printf("\n                     \t\tWhere gitdelete is an optional parameter");
 	printf("\n                     \t\t      telling the validation to call");
-	printf("\n                     \t\t      svn delete on duplicate / unused");
+	printf("\n                     \t\t      git rm on duplicate / unused");
 	printf("\n                     \t\t      files in the techtree.");
 	printf("\n                     \t\tWhere hideduplicates is an optional parameter");
 	printf("\n                     \t\t      telling the validation to NOT SHOW");
@@ -207,7 +305,7 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\texample:");
 	printf("\n                     %s %s=tech,egypt",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS]);
 
-	printf("\n%s=x=purgeunused=svndelete",GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]);
+	printf("\n%s=x=purgeunused=gitdelete",GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]);
 	printf("\n                     \t\tdisplay a report detailing any known problems");
 	printf("\n                     \t\trelated to your selected scenario game data.");
 	printf("\n                     \t\tWhere x is a single scenario to validate.");
@@ -216,6 +314,52 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\t      files in the scenario that are not used.");
 	printf("\n                     \t\texample:");
 	printf("\n                     %s %s=stranded",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]);
+
+	printf("\n%s=x=purgeunused=gitdelete",GAME_ARGS[GAME_ARG_VALIDATE_TILESET]);
+	printf("\n                     \t\tdisplay a report detailing any known problems");
+	printf("\n                     \t\trelated to your selected tileset game data.");
+	printf("\n                     \t\tWhere x is a single tileset to validate.");
+	printf("\n                     \t\tWhere purgeunused is an optional parameter");
+	printf("\n                     \t\t      telling the validation to delete extra");
+	printf("\n                     \t\t      files in the scenario that are not used.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=desert2",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_VALIDATE_TILESET]);
+
+	printf("\n%s=x",GAME_ARGS[GAME_ARG_TRANSLATE_TECHTREES]);
+	printf("\n                     \t\tProduces a default lng file for the specified techtree");
+	printf("\n                     \t\tto prepare for translation into other languages.");
+	printf("\n                     \t\tWhere x is a techtree name");
+
+	printf("\n%s=x",GAME_ARGS[GAME_ARG_LIST_MAPS]);
+	printf("\n                     \t\tdisplay a list of game content: maps");
+	printf("\n                     \t\twhere x is an optional name filter.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=island*",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LIST_MAPS]);
+
+	printf("\n%s=showfactions",GAME_ARGS[GAME_ARG_LIST_TECHTRESS]);
+	printf("\n                     \t\tdisplay a list of game content: techtrees");
+	printf("\n                     \t\twhere showfactions is an optional parameter.");
+	printf("\n                     \t\tto display factions in each techtree.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=showfactions",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LIST_TECHTRESS]);
+
+	printf("\n%s=x",GAME_ARGS[GAME_ARG_LIST_SCENARIOS]);
+	printf("\n                     \t\tdisplay a list of game content: scenarios");
+	printf("\n                     \t\twhere x is an optional name filter.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=beginner*",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LIST_SCENARIOS]);
+
+	printf("\n%s=x",GAME_ARGS[GAME_ARG_LIST_TILESETS]);
+	printf("\n                     \t\tdisplay a list of game content: tilesets");
+	printf("\n                     \t\twhere x is an optional name filter.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=f*",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LIST_TILESETS]);
+
+	printf("\n%s=x",GAME_ARGS[GAME_ARG_LIST_TUTORIALS]);
+	printf("\n                     \t\tdisplay a list of game content: tutorials");
+	printf("\n                     \t\twhere x is an optional name filter.");
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=*",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LIST_TUTORIALS]);
 
 	//     "================================================================================"
 	printf("\n%s=x\t\t\tSets the game data path to x",GAME_ARGS[GAME_ARG_DATA_PATH]);
@@ -227,6 +371,10 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n%s=x\t\t\tSets the game logs path to x",GAME_ARGS[GAME_ARG_LOG_PATH]);
 	printf("\n                     \t\texample:");
 	printf("\n                     %s %s=~/game_logs/",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_LOG_PATH]);
+	printf("\n%s=x\t\t\tSets the game fonts path to x",GAME_ARGS[GAME_ARG_FONT_PATH]);
+	printf("\n                     \t\texample:");
+	printf("\n                     %s %s=~/myfonts/",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_FONT_PATH]);
+
 	printf("\n%s=x\t\tdisplay merged ini settings information.",GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS]);
 	printf("\n                     \t\tWhere x is an optional property name to");
 	printf("\n                     \t\t        filter (default shows all).");
@@ -287,6 +435,7 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 
 
 	printf("\n%s\t\t\tdisables trying to use Vertex Buffer Objects.",GAME_ARGS[GAME_ARG_DISABLE_VBO]);
+	printf("\n%s\t\t\tdisables interpolating animations to make them smoother.",GAME_ARGS[GAME_ARG_DISABLE_VERTEX_INTERPOLATION]);
 	printf("\n%s\t\t\tdisables the sound system.",GAME_ARGS[GAME_ARG_DISABLE_SOUND]);
 
 	printf("\n%s\t\tenables using the legacy font system.",GAME_ARGS[GAME_ARG_ENABLE_LEGACYFONTS]);
@@ -323,15 +472,30 @@ void printParameterHelp(const char *argv0, bool foundInvalidArgs) {
 	printf("\n                     \t\tWhere x either true or false");
 	printf("\n                     \t\texample: %s %s=true",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_USE_FULLSCREEN]);
 
+	printf("\n%s=x\t\t\toverride the video gamma (contrast) value.",GAME_ARGS[GAME_ARG_SET_GAMMA]);
+	printf("\n                     \t\tWhere x a floating point value");
+	printf("\n                     \t\texample: %s %s=1.5",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_SET_GAMMA]);
+
 	printf("\n%s=x\t\t\toverride the font to use.",GAME_ARGS[GAME_ARG_USE_FONT]);
 	printf("\n                     \t\tWhere x is the path and name of a font file supported");
 	printf("\n                     \t\t        by freetype2.");
 	printf("\n                     \t\texample:");
 	printf("\n  %s %s=$APPLICATIONDATAPATH/data/core/fonts/Vera.ttf",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_USE_FONT]);
 
-	printf("\n%s=x\t\t\toverride the font base size.",GAME_ARGS[GAME_ARG_FONT_BASESIZE]);
+	printf("\n%s=x\t\toverride the font base size.",GAME_ARGS[GAME_ARG_FONT_BASESIZE]);
 	printf("\n                     \t\tWhere x is the numeric base font size to use.");
 	printf("\n                     \t\texample: %s %s=5",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_FONT_BASESIZE]);
+
+	printf("\n%s\t\tdisables video playback.",GAME_ARGS[GAME_ARG_DISABLE_VIDEOS]);
+
+	printf("\n%s\t\tdisables opengl capability checks (for corrupt or flaky video drivers).",GAME_ARGS[GAME_ARG_DISABLE_OPENGL_CAPS_CHECK]);
+
+
+	printf("\n%s=x=y\t\t\tcompress selected game data into archives for network sharing.",GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]);
+	printf("\n                     \t\tWhere x is one of the following data items to compress.");
+	printf("\n                     \t\ttechtrees, tilesets or all.");
+	printf("\n                     \t\tWhere y = include_main to include main (non mod) data.");
+	printf("\n                     \t\texample: %s %s=all",extractFileFromDirectoryPath(argv0).c_str(),GAME_ARGS[GAME_ARG_CREATE_DATA_ARCHIVES]);
 
 	printf("\n%s\t\t\tdisplays verbose information in the console.",GAME_ARGS[GAME_ARG_VERBOSE_MODE]);
 
@@ -344,11 +508,11 @@ bool hasCommandArgument(int argc, char** argv,const string argName, int *foundIn
 	if(foundIndex != NULL) {
 		*foundIndex = -1;
 	}
-	int compareLen = strlen(argName.c_str());
+	int compareLen = (int)strlen(argName.c_str());
 
 	for(int idx = startLookupIndex; idx < argc; idx++) {
 		if(useArgParamLen == true) {
-			compareLen = strlen(argv[idx]);
+			compareLen = (int)strlen(argv[idx]);
 		}
 		if(_strnicmp(argName.c_str(),argv[idx],compareLen) == 0) {
 			result = true;
@@ -365,43 +529,165 @@ bool hasCommandArgument(int argc, char** argv,const string argName, int *foundIn
 int mainSetup(int argc, char **argv) {
     bool haveSpecialOutputCommandLineOption = false;
 
+    const int knownArgCount = sizeof(GAME_ARGS) / sizeof(GAME_ARGS[0]);
+    if(knownArgCount != GAME_ARG_END) {
+    	char szBuf[8096]="";
+    	snprintf(szBuf,8096,"Internal arg count mismatch knownArgCount = %d, GAME_ARG_END = %d",knownArgCount,GAME_ARG_END);
+    	throw megaglest_runtime_error(szBuf);
+    }
+
+    SystemFlags::VERBOSE_MODE_ENABLED  = false;
+    if(hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERBOSE_MODE]) == true) {
+        SystemFlags::VERBOSE_MODE_ENABLED  = true;
+    }
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
+
+	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_DISABLE_STREFLOP_CAPS_CHECK])) == false) {
+// Ensure at runtime that the client has SSE
+#if defined(STREFLOP_SSE)	
+#if defined(WIN32)	
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] About to validate SSE support\n",__FILE__,__FUNCTION__,__LINE__);
+
+	int has_x64     = false;
+	int has_MMX     = false;
+	int has_SSE     = false;
+	int has_SSE2    = false;
+	int has_SSE3    = false;
+	int has_SSSE3   = false;
+	int has_SSE41   = false;
+	int has_SSE42   = false;
+	int has_SSE4a   = false;
+	int has_AVX     = false;
+	int has_XOP     = false;
+	int has_FMA3    = false;
+	int has_FMA4    = false;
+
+	int info[4];
+	__cpuid(info, 0);
+	int nIds = info[0];
+
+	__cpuid(info, 0x80000000);
+	int nExIds = info[0];
+
+	//  Detect Instruction Set
+	if (nIds >= 1){
+		__cpuid(info,0x00000001);
+		has_MMX   = (info[3] & ((int)1 << 23)) != 0;
+		has_SSE   = (info[3] & ((int)1 << 25)) != 0;
+		has_SSE2  = (info[3] & ((int)1 << 26)) != 0;
+		has_SSE3  = (info[2] & ((int)1 <<  0)) != 0;
+
+		has_SSSE3 = (info[2] & ((int)1 <<  9)) != 0;
+		has_SSE41 = (info[2] & ((int)1 << 19)) != 0;
+		has_SSE42 = (info[2] & ((int)1 << 20)) != 0;
+
+		has_AVX   = (info[2] & ((int)1 << 28)) != 0;
+		has_FMA3  = (info[2] & ((int)1 << 12)) != 0;
+	}
+
+	if (nExIds >= 0x80000001){
+		__cpuid(info,0x80000001);
+		has_x64   = (info[3] & ((int)1 << 29)) != 0;
+		has_SSE4a = (info[2] & ((int)1 <<  6)) != 0;
+		has_FMA4  = (info[2] & ((int)1 << 16)) != 0;
+		has_XOP   = (info[2] & ((int)1 << 11)) != 0;
+	}	
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] sse check got [%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]\n",__FILE__,__FUNCTION__,__LINE__,has_x64,has_MMX,has_SSE,has_SSE2,has_SSE3,has_SSSE3,has_SSE41,has_SSE42,has_SSE4a,has_AVX,has_XOP,has_FMA3,has_FMA4);
+
+	if(	has_SSE	  == false && has_SSE2	== false && has_SSE3 == false &&
+		has_SSSE3 == false && has_SSE41	== false &&	has_SSE42 == false &&
+		has_SSE4a == false) {
+    	char szBuf[8096]="";
+    	snprintf(szBuf,8096,"Error detected, your CPU does not seem to support SSE: [%d]\n",has_SSE);
+    	throw megaglest_runtime_error(szBuf);
+	}
+#elif defined (__GNUC__) && !defined(__APPLE__)
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] About to validate SSE support\n",__FILE__,__FUNCTION__,__LINE__);
+
+#define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
+
+#define cpuid(func,ax,bx,cx,dx)\
+	__asm__ __volatile__ ("cpuid":\
+	"=a" (ax), "=b" (bx), "=c" (cx), "=d" (dx) : "a" (func));
+
+	int ax=0,bx=0,cx=0,dx=0;
+	cpuid(0x0000001,ax,bx,cx,dx)
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d] sse check got [%d,%d,%d,%d]\n",__FILE__,__FUNCTION__,__LINE__,ax,bx,cx,dx);
+
+	// Check SSE, SSE2 and SSE3 support (if all 3 fail throw exception)
+	if(	!CHECK_BIT(dx,25) && !CHECK_BIT(dx,26) && !CHECK_BIT(cx,0) ) {
+    	char szBuf[8096]="";
+    	snprintf(szBuf,8096,"Error detected, your CPU does not seem to support SSE: [%d]\n",CHECK_BIT(dx,25));
+    	throw megaglest_runtime_error(szBuf);
+	}
+
+#endif
+#endif
+	}
+
 	if( hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_OPENGL_INFO]) 			== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SDL_INFO]) 			== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LUA_INFO]) 			== true ||
         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_CURL_INFO]) 			== true ||
+        hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_XERCES_INFO]) 			== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VERSION]) 				== true ||
         hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS])    == true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TECHTREES]) 	== true ||
 		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_FACTIONS]) 	== true ||
-		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) 	== true) {
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_SCENARIO]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_VALIDATE_TILESET]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_MAPS]) 			== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TECHTRESS]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_SCENARIOS]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TILESETS]) 	== true ||
+		hasCommandArgument(argc, argv,GAME_ARGS[GAME_ARG_LIST_TUTORIALS]) 	== true) {
 		haveSpecialOutputCommandLineOption = true;
 	}
 
 	if( haveSpecialOutputCommandLineOption == false) {
 #ifdef USE_STREFLOP
 #define STREFLOP_NO_DENORMALS
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+	
 	streflop_init<streflop::Simple>();
+
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 #endif
 	}
 
 	if(hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_HELP])) == true    ||
 	   hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_VERSION])) == true ||
 	   hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_SHOW_INI_SETTINGS])) == true ||
-	   hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true) {
+	   hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_MODE])) == true ||
+	   hasCommandArgument(argc, argv,string(GAME_ARGS[GAME_ARG_MASTERSERVER_STATUS]))) {
 	     // Use this for masterserver mode for timers like Chrono
+		 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+
 		 if(SDL_Init(SDL_INIT_TIMER) < 0)  {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	        std::cerr << "Couldn't initialize SDL: " << SDL_GetError() << "\n";
-	        return 1;
+	        return 3;
 	     }
 	}
 	else {
+		 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 		 if(SDL_Init(SDL_INIT_EVERYTHING) < 0)  {
+			if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 			std::cerr << "Couldn't initialize SDL: " << SDL_GetError() << "\n";
-			return 1;
+			return 3;
 		 }
-		SDL_EnableUNICODE(1);
-		SDL_EnableKeyRepeat(SDL_DEFAULT_REPEAT_DELAY, SDL_DEFAULT_REPEAT_INTERVAL);
+		 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		 SDL_EnableUNICODE(1);
+		 if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
+		 SDL_EnableKeyRepeat(SDL_DEFAULT_REPEAT_DELAY, SDL_DEFAULT_REPEAT_INTERVAL);
 	}
+	if(SystemFlags::VERBOSE_MODE_ENABLED) printf("In [%s::%s Line: %d]\n",__FILE__,__FUNCTION__,__LINE__);
 	return 0;
 }
 

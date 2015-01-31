@@ -93,7 +93,7 @@ public:
 ///	In game GUI
 // =====================================================
 
-class Gui : public ObjectStateInterface {
+class Gui {
 public:
 	static const int maxSelBuff= 128*5;
 	static const int upgradeDisplayIndex= 8;
@@ -143,7 +143,9 @@ private:
 	bool selectingMeetingPoint;
 
 	CardinalDir selectedBuildingFacing;
-	const Object *selectedResourceObject;
+	Vec2i selectedResourceObjectPos;
+	Vec2i highlightedResourceObjectPos;
+	int highlightedUnitId;
 
 	Texture2D* hudTexture;
 
@@ -151,9 +153,6 @@ public:
 	Gui();
 	void init(Game *game);
 	void end();
-
-	// callback when tileset objects are removed from the world
-	virtual void removingObjectEvent(Object* o) ;
 
 	//get
 	Vec2i getPosObjWorld() const			{return posObjWorld;}
@@ -165,7 +164,10 @@ public:
 	const Mouse3d *getMouse3d() const				{return &mouse3d;}
 	const Display *getDisplay()	const				{return &display;}
 	const Selection *getSelection()	const			{return &selection;}
-	const Object *getSelectedResourceObject()	const			{return selectedResourceObject;}
+	Selection *getSelectionPtr()	{return &selection;}
+	const Object *getSelectedResourceObject()	const;
+	Object *getHighlightedResourceObject()	const;
+	Unit *getHighlightedUnit() const;
 
 	const SelectionQuad *getSelectionQuad() const	{return &selectionQuad;}
 	CardinalDir getSelectedFacing() const			{return selectedBuildingFacing;}
@@ -199,6 +201,9 @@ public:
 	void switchToNextDisplayColor();
 	void onSelectionChanged();
 
+	void saveGame(XmlNode *rootNode) const;
+	void loadGame(const XmlNode *rootNode, World *world);
+
 private:
 
 	//orders
@@ -221,7 +226,7 @@ private:
 	void mouseDownDisplayUnitBuild(int posDisplay);
 	void computeInfoString(int posDisplay);
 	string computeDefaultInfoString();
-	void addOrdersResultToConsole(CommandClass cc, CommandResult rr);
+	void addOrdersResultToConsole(CommandClass cc, std::pair<CommandResult,string> result);
 	bool isSharedCommandClass(CommandClass commandClass);
 	void computeSelected(bool doubleCkick,bool force);
 	bool computeTarget(const Vec2i &screenPos, Vec2i &targetPos, const Unit *&targetUnit);

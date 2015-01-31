@@ -12,8 +12,14 @@
 #ifndef _GLEST_GAME_MINIMAP_H_
 #define _GLEST_GAME_MINIMAP_H_
 
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
+
 #include "pixmap.h"
 #include "texture.h"
+#include "xml_parser.h"
 #include "leak_dumper.h"
 
 namespace Glest{ namespace Game{
@@ -23,6 +29,7 @@ using Shared::Graphics::Vec3f;
 using Shared::Graphics::Vec2i;
 using Shared::Graphics::Pixmap2D;
 using Shared::Graphics::Texture2D;
+using Shared::Xml::XmlNode;
 
 class World;
 class GameSettings;
@@ -43,6 +50,11 @@ class Minimap{
 private:
 	Pixmap2D *fowPixmap0;
 	Pixmap2D *fowPixmap1;
+	Pixmap2D *fowPixmap1_default;
+	Pixmap2D *fowPixmap0Copy;
+	Pixmap2D *fowPixmap1Copy;
+	Pixmap2D *fowPixmap1Copy_default;
+
 	Texture2D *tex;
 	Texture2D *fowTex;    //Fog Of War Texture2D
 	bool fogOfWar;
@@ -59,10 +71,19 @@ public:
 	const Texture2D *getFowTexture() const	{return fowTex;}
 	const Texture2D *getTexture() const		{return tex;}
 
-	void incFowTextureAlphaSurface(const Vec2i &sPos, float alpha);
+	void incFowTextureAlphaSurface(const Vec2i sPos, float alpha, bool isIncrementalUpdate=false);
 	void resetFowTex();
 	void updateFowTex(float t);
-	void setFogOfWar(bool value) { fogOfWar = value; resetFowTex(); }
+	void setFogOfWar(bool value);
+
+	void copyFowTex();
+	void restoreFowTex();
+
+	void copyFowTexAlphaSurface();
+	void restoreFowTexAlphaSurface();
+
+	void saveGame(XmlNode *rootNode);
+	void loadGame(const XmlNode *rootNode);
 
 private:
 	void computeTexture(const World *world);

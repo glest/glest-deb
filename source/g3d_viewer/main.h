@@ -12,8 +12,12 @@
 #ifndef _SHADER_G3DVIEWER_MAIN_H_
 #define _SHADER_G3DVIEWER_MAIN_H_
 
-#include <string>
+#ifdef WIN32
+    #include <winsock2.h>
+    #include <winsock.h>
+#endif
 
+#include <string>
 #include <GL/glew.h>
 #include <wx/wx.h>
 #include <wx/glcanvas.h>
@@ -212,6 +216,10 @@ private:
 	MainWindow *mainWindow;
 
 public:
+	App() : wxApp() {
+		mainWindow = NULL;
+	}
+	virtual ~App() {}
 	virtual bool OnInit();
 	virtual int MainLoop();
 	virtual int OnExit();

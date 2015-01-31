@@ -123,7 +123,6 @@ if(VERBOSE_MODE_ENABLED) printf("Server passive port successfully started\n");
  *  In order of avoid blocking of ftpExecute this function can be used to
  *  determine if the server has something to do. You can call this function in
  *  a loop and everytime it returns nonezero its time to call ftpExecute().
- *  @todo implement me
  *
  *  @return 0 noting to do; else server has received some data
  */
@@ -147,11 +146,11 @@ int ftpExecute(void)
 	int socksRdy=0;
 	ftpSession_S *pSession=NULL;
 	int sessionId=0;
-	int activeJobs=0;
+	//int activeJobs=0;
 	int len;
 	int bufLen;
 
-	activeJobs = ftpGetActiveTransCnt();								// are there any active transmitions?
+	int activeJobs = ftpGetActiveTransCnt();								// are there any active transmitions?
 	//for(n = 0; (activeJobs > 0) && (n < MAX_CONNECTIONS); n++)
 	for(n = 0; n < MAX_CONNECTIONS; n++)
 	{
