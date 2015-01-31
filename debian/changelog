@@ -12,8 +12,6 @@ megaglest (3.11.0+dfsg-1) experimental; urgency=medium
   * Update clean file and clean only required files, not the complete mk/linux
     directory. This prevents a FTBFS.
   * Update debian/copyright for new release.
-  * Remove empty data directory and the ini files which are also provided by
-    megaglest-data.
   * Drop source/lintian-overrides. It is obsolete now.
   * Drop megaglest.dirs. The install files achieve the same.
 
