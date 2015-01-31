@@ -16,7 +16,7 @@ Copyright: 2008-2011 Titus Tscharntke (info@titusgames.de)
            2005      Roland BROCHAR --> string utilities
            2006-2008 Alexander Chemeris --> data types for win32
            2005-2010 Andreas Martin (andreas.martin@linuxmail.org)
-           2001-2014 The MegaGlest Team and other contributors
+           2001-2015 The MegaGlest Team and other contributors
 License: GPL-3+
 Comment:
  See also docs/AUTHORS.source_code.txt for a list of contributors and
@@ -25,7 +25,7 @@ Comment:
 Files: debian/*
 Copyright: 2011-2014, Mark Vejvoda <mark_vejvoda@hotmail.com>
            2012-2013, Paul Wise <pabs@debian.org>
-           2014,      Markus Koschany <apo@gambaru.de>
+           2014-2015, Markus Koschany <apo@gambaru.de>
 License: GPL-3+
 
 Files: mk/cmake/Modules/FindGLIB2.cmake
@@ -99,66 +99,8 @@ License: BSD-3-clause
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
 
-Files: source/shared_lib/sources/graphics/freetype-gl/*
-       source/shared_lib/include/graphics/freetype-gl/*
-Copyright: Copyright 2011 Nicolas P. Rougier
-License: BSD-2-clause
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  1. Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *
- *  2. Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY NICOLAS P. ROUGIER ''AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
- * EVENT SHALL NICOLAS P. ROUGIER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * The views and conclusions contained in the software and documentation are
- * those of the authors and should not be interpreted as representing official
- * policies, either expressed or implied, of Nicolas P. Rougier.
-
-Files: source/shared_lib/include/graphics/freetype-gl/edtaa3func.h
-Copyright: 2009 Stefan Gustavson (stefan.gustavson@gmail.com)
-License: BSD-2-clause
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  1. Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *
- *  2. Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY STEFAN GUSTAVSON ''AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
- * EVENT SHALL STEFAN GUSTAVSON OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * The views and conclusions contained in the software and documentation are
- * those of the authors and should not be interpreted as representing official
- * policies, either expressed or implied, of Stefan Gustavson.
-
 Files: source/shared_lib/include/util/utf8/*
+       source/shared_lib/include/util/utf8.h
 Copyright: 2006 Nemanja Trifunovic
 License: BSL-1.0
 
@@ -166,6 +108,49 @@ Files: source/shared_lib/include/xml/rapidxml/*
 Copyright: 2006, 2007 Marcin Kalicinski
 License: BSL-1.0
 
+Files: source/shared_lib/include/streflop/*
+       source/shared_lib/sources/streflop/*
+Copyright: 2006,      Nicolas Brodu
+           2012,      Mark Vejvoda
+           1997-2002, Free Software Foundation, Inc
+License: LGPL-2.1+
+
+Files: source/shared_lib/sources/streflop/libm/*
+Copyright: 1993, Sun Microsystems, Inc
+License: permissive
+ Developed at SunPro, a Sun Microsystems, Inc. business. Permission to use,
+ copy, modify, and distribute this software is freely granted, provided that
+ this notice is preserved.
+
+Files: source/shared_lib/include/streflop/softfloat/*
+       source/shared_lib/sources/streflop/softfloat/*
+Copyright: 2006, Nicolas Brodu
+           2012, Mark Vejvoda
+           John R. Hauser
+License: softfloat-license
+ Written by John R. Hauser. This work was made possible in part by the
+ International Computer Science Institute, located at Suite 600, 1947 Center
+ Street, Berkeley, California 94704.  Funding was partially provided by the
+ National Science Foundation under grant MIP-9311980.  The original version
+ of this code was written as part of a project to build a fixed-point vector
+ processor in collaboration with the University of California at Berkeley,
+ overseen by Profs. Nelson Morgan and John Wawrzynek.  More information
+ is available through the Web page `http://www.cs.berkeley.edu/~jhauser/
+ arithmetic/SoftFloat.html'.
+ .
+ THIS SOFTWARE IS DISTRIBUTED AS IS, FOR FREE.  Although reasonable effort has
+ been made to avoid it, THIS SOFTWARE MAY CONTAIN FAULTS THAT WILL AT TIMES
+ RESULT IN INCORRECT BEHAVIOR.  USE OF THIS SOFTWARE IS RESTRICTED TO PERSONS
+ AND ORGANIZATIONS WHO CAN AND WILL TAKE FULL RESPONSIBILITY FOR ALL LOSSES,
+ COSTS, OR OTHER PROBLEMS THEY INCUR DUE TO THE SOFTWARE, AND WHO FURTHERMORE
+ EFFECTIVELY INDEMNIFY JOHN HAUSER AND THE INTERNATIONAL COMPUTER SCIENCE
+ INSTITUTE (possibly via similar legal warning) AGAINST ALL LOSSES, COSTS, OR
+ OTHER PROBLEMS INCURRED BY THEIR CUSTOMERS AND CLIENTS DUE TO THE SOFTWARE.
+ .
+ Derivative works are acceptable, even for commercial purposes, so long as
+ (1) the source code for the derivative work includes prominent notice that
+ the work is derivative, and (2) the source code includes prominent notice with
+ these four paragraphs for those parts of this code that are retained.
 
 Files: source/shared_lib/sources/streflop/libm/flt-32/s_llroundf.cpp
        source/shared_lib/sources/streflop/libm/flt-32/s_lrintf.cpp
@@ -190,13 +175,6 @@ Files: source/shared_lib/sources/streflop/libm/flt-32/s_llroundf.cpp
 Copyright: 1997-2002, Free Software Foundation, Inc
 License: LGPL-2.1+
 
-Files: source/shared_lib/include/streflop/*
-       source/shared_lib/sources/streflop/*
-Copyright: 2006,      Nicolas Brodu
-           2012,      Mark Vejvoda
-           1997-2002, Free Software Foundation, Inc
-License: LGPL-2.1+
-
 Files: source/shared_lib/include/streflop/FPUCheck.h
        source/shared_lib/include/streflop/streflop_cond.h
        source/shared_lib/sources/streflop/SMath.cpp
@@ -204,44 +182,6 @@ Files: source/shared_lib/include/streflop/FPUCheck.h
 Copyright: 2008, Tobi Vollebregt
            2010, Mark Vejvoda
 License: GPL-2+
-
-Files: source/shared_lib/sources/streflop/libm/*
-Copyright: 1993, Sun Microsystems, Inc
-License: permissive
- Developed at SunPro, a Sun Microsystems, Inc. business. Permission to use,
- copy, modify, and distribute this software is freely granted, provided that
- this notice is preserved.
-
-Files: source/shared_lib/include/streflop/softfloat/*
-       source/shared_lib/sources/streflop/softfloat/*
-Copyright: 2006, Nicolas Brodu
-           2012, Mark Vejvoda
-           John R. Hauser
-License: softfloat-license
- Written by John R. Hauser.  This work was made possible in part by the
- International Computer Science Institute, located at Suite 600, 1947 Center
- Street, Berkeley, California 94704.  Funding was partially provided by the
- National Science Foundation under grant MIP-9311980.  The original version
- of this code was written as part of a project to build a fixed-point vector
- processor in collaboration with the University of California at Berkeley,
- overseen by Profs. Nelson Morgan and John Wawrzynek.  More information
- is available through the Web page `http://www.cs.berkeley.edu/~jhauser/
- arithmetic/SoftFloat.html'.
- .
- THIS SOFTWARE IS DISTRIBUTED AS IS, FOR FREE.  Although reasonable effort has
- been made to avoid it, THIS SOFTWARE MAY CONTAIN FAULTS THAT WILL AT TIMES
- RESULT IN INCORRECT BEHAVIOR.  USE OF THIS SOFTWARE IS RESTRICTED TO PERSONS
- AND ORGANIZATIONS WHO CAN AND WILL TAKE FULL RESPONSIBILITY FOR ALL LOSSES,
- COSTS, OR OTHER PROBLEMS THEY INCUR DUE TO THE SOFTWARE, AND WHO FURTHERMORE
- EFFECTIVELY INDEMNIFY JOHN HAUSER AND THE INTERNATIONAL COMPUTER SCIENCE
- INSTITUTE (possibly via similar legal warning) AGAINST ALL LOSSES, COSTS, OR
- OTHER PROBLEMS INCURRED BY THEIR CUSTOMERS AND CLIENTS DUE TO THE SOFTWARE.
- .
- Derivative works are acceptable, even for commercial purposes, so long as
- (1) the source code for the derivative work includes prominent notice that
- the work is derivative, and (2) the source code includes prominent notice with
- these four paragraphs for those parts of this code that are retained.
-
 
 Files: source/shared_lib/sources/streflop/Random.cpp
 Copyright: Makoto Matsumoto and Takuji Nishimura / OWNER OR / 2005, Mutsuo Saito
