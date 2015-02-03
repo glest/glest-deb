@@ -43,8 +43,8 @@ Depends:
  fonts-uralic,
  megaglest-data (>= 3.11.0),
  p7zip-full,
- ttf-dejavu-core,
- ttf-wqy-zenhei,
+ fonts-dejavu-core,
+ fonts-wqy-zenhei,
  ${misc:Depends},
  ${shlibs:Depends}
 Description: 3D multi-player real time strategy game
