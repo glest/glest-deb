@@ -1,3 +1,13 @@
+megaglest (3.11.0+dfsg-2) unstable; urgency=medium
+
+  * Upload to unstable.
+  * debian/rules: Insert CountryTexturePath in glest.ini and use a dh_install
+    override for it.
+  * Switch to new fonts packages fonts-dejavu-core and fonts-wqy-zenhei.
+  * Remove libxerces-c-dev from Build-Depends.
+
+ -- Markus Koschany <apo@gambaru.de>  Fri, 06 Feb 2015 20:09:26 +0100
+
 megaglest (3.11.0+dfsg-1) experimental; urgency=medium
 
   * Imported Upstream version 3.11.0+dfsg.
