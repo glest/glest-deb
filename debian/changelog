@@ -1,3 +1,9 @@
+megaglest (3.11.1-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+
+ -- Markus Koschany <apo@gambaru.de>  Tue, 17 Mar 2015 10:52:04 +0100
+
 megaglest (3.11.0+dfsg-2) unstable; urgency=medium
 
   * Upload to unstable.
