@@ -1,8 +1,10 @@
-megaglest (3.11.1-1) UNRELEASED; urgency=medium
+megaglest (3.11.1-1) unstable; urgency=medium
 
-  * New upstream release
+  * Imported Upstream version 3.11.1.
+  * Do not repack the tarball anymore. It is DFSG compatible.
+  * Fix debian/copyright license name not unique issue.
 
- -- Markus Koschany <apo@gambaru.de>  Tue, 17 Mar 2015 10:52:04 +0100
+ -- Markus Koschany <apo@gambaru.de>  Tue, 17 Mar 2015 11:00:27 +0100
 
 megaglest (3.11.0+dfsg-2) unstable; urgency=medium
 
