@@ -30,4 +30,4 @@ override_dh_install:
 		debian/megaglest/usr/share/games/megaglest/glest.ini
 
 get-orig-source:
-	uscan --verbose --repack --compression xz --force-download
+	uscan --verbose --download-current-version --force-download
