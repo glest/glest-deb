@@ -40,7 +40,7 @@ Depends:
  famfamfam-flag-png,
  fonts-liberation,
  fonts-uralic,
- megaglest-data (>= 3.11.0),
+ megaglest-data (>= 3.11.1),
  p7zip-full,
  fonts-dejavu-core,
  fonts-wqy-zenhei,
