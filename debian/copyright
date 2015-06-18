@@ -126,6 +126,10 @@ Files: source/shared_lib/sources/streflop/libm/flt-32/s_llroundf.cpp
 Copyright: 1997-2002, Free Software Foundation, Inc
 License: LGPL-2.1+
 
+License: public-domain
+ This file has been put into the public domain.
+ You can do whatever you want with this file.
+
 Files: source/shared_lib/include/streflop/FPUCheck.h
        source/shared_lib/include/streflop/streflop_cond.h
        source/shared_lib/sources/streflop/SMath.cpp
@@ -300,8 +304,6 @@ Files: mk/linux/mojosetup/liblzma/api/lzma.h
  mk/linux/mojosetup/liblzma/simple/simple_private.h
 Copyright: 2012, Lasse Collin
 License: public-domain
- This file has been put into the public domain.
- You can do whatever you want with this file.
 
 Files: mk/linux/mojosetup/archive_pck.c
  mk/linux/mojosetup/archive_pkg.c
@@ -366,8 +368,6 @@ Files: mk/linux/mojosetup/liblzma/api/lzma/base.h
  mk/linux/mojosetup/liblzma/simple/x86.c
 Copyright: 2012, Lasse Collin and Igor Pavlov
 License: public-domain
- This file has been put into the public domain.
- You can do whatever you want with this file.
 
 Files: mk/linux/mojosetup/bzip2/blocksort.c
  mk/linux/mojosetup/bzip2/bzlib.c
