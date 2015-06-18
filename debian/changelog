@@ -1,3 +1,12 @@
+megaglest (3.11.1-2) unstable; urgency=medium
+
+  * Fix lintian warning dep5-copyright-license-name-not-unique.
+  * Add fix-cmake-3.2-X11-FTBFS.patch and ensure that Megaglest can be built
+    from source again with CMake >= 3.2. Cherry-picked from Megaglest's issue
+    tracker.
+
+ -- Markus Koschany <apo@gambaru.de>  Thu, 18 Jun 2015 02:40:05 +0200
+
 megaglest (3.11.1-1) unstable; urgency=medium
 
   * Imported Upstream version 3.11.1.
