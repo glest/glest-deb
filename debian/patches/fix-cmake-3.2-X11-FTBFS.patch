@@ -1,4 +1,4 @@
-From: Markus Koschany <apo@gambaru.de>
+From: Markus Koschany <apo@debian.org>
 Date: Thu, 18 Jun 2015 02:37:43 +0200
 Subject: fix cmake-3.2-X11 FTBFS
 

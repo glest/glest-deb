@@ -4,7 +4,7 @@ Priority: extra
 Maintainer: Debian Games Team <pkg-games-devel@lists.alioth.debian.org>
 Uploaders:
  Mark Vejvoda <mark_vejvoda@hotmail.com>,
- Markus Koschany <apo@gambaru.de>
+ Markus Koschany <apo@debian.org>
 Build-Depends:
  cmake,
  debhelper (>= 9),
