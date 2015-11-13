@@ -1,3 +1,15 @@
+megaglest (3.11.1-3) unstable; urgency=medium
+
+  * Add Breaks and Replaces against versions before 3.11.0+dfsg-1 because the
+    glest.ini file is provided by src:megaglest now. This fixes a dpkg failure
+    when upgrading from Jessie to Stretch. Thanks to Andreas Beckmann for the
+    report. (Closes: #804942)
+  * Vcs-Browser: Switch to https.
+  * Update my e-mail address.
+  * Add reproducible-build.patch and make the build reproducible.
+
+ -- Markus Koschany <apo@debian.org>  Fri, 13 Nov 2015 20:45:26 +0100
+
 megaglest (3.11.1-2) unstable; urgency=medium
 
   * Fix lintian warning dep5-copyright-license-name-not-unique.
