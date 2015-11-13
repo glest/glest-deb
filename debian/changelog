@@ -7,6 +7,7 @@ megaglest (3.11.1-3) unstable; urgency=medium
   * Vcs-Browser: Switch to https.
   * Update my e-mail address.
   * Add reproducible-build.patch and make the build reproducible.
+  * Override Lintian error "source-is-missing" because it is a false-positive.
 
  -- Markus Koschany <apo@debian.org>  Fri, 13 Nov 2015 20:45:26 +0100
 
