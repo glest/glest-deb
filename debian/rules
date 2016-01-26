@@ -11,9 +11,6 @@ override_dh_auto_configure:
 		-DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/ \
 		-DWANT_DEV_OUTPATH=ON
 
-override_dh_strip:
-	dh_strip --dbg-package=megaglest-dbg
-
 override_dh_installchangelogs:
 	dh_installchangelogs docs/CHANGELOG.txt
 

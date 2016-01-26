@@ -60,14 +60,3 @@ Description: 3D multi-player real time strategy game
  games against CPU controlled players and multiplayer matches over the
  Internet or a LAN.
 
-Package: megaglest-dbg
-Section: debug
-Architecture: any
-Depends:
- megaglest (= ${binary:Version}),
- ${misc:Depends}
-Description: debug files for MegaGlest
- This package contains debug information for the MegaGlest game.
- .
- It can be used to debug MegaGlest using GDB if the game crashes
- due to programming errors.
