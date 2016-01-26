@@ -14,10 +14,6 @@ override_dh_auto_configure:
 override_dh_installchangelogs:
 	dh_installchangelogs docs/CHANGELOG.txt
 
-override_dh_auto_clean:
-	rm -rf mk/linux/mojosetup/
-	dh_auto_clean
-
 override_dh_install:
 	dh_install
 	# Remove empty directory
