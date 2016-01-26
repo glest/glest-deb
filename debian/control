@@ -22,7 +22,7 @@ Build-Depends:
  libogg-dev,
  libopenal-dev,
  libpng-dev,
- libsdl1.2-dev,
+ libsdl2-dev,
  libvorbis-dev,
  libwxgtk3.0-dev,
  libxml2-dev,
