@@ -30,7 +30,7 @@ Build-Depends:
  xauth,
  xvfb
 Standards-Version: 3.9.6
-Vcs-Git: git://anonscm.debian.org/pkg-games/megaglest.git
+Vcs-Git: https://anonscm.debian.org/pkg-games/megaglest.git
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-games/megaglest.git
 Homepage: http://megaglest.org/
 
