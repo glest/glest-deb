@@ -1,4 +1,4 @@
-usr/bin/megaglest usr/games
-usr/bin/megaglest_editor usr/games
-usr/bin/megaglest_g3dviewer usr/games
-usr/share
+debian/megaglest/usr/bin/megaglest usr/games
+debian/megaglest/usr/bin/megaglest_editor usr/games
+debian/megaglest/usr/bin/megaglest_g3dviewer usr/games
+debian/megaglest/usr/share
