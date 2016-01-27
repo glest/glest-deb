@@ -1,8 +1,20 @@
-megaglest (3.12.0-1) UNRELEASED; urgency=medium
+megaglest (3.12.0-1) unstable; urgency=medium
 
-  * New upstream release.
+  * Imported Upstream version 3.12.0.
+  * Drop megaglest-dbg and use the new -dbgsym packages instead.
+  * Vcs-Git: Use https.
+  * Switch to SDL2.
+  * Tighten dependency on megaglest-data.
+  * Drop all patches. Applied upstream.
+  * Remove override for dh_auto_clean because the mojosetup directory has been
+    removed.
+  * export DEB_BUILD_MAINT_OPTIONS = hardening=+all.
+  * Update debian/copyright for new release.
+  * Override menu-icon-missing and script-not-executable.
+  * Drop megaglest.install. Let dh_auto_install handle everything.
+  * Set MEGAGLEST_BIN_INSTALL_PATH to /usr/games.
 
- -- Markus Koschany <apo@debian.org>  Tue, 26 Jan 2016 21:25:57 +0100
+ -- Markus Koschany <apo@debian.org>  Wed, 27 Jan 2016 18:22:14 +0100
 
 megaglest (3.11.1-3) unstable; urgency=medium
 
