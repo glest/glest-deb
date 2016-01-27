@@ -30,6 +30,7 @@ Files: mk/cmake/Modules/FindGLIB2.cmake
        mk/cmake/Modules/FindIrcclient.cmake
        mk/cmake/Modules/FindLUA.cmake
        mk/cmake/Modules/FindMiniupnpc.cmake
+       mk/cmake/Modules/FindSDL2.cmake
 Copyright: 2006 Andreas Schneider <mail@cynapses.org>
            2006 Philippe Bernery <philippe.bernery@gmail.com>
            2007 Daniel Gollub <dgollub@suse.de>
