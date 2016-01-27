@@ -9,6 +9,7 @@ export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
+		-DMEGAGLEST_BIN_INSTALL_PATH=games \
 		-DMEGAGLEST_DATA_INSTALL_PATH=share/games/megaglest/ \
 		-DWANT_DEV_OUTPATH=ON
 
