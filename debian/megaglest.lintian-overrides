@@ -4,3 +4,5 @@
 manpage-has-errors-from-man
 # The icon is provided by megaglest-data now
 menu-icon-missing
+# This script does not need to be executable.
+script-not-executable
