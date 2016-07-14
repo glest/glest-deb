@@ -6,7 +6,6 @@ Uploaders:
  Mark Vejvoda <mark_vejvoda@hotmail.com>,
  Markus Koschany <apo@debian.org>
 Build-Depends:
- g++-6,
  cmake,
  debhelper (>= 9),
  help2man,
