@@ -2,7 +2,7 @@ megaglest (3.12.0-2) unstable; urgency=medium
 
   * Declare compliance with Debian Policy 3.9.8.
   * Add gcc-6-ftbfs.patch and fix FTBFS with GCC-6. (Closes: #831140)
-    Thanks to Lucas Nussbaum for the report and patch.
+    Thanks to Lucas Nussbaum for the report and Mark Vejvoda for the patch.
   * Remove source/lintian-overrides.
 
  -- Markus Koschany <apo@debian.org>  Fri, 15 Jul 2016 01:06:05 +0200
