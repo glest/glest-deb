@@ -1,3 +1,9 @@
+megaglest (3.12.0-2) UNRELEASED; urgency=medium
+
+  * 
+
+ -- Markus Koschany <apo@debian.org>  Fri, 15 Jul 2016 00:30:20 +0200
+
 megaglest (3.12.0-1) unstable; urgency=medium
 
   * Imported Upstream version 3.12.0.
