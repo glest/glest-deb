@@ -2,6 +2,8 @@ From: Markus Koschany <apo@debian.org>
 Date: Fri, 15 Jul 2016 00:44:11 +0200
 Subject: gcc-6 ftbfs
 
+Bug: https://bugs.debian.org/831140
+Forwarded: not needed, already fixed.
 ---
  source/shared_lib/sources/platform/common/platform_common.cpp | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)
