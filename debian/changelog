@@ -6,6 +6,7 @@ megaglest (3.13.0-1) experimental; urgency=medium
   * Update megaglest.lintian-overrides.
   * Update debian/copyright for new release.
   * Drop gcc-6-ftbfs.patch. Fixed upstream.
+  * Tighten dependency on megaglest-data to >= 3.13.0.
 
  -- Markus Koschany <apo@debian.org>  Sun, 12 Mar 2017 22:15:24 +0100
 
