@@ -1,3 +1,13 @@
+megaglest (3.13.0-1) experimental; urgency=medium
+
+  * New upstream version 3.13.0.
+  * Switch to compat level 10.
+  * Drop debian menu file.
+  * Update megaglest.lintian-overrides.
+  * Update debian/copyright for new release.
+
+ -- Markus Koschany <apo@debian.org>  Sun, 12 Mar 2017 22:15:24 +0100
+
 megaglest (3.12.0-2) unstable; urgency=medium
 
   * Declare compliance with Debian Policy 3.9.8.
