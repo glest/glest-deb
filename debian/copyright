@@ -125,7 +125,6 @@ Copyright: 1997-2002, Free Software Foundation, Inc
 License: LGPL-2.1+
 
 Files: source/shared_lib/include/streflop/FPUCheck.h
-       source/shared_lib/include/streflop/streflop_cond.h
        source/shared_lib/sources/streflop/SMath.cpp
        source/shared_lib/sources/streflop/SoftFloatWrapper.cpp
 Copyright: 2008, Tobi Vollebregt
